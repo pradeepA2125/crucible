@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ClaudeAccount, ClaudeSignIn, ClaudeModel } from "./claude-contracts.js";
 import { DiagnosticsSchema, PlanSchema } from "../domain/schemas.js";
 import type { PatchOperation, PlanDocument, TaskRecord, TaskStatus } from "../domain/types.js";
 
@@ -548,6 +549,7 @@ export type SessionTranscript = z.infer<typeof SessionTranscriptSchema>;
 // the access cards in the live slot. `kind` stays a plain string so a new backend kind
 // degrades to the generic card instead of failing the whole /live parse.
 export const ProviderAccessSchema = z.object({
+  provider: z.string().optional(),
   kind: z.string(),
   message: z.string(),
   code: z.string().nullable().default(null),
@@ -598,7 +600,7 @@ export const ContextUsageSchema = z.object({
   input_tokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
   input_quality: z.enum(["estimated", "provider_reported", "unavailable"]),
   context_window: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable(),
-  capacity_source: z.enum(["chatgpt_catalog", "configured", "unknown"]),
+  capacity_source: z.enum(["chatgpt_catalog", "claude_catalog", "configured", "unknown"]),
   observed_at: z.string().datetime({ offset: true }).nullable(),
 }).superRefine((v, ctx) => {
   if ((v.input_tokens === null) !== (v.input_quality === "unavailable")
@@ -607,7 +609,9 @@ export const ContextUsageSchema = z.object({
       || (v.input_tokens === null && v.observed_at !== null)
       || (v.input_tokens !== null && v.observed_at === null)
       || (v.provider === "chatgpt" && v.capacity_source === "configured")
-      || (v.provider !== "chatgpt" && v.capacity_source === "chatgpt_catalog")) {
+      || (v.provider !== "chatgpt" && v.capacity_source === "chatgpt_catalog")
+      || (v.provider === "claude_subscription" && v.capacity_source === "configured")
+      || (v.provider !== "claude_subscription" && v.capacity_source === "claude_catalog")) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Inconsistent context provenance" });
   }
 });
@@ -649,7 +653,7 @@ export const ThreadLiveStateSchema = z.object({
 });
 export type ThreadLiveState = z.infer<typeof ThreadLiveStateSchema>;
 
-export const ReasoningEffortSchema = z.enum(["off", "low", "medium", "high", "max"]);
+export const ReasoningEffortSchema = z.enum(["off", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
 
 // Tri-state by omission: a rung in neither collection is UNKNOWN — the endpoint's
@@ -657,6 +661,17 @@ export type ReasoningEffort = z.infer<typeof ReasoningEffortSchema>;
 export const EffortSupportSchema = z.object({
   supported: z.array(ReasoningEffortSchema),
   unsupported: z.record(z.string(), z.string()),
+  control: z.object({
+    options: z.array(z.object({
+      value: ReasoningEffortSchema,
+      label: z.string(),
+      description: z.string(),
+      state: z.enum(["supported", "unknown"]),
+    })),
+    source: z.enum(["catalog", "transport", "fallback"]),
+    default: ReasoningEffortSchema.nullable(),
+    reason: z.string().nullable(),
+  }).optional(),
 });
 export type EffortSupport = z.infer<typeof EffortSupportSchema>;
 
@@ -874,11 +889,17 @@ export interface BackendTaskClient {
   trustAgentDefinition(path: string, sha256: string): Promise<void>;
   // Settings surfaces (P4): provider validation/hot-swap + MCP server management.
   validateProvider(req: { backend: string; model?: string; credentials?: Record<string, string> }): Promise<ProviderValidateResult>;
-  setProvider(req: { backend: string; model?: string; credentials?: Record<string, string>; contextWindow?: number; reasoningEffort?: ReasoningEffort }): Promise<{ backend: string; model: string; reasoningEffort?: ReasoningEffort | null; reasoningEffortNote?: string | null; reasoningEffortSupport?: EffortSupport }>;
+  setProvider(req: { backend: string; model?: string; credentials?: Record<string, string>; contextWindow?: number; reasoningEffort?: ReasoningEffort | null }): Promise<{ backend: string; model: string; contextWindow?: number; reasoningEffort?: ReasoningEffort | null; reasoningEffortNote?: string | null; reasoningEffortSupport?: EffortSupport }>;
   testContextWindow(req: { backend: string; model?: string; credentials?: Record<string, string>; contextWindow: number }): Promise<ContextTestResult>;
   listMcpServers(): Promise<McpServerList>;
   // Sign in with ChatGPT. startChatGPTSignIn's authorizeUrl may carry an ID-token hint:
   // open it in the system browser, never log it.
+  startClaudeSignIn(): Promise<ClaudeSignIn & { authorizeUrl: string }>;
+  getClaudeSignIn(attemptId: string): Promise<ClaudeSignIn>;
+  cancelClaudeSignIn(attemptId: string): Promise<ClaudeSignIn>;
+  listClaudeAccounts(): Promise<ClaudeAccount[]>;
+  listClaudeModels(registrationId: string, refresh?: boolean): Promise<ClaudeModel[]>;
+  signOutClaude(registrationId: string): Promise<{ remoteRevoked: boolean }>;
   startChatGPTSignIn(req?: { registrationId?: string; reconsent?: boolean }): Promise<ChatGPTSignIn & { authorizeUrl: string }>;
   getChatGPTSignIn(attemptId: string): Promise<ChatGPTSignIn>;
   cancelChatGPTSignIn(attemptId: string): Promise<ChatGPTSignIn>;

@@ -269,7 +269,8 @@ _chat_model = os.getenv(
     MODEL_ENV_VAR.get(reasoning_backend, "CRUCIBLE_OPENAI_MODEL"),
     # A ChatGPT plan's models come only from the signed-in account's catalog; a guessed
     # name would fail as an unsupported capability. Empty until one is picked.
-    "" if reasoning_backend == "chatgpt" else "gpt-4o",
+    ("" if reasoning_backend == "chatgpt" else
+     "claude-sonnet-5-5" if reasoning_backend == "claude_subscription" else "gpt-4o"),
 )
 # Within-run compaction for task ToolLoop steps (no-op unless CRUCIBLE_MEMORY_ENABLED;
 # scripted backend has no transport). Disjoint run_id namespace (task_id) from the chat
@@ -442,6 +443,20 @@ from agentd.api.chatgpt_auth_routes import build_chatgpt_auth_router  # noqa: E4
 from agentd.chatgpt_auth.service import chatgpt_auth_service  # noqa: E402
 
 app.include_router(build_chatgpt_auth_router(chatgpt_auth_service))
+
+from agentd.api.claude_auth_routes import build_claude_auth_router  # noqa: E402
+from agentd.claude_auth.service import claude_auth_service  # noqa: E402
+
+app.include_router(build_claude_auth_router(claude_auth_service))
+
+
+async def _close_claude_auth() -> None:
+    from agentd.claude_auth import service as svc
+    if svc._service is not None:
+        await svc._service.aclose()
+
+
+app.router.add_event_handler("shutdown", _close_claude_auth)
 
 
 async def _close_chatgpt_auth() -> None:

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
+import { ClaudeLogo } from "./shared/ClaudeBrand";
+import { CLAUDE_USAGE_URL } from "../claude";
 import { ChatGPTLogo } from "./shared/ChatGPTBrand";
 import { CHATGPT_USAGE_URL } from "../chatgpt";
 import type { ModelOption } from "../types";
 import { vscode } from "../vscodeApi";
 
-// Several rows can share a backend (each ChatGPT plan model is its own row).
+// Several rows can share a backend: each subscription catalog model is its own row.
 const optionKey = (opt: { backend: string; model: string }) => `${opt.backend}:${opt.model}`;
 
 function shortModel(model: string): string {
@@ -24,7 +26,7 @@ export function ModelMenu() {
   const [current, setCurrent] = useState<{ backend: string; model: string } | null>(null);
   const [options, setOptions] = useState<ModelOption[]>([]);
   const [swapping, setSwapping] = useState<string | null>(null); // optionKey in flight
-  const [usesPlan, setUsesPlan] = useState(false);
+  const [plan, setPlan] = useState<"chatgpt" | "claude" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const swappingRef = useRef<string | null>(null);
@@ -37,7 +39,9 @@ export function ModelMenu() {
       if (m?.["type"] === "modelList") {
         setCurrent((m["current"] as { backend: string; model: string } | null) ?? null);
         setOptions((m["options"] as ModelOption[]) ?? []);
-        setUsesPlan(m["usesChatgptPlan"] === true);
+        const provider = (m["current"] as { backend?: string } | null)?.backend;
+        setPlan(provider === "claude_subscription" && m["usesClaudePlan"] === true ? "claude"
+          : provider === "chatgpt" && m["usesChatgptPlan"] === true ? "chatgpt" : null);
         setError(null);
         if (swappingRef.current !== null) {
           setSwapping(null);
@@ -76,7 +80,7 @@ export function ModelMenu() {
     vscode.postMessage({ type: "setModel", backend: opt.backend, model: opt.model });
   }
 
-  // The chip names a ChatGPT plan model by its catalog display name, not its slug.
+  // Use the catalog display name for subscription models.
   const currentName = current
     ? options.find((o) => o.active && o.model === current.model)?.display ?? current.model
     : null;
@@ -104,16 +108,15 @@ export function ModelMenu() {
         </span>
         <Icon name="chev-d" size={8} />
       </button>
-      {/* UI/UX guidelines: when requests use the plan, say so near the model selector,
-          with a Manage usage link to ChatGPT usage settings. */}
-      {usesPlan && (
+      {/* Identify the active subscription next to the model selector. */}
+      {plan && (
         <span className="flex items-center gap-1 whitespace-nowrap text-[9.5px] text-text-3">
-          <ChatGPTLogo size={10} />
-          <span>Using ChatGPT plan</span>
+          {plan === "claude" ? <ClaudeLogo size={10} /> : <ChatGPTLogo size={10} />}
+          <span>{plan === "claude" ? "Using Claude plan" : "Using ChatGPT plan"}</span>
           <span className="text-text-4">·</span>
           <button
             type="button"
-            onClick={() => vscode.postMessage({ type: "settings/openExternal", url: CHATGPT_USAGE_URL })}
+            onClick={() => vscode.postMessage({ type: "settings/openExternal", url: plan === "claude" ? CLAUDE_USAGE_URL : CHATGPT_USAGE_URL })}
             className="cursor-pointer border-0 bg-transparent p-0 underline-offset-2 hover:underline"
             style={{ color: "var(--color-accent-ink)", fontSize: "inherit" }}
           >

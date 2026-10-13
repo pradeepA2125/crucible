@@ -1,0 +1,35 @@
+{
+  "status": "passed",
+  "date": "2026-10-13",
+  "surface": "Installed VS Code extension",
+  "installation": "scripts/dev/install-local.sh",
+  "managed_runtime_enabled": true,
+  "fresh_browser_login_tested": true,
+  "browser_consent_approved_by_user": true,
+  "account_connected": true,
+  "model": "claude-sonnet-5-5",
+  "context_window": 1000000,
+  "context_capacity_source": "catalog",
+  "provider_validation": "passed",
+  "effort_source": "catalog",
+  "effort_menu": [
+    "default",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max"
+  ],
+  "selected_effort": "low",
+  "effort_validation": "passed",
+  "chat_expected_reply": "CLAUDE_UI_OK",
+  "chat_actual_reply": "CLAUDE_UI_OK",
+  "chat_usage": {
+    "requests": 1,
+    "input_tokens": 33028,
+    "cached_input_tokens": 0,
+    "output_tokens": 118
+  },
+  "claude_code_cli_used": false,
+  "real_refresh_token_rotation_tested": false
+}

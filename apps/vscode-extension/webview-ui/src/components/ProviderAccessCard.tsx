@@ -1,5 +1,7 @@
 import { BtnGhost, BtnPrimary } from "./shared/buttons";
+import { ClaudeLogo } from "./shared/ClaudeBrand";
 import { ChatGPTLogo } from "./shared/ChatGPTBrand";
+import { CLAUDE_USAGE_URL } from "../claude";
 import { CHATGPT_USAGE_URL } from "../chatgpt";
 import type { ProviderAccessView } from "../types";
 import { vscode } from "../vscodeApi";
@@ -16,6 +18,12 @@ const manageUsage = () =>
 const openProviderSettings = () => vscode.postMessage({ type: "openSettings", section: "provider" });
 
 function copyFor(access: ProviderAccessView): Copy {
+  if (access.provider === "claude_subscription") {
+    return { title: access.kind === "usage_limit" ? "Claude rate or usage limit reached" : "Claude connection needs attention",
+      body: access.message,
+      action: access.kind === "usage_limit" ? { label: "Manage usage", run: () => vscode.postMessage({ type: "settings/openExternal", url: CLAUDE_USAGE_URL }) }
+        : { label: "Connect Claude", run: openProviderSettings } };
+  }
   switch (access.kind) {
     // UI/UX guidelines: Manage usage is the primary action; the limit may be the plan's
     // or this app's. We sell no credits, so there is no "Buy app credits" action.
@@ -65,8 +73,8 @@ export function ProviderAccessCard({ access }: { access: ProviderAccessView }) {
     >
       <div className="flex items-center gap-2">
         {/* Keep the ChatGPT identity visible in the compact message (UI/UX guidelines). */}
-        <ChatGPTLogo size={14} color="var(--color-text)" />
-        <span className="text-[11px] text-text-3">ChatGPT</span>
+        {access.provider === "claude_subscription" ? <ClaudeLogo size={14} /> : <ChatGPTLogo size={14} color="var(--color-text)" />}
+        <span className="text-[11px] text-text-3">{access.provider === "claude_subscription" ? "Claude" : "ChatGPT"}</span>
       </div>
       <div>
         <p className="text-xs font-medium text-text">{copy.title}</p>

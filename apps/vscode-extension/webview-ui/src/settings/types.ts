@@ -1,6 +1,7 @@
 // Local mirror of src/settings-data.ts message protocol — the webview bundle never
 // imports the extension's src/ (separate Vite bundle). Mirrors setup/types.ts's split.
 import type { SectionId } from "./sections/meta";
+import type { ClaudeInMsg, ClaudeOutMsg } from "./claude-types";
 
 // Mirror of editor-client's AgentDefinitionView / AgentCatalog / AgentDefinitionInput.
 // tools: null = all tools, distinct from [] (no tools).
@@ -71,6 +72,7 @@ export interface SettingsState {
 
 // webview → host
 export type SettingsInMsg =
+  | ClaudeInMsg
   | { type: "settings/load" }
   | { type: "settings/setProvider"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string>; contextWindow?: number }
   // Explicit delete of a backend's stored API key — a blank API-key field means
@@ -133,6 +135,7 @@ export interface ChatGPTModel {
 
 // host → webview
 export type SettingsOutMsg =
+  | ClaudeOutMsg
   | { type: "settings/state"; state: SettingsState }
   | { type: "settings/instructions"; content: string; exists: boolean }
   | { type: "settings/error"; message: string }
@@ -167,7 +170,7 @@ export interface ProviderInfo {
   defaultModel: string;
   extraFields?: ExtraField[];
   /** Signs in with an account instead of an API key ("Continue with ChatGPT"). */
-  signIn?: "chatgpt";
+  signIn?: "chatgpt" | "claude";
 }
 
 // Mirror of src/setup-data.ts PROVIDERS (defaults from agentd/providers/factory.py).
@@ -208,6 +211,7 @@ export const PROVIDERS: ProviderInfo[] = [
   },
   // Signs in instead of taking a key: the backend owns the OAuth tokens and the model
   // list comes from the account (spec 2026-10-06). No default model.
+  { id: "claude_subscription", label: "Claude subscription (experimental)", local: false, signIn: "claude", defaultModel: "claude-sonnet-5-5" },
   { id: "chatgpt", label: "ChatGPT plan", local: false, signIn: "chatgpt", defaultModel: "" },
 ];
 

@@ -1109,3 +1109,24 @@ describe("HttpBackendClient background agents (spec §5.3, §6)", () => {
     await expect(client.stopAllAgents("t1")).resolves.toBe(3);
   });
 });
+
+describe("provider-native effort descriptors", () => {
+  test("retains catalog control metadata and sends native efforts unchanged", async () => {
+    const captured: { body?: string } = {};
+    const control = { source: "catalog", default: "low", reason: null,
+      options: [{ value: "xhigh", label: "Extra high", description: "More depth", state: "supported" }] };
+    const client = jsonClient({ backend: "chatgpt", model: "catalog-model", reasoning_effort: "xhigh",
+      reasoning_effort_support: { supported: ["xhigh"], unsupported: {}, control } }, captured);
+    const result = await client.setProvider({ backend: "chatgpt", model: "catalog-model", reasoningEffort: "xhigh" });
+    expect(JSON.parse(captured.body ?? "{}").reasoning_effort).toBe("xhigh");
+    expect(result.reasoningEffortSupport?.control).toEqual(control);
+  });
+
+  test("serializes an explicit reset as null instead of omitting the field", async () => {
+    const captured: { body?: string } = {};
+    const client = jsonClient({ backend: "b", model: "m", reasoning_effort: null }, captured);
+    const result = await client.setProvider({ backend: "b", reasoningEffort: null });
+    expect(JSON.parse(captured.body ?? "{}").reasoning_effort).toBeNull();
+    expect(result.reasoningEffort).toBeNull();
+  });
+});

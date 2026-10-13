@@ -5,7 +5,7 @@ from agentd.providers.groq_transport import GroqJsonTransport
 from agentd.providers.ollama_transport import OllamaJsonTransport
 from agentd.providers.openai_compatible_transport import OpenAICompatibleTransport
 from agentd.providers.openrouter_transport import OpenRouterJsonTransport
-from agentd.providers.reasoning_effort import ReasoningEffort
+from agentd.providers.reasoning_effort import LADDER, ReasoningEffort
 from agentd.providers.turboquant_transport import PROFILES, TurboQuantTransport
 
 
@@ -113,7 +113,7 @@ def test_openrouter_uses_the_nested_reasoning_object(level, expected):
 async def test_openrouter_supports_the_whole_ladder_for_a_reasoning_model():
     t = _openrouter()
     support = await t.reasoning_effort_support("deepseek/deepseek-r1")
-    for level in ReasoningEffort:
+    for level in LADDER:
         assert support.state(level) == "supported"
 
 
@@ -144,7 +144,7 @@ def test_groq_never_emits_none_on_the_wire():
     # Regression guard for a verified provider fact: Groq rejects
     # reasoning_effort="none" with a 400.
     t = _groq()
-    for level in ReasoningEffort:
+    for level in LADDER:
         t.set_reasoning_effort(level)
         assert t._effort_wire_value() != "none"
 

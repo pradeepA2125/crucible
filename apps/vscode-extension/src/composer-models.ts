@@ -22,11 +22,13 @@ export function buildModelOptions(
   keyedBackends: string[],
   providers: ProviderInfo[],
   chatgptCatalog?: { slug: string; displayName: string }[],
+  claudeCatalog?: { slug: string; displayName: string }[],
 ): ModelOption[] {
   const keyed = new Set(keyedBackends);
   return providers.flatMap((p): ModelOption[] => {
-    if (p.signIn === "chatgpt" && chatgptCatalog?.length) {
-      return chatgptCatalog.map((m) => ({
+    const catalog = p.signIn === "chatgpt" ? chatgptCatalog : p.signIn === "claude" ? claudeCatalog : undefined;
+    if (catalog?.length) {
+      return catalog.map((m) => ({
         backend: p.id, label: p.label, model: m.slug, display: m.displayName,
         active: current?.backend === p.id && current.model === m.slug,
       }));
@@ -49,12 +51,15 @@ export interface EffortRow {
   reason?: string;
 }
 
-/** All five rungs, always, tagged with what we know about each.
+/** Provider controls define native rows. Older backends use the fallback ladder.
  *
  * A null support map means the backend told us nothing (older backend, or a
  * capability lookup that failed) — that is UNKNOWN across the board, never
  * unsupported, so the chip stays usable instead of appearing broken. */
 export function buildEffortRows(support: EffortSupport | null): EffortRow[] {
+  if (support?.control) {
+    return support.control.options.map((row) => ({ level: row.value, state: row.state }));
+  }
   return EFFORT_LADDER.map((level) => {
     if (support?.supported.includes(level)) return { level, state: "supported" as const };
     const reason = support?.unsupported[level];

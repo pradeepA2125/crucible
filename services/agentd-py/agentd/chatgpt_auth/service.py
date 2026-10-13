@@ -19,6 +19,7 @@ from agentd.chatgpt_auth.oidc import API_RESOURCE, DEFAULT_ISSUER, OidcClient
 from agentd.chatgpt_auth.session import ChatGPTPlanBearer, SignOutResult, sign_out
 from agentd.chatgpt_auth.store import CredentialStore
 from agentd.providers.plan_access import PlanSessionInvalid, classify_plan_error
+from agentd.providers.reasoning_effort import EffortSupport, catalog_effort_support
 
 _HTTP_TIMEOUT = httpx.Timeout(30.0)
 
@@ -30,6 +31,7 @@ class CatalogModel:
     # The model's usable window, as the catalog reports it (live: 272000 for gpt-5.6).
     context_window: int | None = None
     input_modalities: tuple[str, ...] | None = None
+    reasoning_effort_support: EffortSupport | None = None
 
 
 class ModelCatalogError(RuntimeError):
@@ -206,7 +208,8 @@ class ChatGPTAuthService:
         return [
             CatalogModel(slug=str(m["slug"]), display_name=str(m.get("display_name") or m["slug"]),
                          context_window=_positive_int(m.get("context_window")),
-                         input_modalities=_input_modalities(m))
+                         input_modalities=_input_modalities(m),
+                         reasoning_effort_support=catalog_effort_support(m))
             for m in models
             if isinstance(m, dict) and m.get("visibility") == "list" and m.get("slug")
         ]

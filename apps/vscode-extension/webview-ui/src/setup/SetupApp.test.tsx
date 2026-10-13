@@ -83,3 +83,17 @@ describe("SetupApp — Use your ChatGPT plan", () => {
     expect(screen.getByRole("button", { name: "Continue with ChatGPT" })).toBeTruthy();
   });
 });
+
+it("starts Claude setup and waits for the connection to be put into use", () => {
+  render(<SetupApp />);
+  fireEvent.click(screen.getByRole("button", { name: /Install runtime/ }));
+  deliver({ type: "setup/installDone", ok: true });
+  fireEvent.click(screen.getByRole("button", { name: "Continue with Claude" }));
+  expect(vscode.postMessage).toHaveBeenCalledWith({ type: "setup/startForClaude" });
+  deliver({ type: "setup/claudeReady" });
+  expect(screen.getByRole("button", { name: "Continue with Claude" })).toBeTruthy();
+  deliver({ type: "settings/claudeSignIn", signIn: { attemptId: "a", state: "succeeded", registrationId: "claude_test", reason: null, message: null } });
+  expect(screen.queryByText(/using your Claude subscription/)).toBeNull();
+  deliver({ type: "setup/ready", port: 8090 });
+  expect(screen.getByText(/using your Claude subscription/)).toBeTruthy();
+});

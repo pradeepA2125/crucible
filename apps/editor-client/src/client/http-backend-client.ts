@@ -1,3 +1,4 @@
+import { ClaudeAccountSchema, ClaudeSignInSchema, ClaudeModelSchema, type ClaudeAccount, type ClaudeSignIn, type ClaudeModel } from "../contracts/claude-contracts.js";
 import { z } from "zod";
 import {
   TaskStatusSchema,
@@ -918,6 +919,7 @@ export class HttpBackendClient implements BackendTaskClient {
     if (raw === null || typeof raw !== "object") return null;
     const a = raw as Record<string, unknown>;
     return {
+      ...(typeof a["provider"] === "string" ? { provider: a["provider"] } : {}),
       kind: a["kind"], message: a["message"], code: a["code"] ?? null,
       status: a["status"] ?? null, requestId: a["request_id"] ?? null,
     };
@@ -1060,6 +1062,47 @@ export class HttpBackendClient implements BackendTaskClient {
       method: "POST", body: JSON.stringify({ path, sha256 }) });
   }
 
+  async startClaudeSignIn(): Promise<ClaudeSignIn & { authorizeUrl: string }> {
+    const raw = await this.fetchJsonDetail("/v1/auth/claude/attempts", { method: "POST" }) as Record<string, unknown>;
+    return { ...HttpBackendClient.toClaudeSignIn(raw), authorizeUrl: String(raw["authorize_url"]) };
+  }
+
+  private static toClaudeSignIn(raw: Record<string, unknown>): ClaudeSignIn {
+    return ClaudeSignInSchema.parse({ attemptId: raw["attempt_id"], state: raw["state"],
+      registrationId: raw["registration_id"], reason: raw["reason"], message: raw["message"] });
+  }
+
+  async getClaudeSignIn(id: string): Promise<ClaudeSignIn> {
+    return HttpBackendClient.toClaudeSignIn(await this.fetchJsonDetail(
+      `/v1/auth/claude/attempts/${encodeURIComponent(id)}`) as Record<string, unknown>);
+  }
+
+  async cancelClaudeSignIn(id: string): Promise<ClaudeSignIn> {
+    return HttpBackendClient.toClaudeSignIn(await this.fetchJsonDetail(
+      `/v1/auth/claude/attempts/${encodeURIComponent(id)}/cancel`, { method: "POST" }) as Record<string, unknown>);
+  }
+
+  async listClaudeAccounts(): Promise<ClaudeAccount[]> {
+    const raw = await this.fetchJsonDetail("/v1/auth/claude/registrations") as { registrations?: Record<string, unknown>[] };
+    return (raw.registrations ?? []).map(r => ClaudeAccountSchema.parse({
+      registrationId: r["registration_id"], label: r["label"], signedIn: r["signed_in"] }));
+  }
+
+  async listClaudeModels(id: string, refresh = false): Promise<ClaudeModel[]> {
+    const raw = await this.fetchJsonDetail(`/v1/auth/claude/registrations/${encodeURIComponent(id)}/models${refresh ? "?refresh=true" : ""}`,
+      { method: "POST" }) as { models?: Record<string, unknown>[] };
+    return (raw.models ?? []).map(m => ClaudeModelSchema.parse({
+      slug: m["slug"], displayName: m["display_name"],
+      contextWindow: m["context_window"] ?? null, maxTokens: m["max_tokens"] ?? null,
+    }));
+  }
+
+  async signOutClaude(id: string): Promise<{ remoteRevoked: boolean }> {
+    const raw = await this.fetchJsonDetail(`/v1/auth/claude/registrations/${encodeURIComponent(id)}/sign-out`,
+      { method: "POST" }) as Record<string, unknown>;
+    return { remoteRevoked: raw["remote_revoked"] === true };
+  }
+
   async startChatGPTSignIn(
     req: { registrationId?: string; reconsent?: boolean } = {},
   ): Promise<ChatGPTSignIn & { authorizeUrl: string }> {
@@ -1162,10 +1205,11 @@ export class HttpBackendClient implements BackendTaskClient {
     model?: string;
     credentials?: Record<string, string>;
     contextWindow?: number;
-    reasoningEffort?: ReasoningEffort;
+    reasoningEffort?: ReasoningEffort | null;
   }): Promise<{
     backend: string;
     model: string;
+    contextWindow?: number;
     reasoningEffort?: ReasoningEffort | null;
     reasoningEffortNote?: string | null;
     reasoningEffortSupport?: EffortSupport;
@@ -1186,6 +1230,7 @@ export class HttpBackendClient implements BackendTaskClient {
     return {
       backend: String(raw["backend"]),
       model: String(raw["model"]),
+      ...(typeof raw["context_window"] === "number" ? { contextWindow: raw["context_window"] } : {}),
       ...(raw["reasoning_effort"] !== undefined
         ? { reasoningEffort: raw["reasoning_effort"] as ReasoningEffort | null }
         : {}),

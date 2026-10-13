@@ -32,7 +32,7 @@ class ContextUsage(BaseModel):
     input_tokens: int | None = Field(default=None, ge=0, le=_MAX_SAFE)
     input_quality: Literal['estimated', 'provider_reported', 'unavailable'] = 'unavailable'
     context_window: int | None = Field(default=None, gt=0, le=_MAX_SAFE)
-    capacity_source: Literal['chatgpt_catalog', 'configured', 'unknown'] = 'unknown'
+    capacity_source: Literal['chatgpt_catalog', 'claude_catalog', 'configured', 'unknown'] = 'unknown'
     observed_at: str | None = None
 
     @model_validator(mode='after')
@@ -102,10 +102,10 @@ class ContextUsageTracker:
             identity = runtime.context_identity()
             changed = identity != self._identity
             if changed:
-                window = runtime.context_window if runtime.backend != 'chatgpt' else None
+                window = runtime.context_window if runtime.backend not in ('chatgpt', 'claude_subscription') else None
                 self.select(provider=runtime.backend, model=runtime.model, identity=identity,
                             window=window, source='configured' if window else 'unknown')
-            if runtime.backend != 'chatgpt' or identity in self._capacity_tasks:
+            if runtime.backend not in ('chatgpt', 'claude_subscription') or identity in self._capacity_tasks:
                 return
             if monotonic() - self._capacity_checked.get(identity, float('-inf')) < 60:
                 return

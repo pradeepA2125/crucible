@@ -124,3 +124,93 @@ describe("EffortMenu", () => {
     expect(screen.getByText(/provider unreachable/i)).toBeTruthy();
   });
 });
+
+function nativeSupport(values: string[], defaultLevel: string | null = null) {
+  return {
+    supported: values, unsupported: {},
+    control: { source: "catalog", default: defaultLevel, reason: values.length ? null : "Model has no effort control",
+      options: values.map((value) => ({ value, label: value === "xhigh" ? "Extra high" : value[0]!.toUpperCase() + value.slice(1),
+        description: value === "xhigh" ? "More reasoning depth" : "", state: "supported" })) },
+  };
+}
+
+describe("provider-owned effort controls", () => {
+  it("renders native ChatGPT options and posts the exact native value", () => {
+    render(<EffortMenu />);
+    sendModelList({ level: "low", support: nativeSupport(["none", "low", "high", "xhigh"], "low") });
+    fireEvent.click(screen.getByRole("button", { name: /reasoning effort/i }));
+    expect(screen.queryByRole("menuitem", { name: /^off/i })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /^max/i })).toBeNull();
+    expect(screen.getByText("Model default: Low")).toBeTruthy();
+    const post = vi.spyOn(vscode, "postMessage");
+    fireEvent.click(screen.getByRole("menuitem", { name: /extra high/i }));
+    expect(post).toHaveBeenCalledWith({ type: "setReasoningEffort", level: "xhigh" });
+  });
+
+  it("changes options with the active model instead of retaining the old provider menu", () => {
+    render(<EffortMenu />);
+    sendModelList({ level: "high", support: nativeSupport(["low", "medium", "high", "xhigh", "max"]) });
+    fireEvent.click(screen.getByRole("button", { name: /reasoning effort/i }));
+    expect(screen.getByRole("menuitem", { name: /extra high/i })).toBeTruthy();
+    sendModelList({ level: "high", support: nativeSupport(["low", "medium", "high"]) });
+    expect(screen.queryByRole("menuitem", { name: /extra high/i })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /^max/i })).toBeNull();
+    expect(screen.getAllByRole("menuitem")).toHaveLength(4); // model options plus Default
+  });
+
+  it("disables effort when the catalog explicitly reports no support", () => {
+    render(<EffortMenu />);
+    sendModelList({ level: null, support: nativeSupport([]) });
+    const chip = screen.getByRole("button", { name: /reasoning effort/i });
+    expect(chip.hasAttribute("disabled")).toBe(true);
+    expect(chip.getAttribute("title")).toBe("Model has no effort control");
+    fireEvent.click(chip);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("clears the override through Default, including pending and completion states", () => {
+    render(<EffortMenu />);
+    sendModelList({ level: "high", support: nativeSupport(["low", "high"], "low") });
+    fireEvent.click(screen.getByRole("button", { name: /reasoning effort/i }));
+    const post = vi.spyOn(vscode, "postMessage");
+    fireEvent.click(screen.getByRole("menuitem", { name: /^default/i }));
+    expect(post).toHaveBeenCalledWith({ type: "setReasoningEffort", level: null });
+    expect(screen.getByRole("button", { name: /switching reasoning effort to default/i })).toBeTruthy();
+    sendModelList({ level: null, support: nativeSupport(["low", "high"], "low") });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("button", { name: "Reasoning effort: Default" })).toBeTruthy();
+  });
+
+  it("uses the unverified fallback after metadata disappears instead of stale catalog choices", () => {
+    render(<EffortMenu />);
+    sendModelList({ level: "xhigh", support: nativeSupport(["low", "xhigh"]) });
+    sendModelList(undefined);
+    fireEvent.click(screen.getByRole("button", { name: /reasoning effort/i }));
+    expect(screen.queryByRole("menuitem", { name: /extra high/i })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: /^off/i })).toBeTruthy();
+    expect(screen.getAllByText("unverified for this endpoint")).toHaveLength(5);
+  });
+});
+
+it("keeps a long native menu within narrow panels and repositions on resize", () => {
+  const initialWidth = window.innerWidth;
+  try {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 280 });
+    const { container } = render(<EffortMenu />);
+    vi.spyOn(container.firstElementChild as HTMLElement, "getBoundingClientRect").mockReturnValue({
+      left: 220, right: 280, width: 60, top: 500, bottom: 524, height: 24, x: 220, y: 500, toJSON: () => ({}),
+    });
+    sendModelList({ level: "high", support: nativeSupport(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]) });
+    fireEvent.click(screen.getByRole("button", { name: /reasoning effort/i }));
+    const menu = screen.getByRole("menu");
+    expect(menu.style.width).toBe("264px");
+    expect(220 + parseFloat(menu.style.left)).toBe(8);
+    expect(menu.style.overflowY).toBe("auto");
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 360 });
+    fireEvent(window, new Event("resize"));
+    expect(220 + parseFloat(menu.style.left) + parseFloat(menu.style.width)).toBe(352);
+  } finally {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: initialWidth });
+    vi.restoreAllMocks();
+  }
+});

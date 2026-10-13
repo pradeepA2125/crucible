@@ -40,6 +40,7 @@ _GEMINI = frozenset({"gemini-2.5-flash"})
 async def resolve_image_capability(transport: object, model: str) -> ImageCapability:
     """Resolve image admission for THIS model on THIS transport; never guess by branding."""
     from agentd.providers.anthropic_transport import AnthropicJsonTransport
+    from agentd.providers.claude_subscription import ClaudeSubscriptionTransport
     from agentd.providers.gemini_transport import GeminiJsonTransport
     from agentd.providers.openai_transport import OpenAIJsonTransport
     from agentd.providers.openrouter_transport import OpenRouterJsonTransport
@@ -82,6 +83,8 @@ async def resolve_image_capability(transport: object, model: str) -> ImageCapabi
         endpoint_ok = getattr(transport, "_image_endpoint", "") in {
             "https://api.anthropic.com", "https://api.anthropic.com/v1/messages"}
         modality = model in _ANTHROPIC
+    elif isinstance(transport, ClaudeSubscriptionTransport):
+        serializer, endpoint_ok, modality = "anthropic_messages", True, model in _ANTHROPIC
     elif isinstance(transport, GeminiJsonTransport):
         serializer = "gemini_generate_content"
         client = getattr(transport, "_client", None)

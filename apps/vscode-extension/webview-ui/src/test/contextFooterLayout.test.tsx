@@ -17,8 +17,10 @@ const chrome = process.env.CHROME_BIN ?? [
 ].find(existsSync);
 
 describe.skipIf(!chrome)("context composer footer in a real browser", () => {
-  for (const mode of ["send", "stop", "task"] as const) {
-    it(`wraps ${mode} controls and context details without hiding them`, async () => {
+  const cases = (["send", "stop", "task"] as const).flatMap(mode =>
+    (["chatgpt", "claude_subscription"] as const).map(provider => ({ mode, provider })));
+  for (const { mode, provider } of cases) {
+    it(`wraps ${provider} ${mode} controls and context details without hiding them`, async () => {
       const total = { requests: 1, input: 300000, output: 12000, cached: 9000 };
       const { container } = render(<InputArea
         availability={{ disabled: false, placeholder: "Message", showStop: mode === "stop", taskStop: mode === "task" }}
@@ -26,9 +28,16 @@ describe.skipIf(!chrome)("context composer footer in a real browser", () => {
         contextUsage={{ ...contextUsage, context_window: null, capacity_source: "unknown", model: "long_model_identifier_".repeat(10) }}
         contextUsageStale threadUsage={{ total, main: total, agents: {}, teams: {} }} />);
       act(() => window.dispatchEvent(new MessageEvent("message", { data: {
-        type: "modelList", usesChatgptPlan: true,
-        current: { backend: "chatgpt", model: "gpt-long-composer-model-name" }, options: [],
-        effort: { level: "max", support: null },
+        type: "modelList", usesChatgptPlan: provider === "chatgpt", usesClaudePlan: provider === "claude_subscription",
+        current: { backend: provider, model: "long-composer-model-name" }, options: [],
+        effort: { level: provider === "claude_subscription" ? "xhigh" : "max", support: {
+          supported: ["low", "medium", "high", "xhigh", "max"], unsupported: {},
+          control: { source: "catalog", default: null, reason: null,
+            options: ["low", "medium", "high", "xhigh", "max"].map(value => ({
+              value, label: value === "xhigh" ? "Extra high" : value[0]!.toUpperCase() + value.slice(1),
+              description: "", state: "supported",
+            })) },
+        } },
       } })));
       fireEvent.focus(screen.getByRole("button", { name: /context.*details/i }));
       const markup = [280, 360, 640].map(width =>
@@ -71,7 +80,7 @@ describe.skipIf(!chrome)("context composer footer in a real browser", () => {
           expect(result.overflow, `${mode} panel ${result.width}px: ${JSON.stringify(result.controls.filter((c: { visible: boolean }) => !c.visible))}`).toBeLessThanOrEqual(1);
           expect(result.controls.filter((c: { visible: boolean }) => !c.visible), "all controls fit, not hidden or shrunk away").toEqual([]);
           expect(result.controls.map((c: { name: string }) => c.name)).toEqual(expect.arrayContaining([
-            "Open settings", "Reasoning effort: Max", "Model: gpt-long-composer-model-name", "Manage usage", mode === "stop" ? "Stop" : "Send",
+            "Open settings", provider === "claude_subscription" ? "Reasoning effort: Extra high" : "Reasoning effort: Max", "Model: long-composer-model-name", "Manage usage", mode === "stop" ? "Stop" : "Send",
             ...(mode === "task" ? ["Stop and keep changes", "Stop and revert changes"] : []),
           ]));
           expect(result.detailsFit, "long model provenance tooltip fits footer").toBe(true);

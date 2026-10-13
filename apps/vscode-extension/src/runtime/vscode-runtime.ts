@@ -224,6 +224,10 @@ export class RuntimeManager {
     if (backend === "chatgpt" && registration) {
       settings.extraEnv = { ...settings.extraEnv, CRUCIBLE_CHATGPT_REGISTRATION: registration };
     }
+    const claude = this.claudeRegistration();
+    if (backend === "claude_subscription" && claude) {
+      settings.extraEnv = { ...settings.extraEnv, CRUCIBLE_CLAUDE_REGISTRATION: claude };
+    }
     // Restore extra credentials (e.g. WATSONX_SPACE_ID, WATSONX_URL) into extraEnv.
     const extraEnvVars = this.context.globalState.get<string[]>(`crucible.provider.extraEnvVars.${backend}`, []);
     for (const ev of extraEnvVars) {
@@ -242,6 +246,14 @@ export class RuntimeManager {
     if (extraCredentials) {
       await this._persistExtraCredentials(backend, extraCredentials);
     }
+  }
+
+  claudeRegistration(): string | undefined {
+    return this.context.globalState.get<string>("crucible.claude.registration");
+  }
+
+  async saveClaudeRegistration(id: string): Promise<void> {
+    await this.context.globalState.update("crucible.claude.registration", id);
   }
 
   chatgptRegistration(): string | undefined {
@@ -283,7 +295,7 @@ export class RuntimeManager {
     return this.context.globalState.get<string>("crucible.reasoningEffort");
   }
 
-  async saveReasoningEffort(level: string): Promise<void> {
+  async saveReasoningEffort(level: string | undefined): Promise<void> {
     await this.context.globalState.update("crucible.reasoningEffort", level);
   }
 

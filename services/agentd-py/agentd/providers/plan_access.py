@@ -126,6 +126,8 @@ _DESCRIPTIONS: dict[str, str] = {
 
 
 def describe_access_stop(stop: ProviderAccessStopped) -> str:
+    if getattr(stop, "provider", None) == "claude_subscription":
+        return str(stop)
     text = _DESCRIPTIONS.get(stop.kind)
     if text is not None:
         return text
@@ -140,5 +142,6 @@ def describe_access_stop(stop: ProviderAccessStopped) -> str:
 
 def access_payload(stop: ProviderAccessStopped) -> dict[str, object]:
     """The `/live` `provider_access` shape the UI renders its cards from."""
-    return {"kind": stop.kind, "message": describe_access_stop(stop), "code": stop.code,
+    return {**({"provider": "claude_subscription"} if getattr(stop, "provider", None) == "claude_subscription" else {}),
+            "kind": stop.kind, "message": describe_access_stop(stop), "code": stop.code,
             "status": stop.status, "request_id": stop.request_id}

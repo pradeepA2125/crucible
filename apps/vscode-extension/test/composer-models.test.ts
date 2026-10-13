@@ -74,3 +74,30 @@ describe("buildEffortRows", () => {
     expect(rows.every((r) => r.state === "unknown")).toBe(true);
   });
 });
+
+it("offers Claude catalog models and marks the selected model active", () => {
+  const rows = buildModelOptions({ backend: "claude_subscription", model: "claude-small" }, [], PROVIDERS,
+    undefined, [{ slug: "claude-large", displayName: "Large" }, { slug: "claude-small", displayName: "Small" }]);
+  expect(rows).toHaveLength(2);
+  expect(rows.map(r => [r.model, r.display, r.active])).toEqual([
+    ["claude-large", "Large", false], ["claude-small", "Small", true],
+  ]);
+});
+
+describe("native effort rows", () => {
+  it("uses the provider descriptor rather than expanding the generic ladder", () => {
+    expect(buildEffortRows({ supported: ["low", "xhigh"], unsupported: {}, control: {
+      source: "catalog", default: "low", reason: null,
+      options: [
+        { value: "low", label: "Low", description: "Quick", state: "supported" },
+        { value: "xhigh", label: "Extra high", description: "More depth", state: "supported" },
+      ],
+    } })).toEqual([{ level: "low", state: "supported" }, { level: "xhigh", state: "supported" }]);
+  });
+
+  it("returns no rows for an explicitly unavailable control", () => {
+    expect(buildEffortRows({ supported: [], unsupported: {}, control: {
+      source: "catalog", default: null, reason: "Unavailable", options: [],
+    } })).toEqual([]);
+  });
+});

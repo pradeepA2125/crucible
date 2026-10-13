@@ -8,11 +8,13 @@ export type SetupInMsg =
   | { type: "setup/save"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "setup/openChat" }
   | { type: "setup/startForChatGPT" }
+  | { type: "setup/startForClaude" }
   // The embedded ChatGPT plan panel posts the settings/chatgpt* messages; the setup host
   // runs the same handler (src/chatgpt-settings.ts).
   | SettingsInMsg;
 
 export type SetupOutMsg =
+  | { type: "setup/claudeReady" }
   | { type: "setup/progress"; component: string; status: string; detail?: string }
   | { type: "setup/installDone"; ok: boolean }
   | { type: "setup/validateResult"; ok: boolean; model?: string; error?: string; jsonMode?: string; warning?: string }
@@ -37,7 +39,7 @@ export interface ProviderInfo {
   defaultModel: string;
   extraFields?: ExtraField[];
   /** Signs in with an account instead of an API key ("Continue with ChatGPT"). */
-  signIn?: "chatgpt";
+  signIn?: "chatgpt" | "claude";
 }
 
 // Mirror of src/setup-data.ts PROVIDERS (defaults from agentd/providers/factory.py).
@@ -78,6 +80,7 @@ export const PROVIDERS: ProviderInfo[] = [
   },
   // Signs in instead of taking a key: the backend owns the OAuth tokens and the model
   // list comes from the account (spec 2026-10-06). No default model.
+  { id: "claude_subscription", label: "Claude subscription (experimental)", local: false, signIn: "claude", defaultModel: "claude-sonnet-5-5" },
   { id: "chatgpt", label: "ChatGPT plan", local: false, signIn: "chatgpt", defaultModel: "" },
 ];
 

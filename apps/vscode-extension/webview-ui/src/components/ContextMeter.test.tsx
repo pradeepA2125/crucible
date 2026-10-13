@@ -34,7 +34,7 @@ describe("ContextMeter in the composer", () => {
   it.each(["awaiting_request", "invalidated", "unavailable"] as const)("does not show zero for %s", (status) => {
     render(composer({ ...contextUsage, status, input_tokens: null, input_quality: "unavailable" }));
     const button = screen.getByRole("button", { name: /context.*details/i });
-    expect(button).toHaveTextContent(status === "awaiting_request" ? "awaiting request" : status === "invalidated" ? "invalidated" : "unavailable");
+    expect(button).toHaveTextContent(status === "awaiting_request" ? "ready · 100k limit" : status === "invalidated" ? "invalidated" : "unavailable");
     expect(button).not.toHaveTextContent(/0%|0 tokens/);
     expect(screen.queryByRole("meter")).not.toBeInTheDocument();
   });
@@ -88,4 +88,33 @@ describe("ContextMeter in the composer", () => {
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("stale");
   });
+});
+
+it("shows catalog capacity before the first request without inventing free space", () => {
+  render(composer({ ...contextUsage, status: "awaiting_request", input_tokens: null,
+    input_quality: "unavailable", observed_at: null, context_window: 1000000 }));
+  const button = screen.getByRole("button", { name: /context.*details/i });
+  expect(button).toHaveTextContent("Context ready · 1M limit");
+  expect(button).not.toHaveTextContent(/unavailable|100%/);
+  expect(screen.queryByRole("meter")).not.toBeInTheDocument();
+  fireEvent.focus(button);
+  const details = screen.getByRole("tooltip");
+  expect(details).toHaveTextContent("Context window: 1,000,000 tokens");
+  expect(details).toHaveTextContent("Main request input: Not measured yet");
+  expect(details).toHaveTextContent("Awaiting first request");
+  expect(details).toHaveTextContent("including instructions and tool definitions");
+  expect(details).not.toHaveTextContent("Unavailable");
+});
+
+it("keeps the limit unknown until catalog metadata arrives", () => {
+  const initial = { ...contextUsage, status: "awaiting_request" as const,
+    input_tokens: null, input_quality: "unavailable" as const, observed_at: null,
+    context_window: null, capacity_source: "unknown" as const };
+  const { rerender } = render(composer(initial));
+  expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("awaiting request");
+  expect(screen.getByRole("button", { name: /context.*details/i })).not.toHaveTextContent(/ready|%/);
+  rerender(composer({ ...initial, context_window: 1000000, capacity_source: "chatgpt_catalog" }));
+  expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("ready · 1M limit");
+  rerender(composer({ ...contextUsage, input_tokens: 180000, context_window: 1000000 }));
+  expect(screen.getByRole("button", { name: /context.*details/i })).toHaveTextContent("Context ~18%");
 });

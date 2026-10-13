@@ -196,7 +196,7 @@ class OpenRouterJsonTransport(OpenAICompatibleTransport):
                     if level is not ReasoningEffort.OFF
                 },
             )
-        return EffortSupport(supported=frozenset(ReasoningEffort))
+        return EffortSupport(supported=frozenset(_OPENROUTER_EFFORT_WIRE))
 
     async def aclose(self) -> None:
         if self._model_caps is not None:

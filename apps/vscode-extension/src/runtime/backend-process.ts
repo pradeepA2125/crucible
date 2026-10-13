@@ -61,6 +61,7 @@ export const MODEL_ENV_VAR: Record<string, string> = {
   ollama: "CRUCIBLE_OLLAMA_MODEL", turboquant: "CRUCIBLE_TURBOQUANT_MODEL",
   openai: "CRUCIBLE_OPENAI_MODEL", openai_compatible: "CRUCIBLE_OPENAI_COMPAT_MODEL",
   chatgpt: "CRUCIBLE_CHATGPT_MODEL",
+  claude_subscription: "CRUCIBLE_CLAUDE_MODEL",
 };
 
 const HEALTH_ATTEMPTS = 60;

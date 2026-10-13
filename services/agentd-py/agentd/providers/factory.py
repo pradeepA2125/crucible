@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from agentd.providers.contracts import ModelJsonTransport
 
 _DEFAULT_MODEL: dict[str, str] = {
+    "claude_subscription": "claude-sonnet-5-5",
     "anthropic": "claude-3-5-sonnet-latest",
     "gemini": "gemini-3-flash-preview",
     "huggingface": "deepseek-ai/DeepSeek-R1:fastest",
@@ -25,6 +26,7 @@ _DEFAULT_MODEL: dict[str, str] = {
 }
 
 MODEL_ENV_VAR: dict[str, str] = {
+    "claude_subscription": "CRUCIBLE_CLAUDE_MODEL",
     "anthropic": "CRUCIBLE_ANTHROPIC_MODEL",
     "gemini": "CRUCIBLE_GEMINI_MODEL",
     "huggingface": "CRUCIBLE_HUGGINGFACE_MODEL",
@@ -150,6 +152,22 @@ def _build_raw_transport(
     if credentials:
         env.update(credentials)  # request credential wins; process env untouched
 
+    if backend == "claude_subscription":
+        from agentd.claude_auth.service import claude_auth_service
+        from agentd.providers.claude_subscription import ClaudeSubscriptionTransport
+
+        registration = env.get("CRUCIBLE_CLAUDE_REGISTRATION")
+        if not registration:
+            raise RuntimeError("Connect Claude in Crucible settings first.")
+        service = claude_auth_service()
+        service.read(registration)
+        return ClaudeSubscriptionTransport(
+            lambda: service.bearer(registration), registration_id=registration,
+            model_capacity=lambda model: service.context_capacity(registration, model),
+            model_lookup=lambda model: service.plan_model(registration, model),
+            max_tokens=_int_env(env, "CRUCIBLE_CLAUDE_MAX_TOKENS", 16384),
+            timeout_sec=_float_env(env, "CRUCIBLE_CLAUDE_TIMEOUT_SEC", 120.0),
+        )
     if backend == "anthropic":
         from agentd.providers.anthropic_transport import AnthropicJsonTransport
 

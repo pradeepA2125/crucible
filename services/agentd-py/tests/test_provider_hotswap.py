@@ -12,6 +12,13 @@ from agentd.storage.in_memory import InMemoryTaskStore
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
 
+NO_EFFORT_SUPPORT = {
+    "supported": [], "unsupported": {},
+    "control": {"options": [], "source": "transport", "default": None,
+                "reason": "This provider does not expose effort control."},
+}
+
+
 class _Transport:
     def __init__(self, name: str = "t") -> None:
         self.name = name
@@ -55,7 +62,7 @@ async def test_swap_mutates_every_engine(monkeypatch: pytest.MonkeyPatch) -> Non
         "model": "m2",
         "reasoning_effort": None,
         "reasoning_effort_note": None,
-        "reasoning_effort_support": {"supported": [], "unsupported": {}},
+        "reasoning_effort_support": NO_EFFORT_SUPPORT,
     }
 
 
@@ -95,7 +102,7 @@ def test_put_route_and_config_report(
         "uses_chatgpt_plan": False,
         "context_window": None,
         "reasoning_effort": None,
-        "reasoning_effort_support": {"supported": [], "unsupported": {}},
+        "reasoning_effort_support": NO_EFFORT_SUPPORT,
         "reasoning_effort_note": None,
     }
 
@@ -250,7 +257,7 @@ def test_config_reports_the_effective_context_window(tmp_path: Path) -> None:
         "uses_chatgpt_plan": False,
         "context_window": 200_000,
         "reasoning_effort": None,
-        "reasoning_effort_support": {"supported": [], "unsupported": {}},
+        "reasoning_effort_support": NO_EFFORT_SUPPORT,
         "reasoning_effort_note": None,
     }
 

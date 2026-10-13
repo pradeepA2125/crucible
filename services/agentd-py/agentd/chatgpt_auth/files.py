@@ -108,7 +108,19 @@ async def exclusive_lock(path: Path) -> AsyncIterator[None]:
     Acquired in a worker thread so waiting never blocks the event loop, and held
     across awaits (a token refresh is an HTTP call made while holding it).
     """
-    fd = await asyncio.to_thread(_acquire, path)
+    acquisition = asyncio.create_task(asyncio.to_thread(_acquire, path))
+    try:
+        fd = await asyncio.shield(acquisition)
+    except asyncio.CancelledError:
+        # A worker cannot be cancelled while flock is waiting. Retrieve and close
+        # its descriptor when it finishes, rather than leaking a permanent lock.
+        def release_late(task: asyncio.Task[int]) -> None:
+            try:
+                os.close(task.result())
+            except BaseException:
+                pass
+        acquisition.add_done_callback(release_late)
+        raise
     try:
         yield
     finally:

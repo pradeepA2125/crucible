@@ -1,0 +1,47 @@
+{
+  "status": "passed",
+  "model": "claude-sonnet-5-5",
+  "requests": [
+    {
+      "input_tokens": 1556,
+      "output_tokens": 135
+    },
+    {
+      "input_tokens": 1905,
+      "output_tokens": 108
+    }
+  ],
+  "cached_input_tokens": 1552,
+  "real_tool_validation": "passed",
+  "real_read_file": "passed",
+  "native_result_continuation": "passed",
+  "cli_process_used": false,
+  "fresh_browser_login_tested": false,
+  "model_catalog": {
+    "status": "passed",
+    "endpoint": "https://api.anthropic.com/v1/models",
+    "models_returned": 14,
+    "verified_model": "claude-sonnet-5-5",
+    "max_input_tokens": 1000000,
+    "max_tokens": 128000,
+    "inference_request_made": false,
+    "existing_authorized_token": true
+  },
+  "effort_control": {
+    "status": "passed",
+    "model": "claude-sonnet-5-5",
+    "catalog_efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "wire_efforts": [
+      "xhigh"
+    ],
+    "reply_ok": true,
+    "cli_process_used": false,
+    "fresh_browser_login_tested": false
+  }
+}

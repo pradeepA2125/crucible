@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from agentd.chatgpt_auth.service import ChatGPTAuthService, chatgpt_auth_service
 from agentd.chatgpt_auth.session import ChatGPTPlanBearer
 from agentd.providers.factory import build_transport, resolve_model
-from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
+from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort, control_for_transport
 from agentd.providers.validate import ProviderValidationError, ping_transport
 
 
@@ -85,7 +85,22 @@ class ProviderRuntime:
         registration = self._context_registration()
         if registration is not None:
             auth = self._context_auth().context_identity(registration)
-        return (self.backend, self.model, self.context_window, self.config_error, auth)
+        elif self.backend == "claude_subscription":
+            from agentd.claude_auth.service import claude_auth_service
+
+            claude_registration = getattr(self._transport, "registration_id", None)
+            if isinstance(claude_registration, str):
+                try:
+                    record = claude_auth_service().read(claude_registration)
+                    signed_in = bool(record.get("access_token") and record.get("refresh_token"))
+                except KeyError:
+                    signed_in = False
+                # Account switching/signout invalidates observations; rotating a token
+                # leaves the identity stable. Neither a token nor its hash enters state.
+                auth = (claude_registration, signed_in)
+        return (self.backend, self.model,
+                None if self.backend == "claude_subscription" else self.context_window,
+                self.config_error, auth)
 
     async def context_capacity(self) -> tuple[int | None, str]:
         """Resolve capacity from a BACKGROUND state task, not the chat path.
@@ -93,6 +108,20 @@ class ProviderRuntime:
         ChatGPT is catalog-only (unknown never falls back to configured window).
         API-key/local providers use the runtime's effective configured window.
         """
+        if self.backend == "claude_subscription":
+            identity = self.context_identity()
+            try:
+                value = await self._transport.context_capacity(self.model)
+            except Exception:
+                return None, "unknown"
+            if self.context_identity() != identity or type(value) is not int or value <= 0:
+                return None, "unknown"
+            if value != self.context_window:
+                self.context_window = value
+                for sink in self._window_sinks:
+                    sink.set_window_tokens(value)
+                self._publish_context_change()
+            return value, "claude_catalog"
         if self.backend != "chatgpt":
             value = self.context_window
             if isinstance(value, int) and not isinstance(value, bool) and value > 0:
@@ -166,17 +195,24 @@ class ProviderRuntime:
     async def effort_support(self) -> EffortSupport:
         """What the current transport can express for the current model.
 
-        Degrade-not-raise: a transport without the optional member, or one whose
-        capability lookup fails (e.g. OpenRouter's registry fetch), yields
-        all-UNKNOWN rather than blocking the config route.
+        Capability lookup failures use an explicitly unverified fallback when
+        the transport can send effort. A transport without a setter exposes no
+        control. Neither case blocks the config route.
         """
-        resolver = getattr(self._transport, "reasoning_effort_support", None)
-        if resolver is None:
-            return EffortSupport()
-        try:
-            return await resolver(self.model)
-        except Exception:
-            return EffortSupport()
+        return await self._transport_effort_support(self._transport, self.model)
+
+    @staticmethod
+    async def _transport_effort_support(transport: object, model: str) -> EffortSupport:
+        resolver = getattr(transport, "reasoning_effort_support", None)
+        support = EffortSupport()
+        if resolver is not None:
+            try:
+                support = await resolver(model)
+            except Exception:
+                pass
+        return control_for_transport(
+            support, writable=callable(getattr(transport, "set_reasoning_effort", None))
+        )
 
     async def apply_reasoning_effort(self, level: ReasoningEffort | None) -> None:
         """Clamp against the live capability, then push onto the transport."""
@@ -202,6 +238,7 @@ class ProviderRuntime:
         credentials: dict[str, str] | None = None,
         context_window: int | None = None,
         reasoning_effort: ReasoningEffort | None = None,
+        reset_reasoning_effort: bool = False,
     ) -> dict[str, object]:
         try:
             transport = build_transport(backend, credentials=credentials)
@@ -214,21 +251,41 @@ class ProviderRuntime:
             # a bare RuntimeError it escaped the route's handler entirely and came
             # back as a 500 with nothing the UI could show.
             raise ProviderValidationError(str(exc)) from exc
-        await ping_transport(transport, resolved)  # raises ProviderValidationError
+        if backend == "claude_subscription":
+            try:
+                capacity = await transport.context_capacity(resolved)
+            except Exception as exc:
+                raise ProviderValidationError(str(exc)) from exc
+            if type(capacity) is not int or not 1024 <= capacity <= 10_000_000:
+                raise ProviderValidationError(
+                    "Choose a Claude catalog model with a known context window."
+                )
+            # Catalog metadata wins over caller settings, including composer swaps.
+            context_window = capacity
+        requested = None if reset_reasoning_effort else (
+            reasoning_effort if reasoning_effort is not None else self.reasoning_effort)
+        support = await self._transport_effort_support(transport, resolved)
+        effective, note = support.resolve(requested) if requested is not None else (None, None)
+        setter = getattr(transport, "set_reasoning_effort", None)
+        if setter is not None:
+            setter(effective)
+        # Validate the actual configured effort before changing any live engine.
+        await ping_transport(transport, resolved)
+        # OpenAI may learn a rejected effort while validating and drop the field.
+        checked = await self._transport_effort_support(transport, resolved)
+        if effective is not None and checked.state(effective) == "unsupported":
+            note = f"{effective} rejected by this model; using provider default."
+            effective = None
+            if setter is not None:
+                setter(None)
         for engine in self._engines:
             engine.set_provider(model=resolved, transport=transport)  # type: ignore[attr-defined]
         self.backend, self.model = backend, resolved
         # A real transport now exists, so whatever failed at startup no longer
         # describes this process.
         self.config_error = None
-        # The freshly built transport starts with no effort. Re-apply after the
-        # ping so an unsupported rung can never block a legitimate model swap —
-        # the rung is clamped against the NEW model's capability, which is the
-        # whole reason this is re-resolved rather than copied.
         self._transport = transport
-        await self.apply_reasoning_effort(
-            reasoning_effort if reasoning_effort is not None else self.reasoning_effort
-        )
+        self.reasoning_effort, self.reasoning_effort_note = effective, note
         # Applied only after validation succeeds, for the same reason the engines
         # are: a rejected swap must leave the process exactly as it was. Absent
         # means "unchanged", not "reset" — a model-only hot-swap from the composer
@@ -247,8 +304,5 @@ class ProviderRuntime:
             self.reasoning_effort.value if self.reasoning_effort is not None else None
         )
         result["reasoning_effort_note"] = self.reasoning_effort_note
-        result["reasoning_effort_support"] = {
-            "supported": sorted(level.value for level in support.supported),
-            "unsupported": {level.value: why for level, why in support.unsupported.items()},
-        }
+        result["reasoning_effort_support"] = support.payload()
         return result

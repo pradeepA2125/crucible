@@ -98,6 +98,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // process env): the stored API key, or for the ChatGPT plan the registration id
   // (an id, never a token).
   const providerCredentials = async (backend: string): Promise<Record<string, string> | undefined> => {
+    if (backend === "claude_subscription") {
+      const registration = runtimeManager.claudeRegistration();
+      return registration ? { CRUCIBLE_CLAUDE_REGISTRATION: registration } : undefined;
+    }
     if (backend === "chatgpt") {
       const registration = runtimeManager.chatgptRegistration();
       return registration ? { CRUCIBLE_CHATGPT_REGISTRATION: registration } : undefined;
@@ -136,6 +140,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   };
 
+  let claudeCatalogCache: { registration: string; at: number; models: { slug: string; displayName: string; contextWindow: number | null }[] } | null = null;
+  let claudeCatalogEpoch = 0;
+  const claudeCatalog = async () => {
+    const registration = runtimeManager.claudeRegistration();
+    if (!registration) return undefined;
+    if (claudeCatalogCache?.registration === registration && Date.now() - claudeCatalogCache.at < 5 * 60_000) {
+      return claudeCatalogCache.models;
+    }
+    const epoch = claudeCatalogEpoch;
+    try {
+      const models = (await controller.configClient().listClaudeModels(registration)).filter(m => m.contextWindow !== null);
+      if (epoch !== claudeCatalogEpoch || runtimeManager.claudeRegistration() !== registration) return undefined;
+      claudeCatalogCache = { registration, at: Date.now(), models };
+      return models;
+    } catch { return undefined; }
+  };
+
   // Composer model quick-swap: the current provider + the set of providers with a
   // stored key (offered for hot-swap). Rebuilt after every swap.
   const composerModelState = async () => {
@@ -145,11 +166,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (p.keyEnvVar && (await runtimeManager.getProviderKey(p.id)) !== undefined) keyed.push(p.id);
     }
     const current = config.provider ?? null;
+    const [chatgptModels, claudeModels] = await Promise.all([chatgptCatalog(), claudeCatalog()]);
     return {
       current,
       // Drives "Using ChatGPT plan · Manage usage" beside the model chip (UI/UX guidelines).
       usesChatgptPlan: config.provider?.usesChatgptPlan ?? false,
-      options: buildModelOptions(current, keyed, PROVIDERS, await chatgptCatalog()),
+      usesClaudePlan: current?.backend === "claude_subscription",
+      options: buildModelOptions(current, keyed, PROVIDERS, chatgptModels, claudeModels),
       effort: {
         level: config.provider?.reasoningEffort ?? null,
         support: config.provider?.reasoningEffortSupport ?? null,
@@ -164,7 +187,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Reasoning-effort dial quick-swap: mirrors the composer model swap above —
   // reads the persisted rung back into the SAME modelList shape so the webview
   // has one refresh path for both.
-  const setReasoningEffort = async (level: ReasoningEffort) => {
+  const setReasoningEffort = async (level: ReasoningEffort | null) => {
     const config = await controller.configClient().getConfig();
     const backend = config.provider?.backend;
     if (!backend) throw new Error("no provider configured");
@@ -185,7 +208,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     });
     // Persist what the backend ACTUALLY applied, not what was asked — a clamped
     // rung must not come back on the next managed spawn as the unclamped one.
-    await runtimeManager.saveReasoningEffort(res.reasoningEffort ?? level);
+    await runtimeManager.saveReasoningEffort(
+      res.reasoningEffort !== undefined ? res.reasoningEffort ?? undefined : level ?? undefined,
+    );
     // The note itself now comes from composerModelState() (sourced off GET
     // /v1/config), which is already current since setProvider just applied it —
     // no need to thread it through this response separately.
@@ -241,18 +266,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         && Number.isSafeInteger(catalogWindow)
         && catalogWindow >= 1024 && catalogWindow <= 10_000_000
         ? catalogWindow : undefined;
-      await controller.configClient().setProvider({
+      const result = await controller.configClient().setProvider({
         backend, model,
         ...(credentials ? { credentials } : {}),
         ...(contextWindow !== undefined ? { contextWindow } : {}),
       });
       await runtimeManager.saveProvider(backend, model);
       // A rejected swap must not change the next managed spawn's window either.
-      if (contextWindow !== undefined) await runtimeManager.saveContextWindow(contextWindow);
+      const effectiveWindow = backend === "claude_subscription" ? result.contextWindow : contextWindow;
+      if (effectiveWindow !== undefined) await runtimeManager.saveContextWindow(effectiveWindow);
       await controller.refreshContextUsage();
       return composerModelState();
     },
-    (level: ReasoningEffort) => setReasoningEffort(level),
+    (level: ReasoningEffort | null) => setReasoningEffort(level),
     (section?: string) => {
       void vscode.commands.executeCommand("crucible.openSettingsPanel", section);
     },
@@ -588,6 +614,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const afterSettingsMutation = async (kind: "auth" | "provider"): Promise<void> => {
     if (kind === "auth") invalidateChatgptCatalog();
+    claudeCatalogEpoch += 1;
+    claudeCatalogCache = null;
     // Both reads are backend-authoritative; catalog windows never drive the meter.
     await Promise.all([controller.refreshContextUsage(), chatPanel.refreshModels()]);
   };

@@ -9,6 +9,7 @@ interface Props {
 
 const capacityNames = {
   chatgpt_catalog: "ChatGPT catalog",
+  claude_catalog: "Claude catalog",
   configured: "Configured",
   unknown: "Unknown",
 };
@@ -32,7 +33,11 @@ export function ContextMeter({ usage, stale }: Props) {
   const estimate = usage?.input_quality === "estimated" ? "~" : "";
   const missing = usage?.status === "awaiting_request" ? "awaiting request"
     : usage?.status === "invalidated" ? "invalidated" : "unavailable";
-  const value = input === null ? missing : ratio === null
+  const awaiting = usage?.status === "awaiting_request" && input === null;
+  const initialValue = window === null ? missing : awaiting
+    ? `ready · ${formatTokens(window)} limit`
+    : `${formatTokens(window)} limit · ${missing}`;
+  const value = input === null ? initialValue : ratio === null
     ? `${estimate}${formatTokens(input)} tokens · limit unknown`
     : `${estimate}${Math.round(ratio)}%`;
   const label = `${prefix} ${value}${stale ? " · stale" : ""}`;
@@ -72,14 +77,15 @@ export function ContextMeter({ usage, stale }: Props) {
         <div id={detailsId} role="tooltip" data-testid="context-details"
           className="absolute bottom-full left-0 z-40 mb-1 w-[320px] max-w-full rounded-[8px] border border-border-strong bg-surface-2 p-3 text-[11px] leading-relaxed text-text-2 shadow-lg break-words">
           <div className="font-semibold text-text">{label}</div>
-          <div>Main request input: {input === null ? "Unavailable" : `${input.toLocaleString("en-US")} tokens`}</div>
-          <div>Input source: {qualityNames[usage?.input_quality ?? "unavailable"]}</div>
+          <div>Main request input: {input === null ? awaiting ? "Not measured yet" : "Unavailable" : `${input.toLocaleString("en-US")} tokens`}</div>
+          <div>Input source: {awaiting ? "Awaiting first request" : qualityNames[usage?.input_quality ?? "unavailable"]}</div>
           <div>Context window: {window === null ? "Unknown" : `${window.toLocaleString("en-US")} tokens`}</div>
           <div>Capacity source: {capacityNames[usage?.capacity_source ?? "unknown"]}</div>
           {rawRatio !== null && <div>Input / window: {estimate}{rawRatio}%{ratio! > 100 ? " (over capacity; bar capped at 100%)" : ""}</div>}
           <div>Model: {usage ? `${usage.provider} / ${usage.model}` : "Unknown"}</div>
-          <div>Observed: {usage?.observed_at ?? "Unknown"}</div>
+          <div>Observed: {usage?.observed_at ?? (awaiting ? "No request yet" : "Unknown")}</div>
           {stale && <div>Stale snapshot — may not describe the next request.</div>}
+          {awaiting && <p className="mt-1 text-text-3">Usage appears when Crucible prepares the first model request, including instructions and tool definitions.</p>}
           <p className="mt-1 text-text-3">Main model request input only, not cumulative thread tokens or account-plan usage. This is not a prediction of the next message.</p>
         </div>
       )}

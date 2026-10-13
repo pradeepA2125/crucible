@@ -3,6 +3,8 @@ import { CardShell } from "../components/shared/CardShell";
 import { BtnPrimary } from "../components/shared/buttons";
 import { Icon } from "../components/Icon";
 import { FIELD } from "../settings/ui";
+import { ContinueWithClaudeButton } from "../components/shared/ClaudeBrand";
+import { ClaudePlanPanel } from "../settings/sections/ClaudePlanPanel";
 import { ChatGPTPlanPanel, PlanOffer } from "../settings/sections/ChatGPTPlanPanel";
 import type { SettingsState } from "../settings/types";
 import { StepRail, type Step } from "./StepRail";
@@ -78,6 +80,8 @@ export default function SetupApp() {
   // "Continue with ChatGPT": idle → starting (backend spawning) → ready (panel shown).
   const [chatgptPhase, setChatgptPhase] = useState<"idle" | "starting" | "ready">("idle");
   const [usedChatGPT, setUsedChatGPT] = useState(false);
+  const [claudePhase, setClaudePhase] = useState<"idle" | "starting" | "ready">("idle");
+  const [usedClaude, setUsedClaude] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [extraValues, setExtraValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -109,6 +113,8 @@ export default function SetupApp() {
       const msg = event.data;
       if (!msg || typeof msg !== "object") return;
       switch (msg.type) {
+        case "setup/claudeReady":
+          setClaudePhase("ready"); setBusy(false); break;
         case "setup/progress":
           setProgress((prev) => ({
             ...prev,
@@ -142,6 +148,7 @@ export default function SetupApp() {
           setBusy(false);
           setError(msg.message);
           setChatgptPhase((phase) => (phase === "starting" ? "idle" : phase));
+          setClaudePhase((phase) => (phase === "starting" ? "idle" : phase));
           break;
       }
     };
@@ -159,6 +166,7 @@ export default function SetupApp() {
   };
 
   const continueWithChatGPT = () => {
+    setUsedClaude(false);
     setBusy(true);
     setError(null);
     setUsedChatGPT(true);
@@ -170,6 +178,7 @@ export default function SetupApp() {
     setBusy(true);
     setError(null);
     setUsedChatGPT(false);
+    setUsedClaude(false);
     setValidateWarning(null);
     vscode.postMessage({
       type: "setup/save",
@@ -265,6 +274,17 @@ export default function SetupApp() {
             <ChatGPTPlanPanel state={NO_PROVIDER_STATE} busy={busy}
                               send={(m) => vscode.postMessage(m)} />
           )}
+          {claudePhase === "idle" && <CardShell icon="spark" title="Claude subscription">
+            <div className="px-3 pb-3 pt-1">
+              <p className="mb-2 text-xs text-text-2">Experimental connection using your Claude subscription.</p>
+              <ContinueWithClaudeButton disabled={busy} onClick={() => {
+                setUsedClaude(true); setUsedChatGPT(false); setClaudePhase("starting"); setBusy(true);
+                vscode.postMessage({ type: "setup/startForClaude" });
+              }} />
+            </div>
+          </CardShell>}
+          {claudePhase === "starting" && <p className="text-xs text-text-2" role="status">Starting Crucible for Claude sign-in…</p>}
+          {claudePhase === "ready" && <ClaudePlanPanel state={NO_PROVIDER_STATE} busy={busy} send={m => vscode.postMessage(m)} />}
           <CardShell icon="key" title="Or use your own API key">
             <div className="flex flex-col gap-3 px-3 pb-3 pt-1">
               <label className="flex flex-col gap-1 text-xs text-text-2">
@@ -332,7 +352,7 @@ export default function SetupApp() {
           <CardShell icon="check" iconColor="var(--color-green)" title="Ready" borderColor="var(--green-brd)">
             <div className="flex flex-col items-start gap-3 px-3 pb-3 pt-1">
               <p className="text-xs text-text-2">
-                {usedChatGPT
+                {usedClaude ? <>Backend is running on port {port}, using your Claude subscription.</> : usedChatGPT
                   ? <>Backend is running on port {port}, using your ChatGPT plan.</>
                   : <>Backend is running on port {port}. Provider <code>{backend}</code> / <code>{model}</code> validated.</>}
               </p>

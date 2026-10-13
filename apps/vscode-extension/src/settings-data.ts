@@ -13,6 +13,7 @@ import {
   type ChatGPTInMsg,
   type ChatGPTOutMsg,
 } from "./chatgpt-settings.js";
+import { createClaudeHandler, isClaudeMessage, type ClaudeDeps, type ClaudeInMsg, type ClaudeOutMsg } from "./claude-settings.js";
 import type { SettingsSectionId } from "./settings-sections.js";
 
 // vscode-free message handler for the settings panel (settings-panel.ts wires it to
@@ -66,6 +67,7 @@ export type SettingsInMsg =
   | { type: "settings/trustAgent"; path: string; sha256: string }
   | { type: "settings/openFile"; path: string }
   | { type: "settings/listModels" }
+  | ClaudeInMsg
   | ChatGPTInMsg;
 
 // host → webview
@@ -80,6 +82,7 @@ export type SettingsOutMsg =
   | { type: "settings/agents"; catalog: AgentCatalog }
   | { type: "settings/agentsError"; message: string }
   | { type: "settings/models"; models: string[] }
+  | ClaudeOutMsg
   | ChatGPTOutMsg;
 
 export interface SettingsDeps {
@@ -149,6 +152,7 @@ export interface SettingsDeps {
   listModels(): Promise<string[]>;
   /** Sign in with ChatGPT (spec 2026-10-06 §6). */
   chatgpt: ChatGPTDeps;
+  claude?: ClaudeDeps;
 }
 
 async function buildState(
@@ -221,7 +225,17 @@ export function createSettingsHandler(
     await postState();
   });
 
+  const claude = deps.claude ? createClaudeHandler(deps.claude, post, async () => {
+    await afterMutation("auth");
+    await postState();
+  }) : null;
+
   return async (msg: SettingsInMsg): Promise<void> => {
+    if (isClaudeMessage(msg)) {
+      if (claude) await claude(msg);
+      else post({ type: "settings/claudeError", message: "Update Crucible to connect Claude." });
+      return;
+    }
     if (isChatGPTMessage(msg)) {
       await chatgpt(msg);
       return;

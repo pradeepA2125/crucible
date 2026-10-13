@@ -203,3 +203,19 @@ async def test_malformed_catalog_is_failure_not_unlisted(tmp_path, body):
             await service.plan_model(REG, "one")
     finally:
         await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_reasoning_metadata_is_preserved_per_account_model(tmp_path):
+    service = make_service(tmp_path, lambda _: httpx.Response(200, json={"models": [
+        {"slug": "one", "visibility": "list", "default_reasoning_level": "low",
+         "supported_reasoning_levels": [{"effort": "low", "description": "Quick"}, {"effort": "xhigh"}]},
+        {"slug": "two", "visibility": "list", "supported_reasoning_levels": []}]}))
+    try:
+        one = await service.plan_model(REG, "one")
+        two = await service.plan_model(REG, "two")
+        assert one.reasoning_effort_support.control.default.value == "low"
+        assert one.reasoning_effort_support.control.options[1].value.value == "xhigh"
+        assert two.reasoning_effort_support.control.options == ()
+    finally:
+        await service.aclose()

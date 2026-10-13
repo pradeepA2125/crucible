@@ -93,3 +93,37 @@ describe("ModelMenu on the ChatGPT plan", () => {
     expect(screen.queryByText("Using ChatGPT plan")).toBeNull();
   });
 });
+
+describe("ModelMenu on the Claude plan", () => {
+  const CLAUDE = {
+    type: "modelList", usesClaudePlan: true,
+    current: { backend: "claude_subscription", model: "claude-sonnet-5-5" },
+    options: [
+      { backend: "claude_subscription", label: "Claude subscription", model: "claude-sonnet-5-5", display: "Claude Sonnet 5.5", active: true },
+    ],
+  };
+
+  it("shows the Claude indicator and opens Claude usage settings", () => {
+    render(<ModelMenu />);
+    deliver(CLAUDE);
+    expect(screen.getByRole("button", { name: "Model: Claude Sonnet 5.5" })).toBeTruthy();
+    expect(screen.getByText("Using Claude plan")).toBeTruthy();
+    expect(screen.queryByText("Using ChatGPT plan")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Manage usage" }));
+    expect(vscode.postMessage).toHaveBeenLastCalledWith(
+      { type: "settings/openExternal", url: "https://claude.ai/settings/usage" });
+    deliver(LIST);
+    expect(screen.queryByText("Using Claude plan")).toBeNull();
+  });
+
+  it("keeps Claude identification on a failed swap and clears it when the provider changes", () => {
+    render(<ModelMenu />);
+    deliver(CLAUDE);
+    deliver({ type: "modelSwapError", message: "Connection expired" });
+    expect(screen.getByText("Using Claude plan")).toBeTruthy();
+    // Stale or contradictory flags must not identify an API-key provider as plan usage.
+    deliver({ ...LIST, usesClaudePlan: true, usesChatgptPlan: true });
+    expect(screen.queryByText("Using Claude plan")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Manage usage" })).toBeNull();
+  });
+});

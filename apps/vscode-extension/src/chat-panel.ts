@@ -82,6 +82,8 @@ export interface ComposerModelState {
   current: { backend: string; model: string } | null;
   /** The ChatGPT plan is in use: show "Using ChatGPT plan · Manage usage". */
   usesChatgptPlan?: boolean;
+  /** The active backend uses the Claude subscription adapter. */
+  usesClaudePlan?: boolean;
   options: unknown[];
   // Reasoning-effort dial state, carried on the same modelList round-trip since
   // capability (EffortSupport) is per-(backend, model) — it's stale the instant
@@ -99,7 +101,7 @@ export interface ComposerModelState {
 export type ListModelsHandler = () => Promise<ComposerModelState>;
 export type SetModelHandler = (backend: string, model: string) => Promise<ComposerModelState>;
 export type SetReasoningEffortHandler = (
-  level: ReasoningEffort,
+  level: ReasoningEffort | null,
 ) => Promise<ComposerModelState>;
 export type OpenSettingsHandler = (section?: string) => void;
 export type OpenMemoryPanelHandler = () => void;
@@ -461,7 +463,7 @@ export class ChatPanel {
         // the generic p.catch — mirrors the setModel branch above.
         p = (async () => {
           try {
-            const result = await this.onSetReasoningEffort(m["level"] as ReasoningEffort);
+            const result = await this.onSetReasoningEffort(m["level"] as ReasoningEffort | null);
             this.panel?.webview.postMessage({ type: "modelList", ...result });
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);

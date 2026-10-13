@@ -29,12 +29,14 @@ class _PlainTransport:
 
 
 @pytest.mark.asyncio
-async def test_support_degrades_to_all_unknown_for_a_transport_without_the_members():
+async def test_transport_without_a_setter_exposes_no_effort_control():
     rt = ProviderRuntime(
         backend="scripted", model="m", engines=[], transport=_PlainTransport()
     )
     support = await rt.effort_support()
-    assert support.state(ReasoningEffort.HIGH) == "unknown"
+    assert support.state(ReasoningEffort.HIGH) == "unsupported"
+    assert support.control.options == ()
+    assert support.resolve(ReasoningEffort.HIGH)[0] is None
 
 
 @pytest.mark.asyncio

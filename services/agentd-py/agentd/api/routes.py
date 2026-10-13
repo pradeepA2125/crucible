@@ -100,13 +100,7 @@ class McpDisabledRequest(BaseModel):
 def _effort_support_payload(support: object) -> dict[str, object]:
     """EffortSupport to JSON. Sorted so the payload is stable across restarts and
     the frontend's dedup/diffing never sees spurious churn."""
-    return {
-        "supported": sorted(level.value for level in support.supported),  # type: ignore[attr-defined]
-        "unsupported": {
-            level.value: why
-            for level, why in support.unsupported.items()  # type: ignore[attr-defined]
-        },
-    }
+    return support.payload()  # type: ignore[attr-defined]
 
 
 def _to_task_result(task: TaskRecord) -> TaskResult:
@@ -349,6 +343,9 @@ def build_router(
                 credentials=body.credentials or None,
                 context_window=body.context_window,
                 reasoning_effort=requested_effort,
+                **({"reset_reasoning_effort": True}
+                   if "reasoning_effort" in body.model_fields_set and body.reasoning_effort is None
+                   else {}),
             )
         except (ProviderValidationError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

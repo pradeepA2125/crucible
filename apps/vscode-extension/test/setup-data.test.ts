@@ -101,9 +101,9 @@ describe("createSetupHandler", () => {
     expect(posted).toEqual([{ type: "setup/ready", port: 8123 }]);
   });
 
-  it("PROVIDERS covers all eleven, locals have no key var", () => {
+  it("PROVIDERS covers all twelve, locals have no key var", () => {
     expect(PROVIDERS.map((p) => p.id).sort()).toEqual([
-      "anthropic", "chatgpt", "gemini", "groq", "huggingface", "ollama", "openai",
+      "anthropic", "chatgpt", "claude_subscription", "gemini", "groq", "huggingface", "ollama", "openai",
       "openai_compatible", "openrouter", "turboquant", "watsonx"]);
     expect(PROVIDERS.find((p) => p.id === "ollama")!.keyEnvVar).toBeUndefined();
     // Two deliberate exceptions have no default model: openai_compatible (the user
@@ -251,4 +251,33 @@ describe("setup/save guard", () => {
     await handle({ type: "setup/save", backend: "groq", model: "m", apiKey: "k" });
     expect(started).toBe(true);
   });
+});
+
+it("Claude setup completes after provider validation, not just successful sign-in", async () => {
+  const posted: unknown[] = [];
+  const pending = { attemptId: "a", state: "pending" as const, registrationId: null, reason: null, message: null };
+  const registration = "claude_" + "a".repeat(24);
+  const handle = createSetupHandler(deps({
+    startForClaude: async () => ({ port: 8090 }),
+    claude: {
+      client: {
+        startClaudeSignIn: async () => ({ ...pending, authorizeUrl: "https://claude.ai/oauth/authorize?state=a" }),
+        getClaudeSignIn: async () => ({ ...pending, state: "succeeded", registrationId: registration }),
+        cancelClaudeSignIn: async () => ({ ...pending, state: "failed" }),
+        listClaudeAccounts: async () => [{ registrationId: registration, label: "Claude", signedIn: true }],
+        listClaudeModels: async () => [],
+        signOutClaude: async () => ({ remoteRevoked: false }),
+        setProvider: async req => ({ backend: req.backend, model: req.model ?? "" }),
+      },
+      openExternal: async () => {}, activeRegistration: () => registration,
+      saveActiveRegistration: async () => {}, saveContextWindow: async () => {},
+      sleep: async () => {}, now: () => 0,
+    },
+  }), msg => posted.push(msg));
+  await handle({ type: "setup/startForClaude" });
+  expect(posted).toContainEqual({ type: "setup/claudeReady" });
+  await handle({ type: "settings/claudeSignIn" });
+  expect(posted).not.toContainEqual({ type: "setup/ready", port: 8090 });
+  await handle({ type: "settings/useClaude", registrationId: registration, model: "claude-sonnet-5-5" });
+  expect(posted).toContainEqual({ type: "setup/ready", port: 8090 });
 });

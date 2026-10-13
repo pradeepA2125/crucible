@@ -7,6 +7,7 @@ import { PROVIDERS } from "../types";
 import type { SettingsOutMsg } from "../types";
 import { FIELD } from "../ui";
 import { contextWindowError, defaultContextWindow } from "../contextWindows";
+import { ClaudePlanPanel } from "./ClaudePlanPanel";
 import { ChatGPTPlanPanel } from "./ChatGPTPlanPanel";
 import type { SectionProps } from "./meta";
 
@@ -96,11 +97,12 @@ export function ProviderSection({ state, busy, send }: SectionProps) {
     <div>
       <SectionHeader
         title="Provider"
-        description="Use your ChatGPT plan, or pick a model provider with your own API key. Saving validates and hot-swaps the running backend — no restart."
+        description="Connect a subscription, or pick a model provider with your own API key. Saving validates and hot-swaps the running backend — no restart."
       />
       <div className="mb-3">
         <ChatGPTPlanPanel state={state} busy={busy} send={send} />
       </div>
+      <div className="mb-3"><ClaudePlanPanel state={state} busy={busy} send={send} /></div>
       <CardShell icon="key" title="API key provider">
         <div className="flex flex-col gap-3 px-3 pb-3 pt-1">
           <label className="flex flex-col gap-1 text-xs text-text-2">

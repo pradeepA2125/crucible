@@ -44,3 +44,10 @@ describe("context usage snapshot", () => {
     expect(await live(observation, 2)).toMatchObject({ processId: null, contextUsage: observation });
   });
 });
+
+it("accepts Claude catalog capacity and rejects a configured Claude window", async () => {
+  const claude = { ...observation, provider: "claude_subscription", model: "claude-sonnet-5-5", capacity_source: "claude_catalog", context_window: 1000000 };
+  expect(await live(claude)).toMatchObject({ contextUsage: claude });
+  expect(await live({ ...claude, capacity_source: "configured" })).toMatchObject({ contextUsage: null });
+  expect(await live({ ...claude, provider: "openai" })).toMatchObject({ contextUsage: null });
+});

@@ -161,3 +161,16 @@ async def test_a_seeded_rung_reaches_the_transport_only_after_it_is_applied() ->
     await rt.apply_reasoning_effort(rt.reasoning_effort)
 
     assert transport.effort == ReasoningEffort.HIGH
+
+
+def test_explicit_null_resets_but_omission_preserves_effort(tmp_path, monkeypatch):
+    transport = _Transport()
+    monkeypatch.setattr(runtime_mod, "build_transport", lambda *args, **kwargs: transport)
+    async def ping(t, model):
+        assert t.effort is None
+    monkeypatch.setattr(runtime_mod, "ping_transport", ping)
+    runtime = ProviderRuntime(backend="b", model="m", engines=[], transport=transport, reasoning_effort=ReasoningEffort.HIGH)
+    response = _client(tmp_path, runtime).put("/v1/config/provider", json={"backend": "b", "model": "m", "reasoning_effort": None})
+    assert response.status_code == 200
+    assert response.json()["reasoning_effort"] is None
+    assert response.json()["reasoning_effort_support"]["control"]["source"] == "transport"

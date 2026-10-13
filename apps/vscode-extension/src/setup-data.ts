@@ -1,6 +1,7 @@
 // vscode-free message handler for the first-run setup wizard (setup-panel.ts wires it
 // to RuntimeManager + HttpBackendClient). Mirrors memory-data.ts's split.
 
+import { createClaudeHandler, isClaudeMessage, type ClaudeDeps, type ClaudeInMsg, type ClaudeOutMsg } from "./claude-settings.js";
 import {
   createChatGPTHandler,
   isChatGPTMessage,
@@ -36,6 +37,8 @@ export interface SetupDeps {
   /** "Continue with ChatGPT" needs a running backend before any model is chosen: save
    * the chatgpt provider without a model and start it (it boots unsigned-in). */
   startForChatGPT(): Promise<{ port: number }>;
+  startForClaude?(): Promise<{ port: number }>;
+  claude?: ClaudeDeps;
   /** The same sign-in host logic as Settings (src/chatgpt-settings.ts). */
   chatgpt: ChatGPTDeps;
 }
@@ -47,6 +50,8 @@ export type SetupInMsg =
   | { type: "setup/save"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "setup/openChat" }
   | { type: "setup/startForChatGPT" }
+  | ClaudeInMsg
+  | { type: "setup/startForClaude" }
   | ChatGPTInMsg;
 
 // host → webview
@@ -59,6 +64,8 @@ export type SetupOutMsg =
   // The backend is up for ChatGPT sign-in; with no saved account the wizard signs in
   // straight away, otherwise it lists them (reusing a registration, not making a new one).
   | { type: "setup/chatgptReady"; hasAccounts: boolean }
+  | ClaudeOutMsg
+  | { type: "setup/claudeReady" }
   | ChatGPTOutMsg;
 
 export interface ExtraField {
@@ -79,7 +86,7 @@ export interface ProviderInfo {
   /** Additional required credential fields beyond the primary API key. */
   extraFields?: ExtraField[];
   /** Signs in with an account instead of an API key ("Continue with ChatGPT"). */
-  signIn?: "chatgpt";
+  signIn?: "chatgpt" | "claude";
 }
 
 // Defaults mirror agentd/providers/factory.py::_DEFAULT_MODEL; key vars mirror
@@ -121,6 +128,7 @@ export const PROVIDERS: ProviderInfo[] = [
   },
   // Signs in instead of taking a key: the backend owns the OAuth tokens and the model
   // list comes from the account (spec 2026-10-06). No default model.
+  { id: "claude_subscription", label: "Claude subscription (experimental)", local: false, signIn: "claude", defaultModel: "claude-sonnet-5-5" },
   { id: "chatgpt", label: "ChatGPT plan", local: false, signIn: "chatgpt", defaultModel: "" },
 ];
 
@@ -169,13 +177,28 @@ export function createSetupHandler(
   const chatgpt = createChatGPTHandler(deps.chatgpt, post, async () => {
     if (chatgptPort !== null) post({ type: "setup/ready", port: chatgptPort });
   });
+  let claudePort: number | null = null;
+  const claude = deps.claude ? createClaudeHandler(deps.claude, post, async kind => {
+    if (kind === "provider" && claudePort !== null) post({ type: "setup/ready", port: claudePort });
+  }) : null;
   return async (msg: SetupInMsg): Promise<void> => {
+    if (isClaudeMessage(msg)) {
+      if (claude) await claude(msg);
+      return;
+    }
     if (isChatGPTMessage(msg)) {
       await chatgpt(msg);
       return;
     }
     try {
       switch (msg.type) {
+        case "setup/startForClaude": {
+          if (!deps.startForClaude) throw new Error("Update Crucible to connect Claude.");
+          const { port } = await deps.startForClaude();
+          claudePort = port;
+          post({ type: "setup/claudeReady" });
+          return;
+        }
         case "setup/startForChatGPT": {
           const { port } = await deps.startForChatGPT();
           chatgptPort = port;

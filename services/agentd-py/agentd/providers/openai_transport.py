@@ -18,7 +18,7 @@ import logging
 import os
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
 
 import openai
@@ -82,7 +82,9 @@ _SCHEMA_NAME_RE = re.compile(r"[^A-Za-z0-9_-]")
 # Our rungs to the Responses API's values. OFF is "none": the live plan route lists
 # none/low/medium/high/xhigh/max for gpt-5.6 models.
 _EFFORT_WIRE: dict[ReasoningEffort, str] = {
-    ReasoningEffort.OFF: "none", ReasoningEffort.LOW: "low",
+    ReasoningEffort.OFF: "none", ReasoningEffort.NONE: "none",
+    ReasoningEffort.MINIMAL: "minimal", ReasoningEffort.XHIGH: "xhigh",
+    ReasoningEffort.ULTRA: "ultra", ReasoningEffort.LOW: "low",
     ReasoningEffort.MEDIUM: "medium", ReasoningEffort.HIGH: "high", ReasoningEffort.MAX: "max",
 }
 
@@ -196,9 +198,28 @@ class OpenAIJsonTransport(ModelJsonTransport):
         self._effort = level
 
     async def reasoning_effort_support(self, model: str) -> EffortSupport:
-        """Every rung UNKNOWN until the endpoint proves otherwise: which rungs a model
-        takes varies per model (live: gpt-5.6 rejects 'minimal' but takes
-        none…max), so only a probative rejection marks one unsupported."""
+        """Plan catalog options take precedence; API-key/unknown catalogs use fallback.
+
+        A probative rejection overrides stale metadata for this transport.
+        """
+        if self._plan_route and self._plan_model_lookup is not None:
+            entry = await self._plan_model_lookup(model)
+            support = getattr(entry, "reasoning_effort_support", None)
+            if isinstance(support, EffortSupport) and support.control is not None:
+                # Learned rejections override a catalog that is temporarily stale.
+                options = tuple(
+                    row for row in support.control.options
+                    if row.value not in self._effort_rejected
+                )
+                default = support.control.default
+                return EffortSupport(
+                    supported=support.supported - self._effort_rejected.keys(),
+                    unsupported=dict(self._effort_rejected),
+                    control=replace(
+                        support.control, options=options,
+                        default=default if default not in self._effort_rejected else None,
+                    ),
+                )
         return EffortSupport(unsupported=dict(self._effort_rejected))
 
     def _note_effort_rejection(self, exc: Exception, body: dict[str, Any]) -> bool:

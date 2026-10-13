@@ -1,5 +1,6 @@
 /** Mirror of editor-client's ProviderAccess (spec 2026-10-06 §5.4). */
 export interface ProviderAccessView {
+  provider?: string;
   kind: string;
   message: string;
   code: string | null;
@@ -384,7 +385,7 @@ interface ContextUsageBase {
   turn_id: string | null;
   request_id: string | null;
   context_window: number | null; // positive safe integer when known
-  capacity_source: "chatgpt_catalog" | "configured" | "unknown";
+  capacity_source: "chatgpt_catalog" | "claude_catalog" | "configured" | "unknown";
   observed_at: string | null; // UTC ISO8601
 }
 
@@ -509,7 +510,7 @@ export type WebviewMessage =
   | { type: "setModel"; backend: string; model: string }
   // Composer reasoning-effort quick-swap (EffortMenu) — rides the same modelList
   // round-trip as setModel since capability is per-(backend, model).
-  | { type: "setReasoningEffort"; level: "off" | "low" | "medium" | "high" | "max" }
+  | { type: "setReasoningEffort"; level: "off" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | null }
   // section (optional) deep-links the Settings pane to a section (from the chat drawer).
   | { type: "openSettings"; section?: string }
   // Routed to the shared settings handler (chat-panel forwards every settings/*).

@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 import type { BackendClientFactory } from "./controller.js";
 import { PROVIDER_KEY_ENV } from "./runtime/vscode-runtime.js";
 import type { RuntimeManager } from "./runtime/vscode-runtime.js";
+import { buildClaudeDeps } from "./claude-deps.js";
 import { buildChatGPTDeps } from "./chatgpt-deps.js";
 import { createSetupHandler, type SetupDeps, type SetupInMsg } from "./setup-data.js";
 
@@ -89,6 +90,18 @@ export class SetupPanel {
         this.setManagedBackendUrl(url);
         return { port };
       },
+      startForClaude: async () => {
+        await this.runtimeManager.saveProvider("claude_subscription", "claude-sonnet-5-5");
+        const { port } = await this.runtimeManager.startForWorkspace(this.workspacePath);
+        const url = this.runtimeManager.backendUrl(this.workspacePath) ?? `http://127.0.0.1:${port}`;
+        this.setManagedBackendUrl(url);
+        return { port };
+      },
+      claude: buildClaudeDeps(this.runtimeManager, () => {
+        const url = this.runtimeManager.backendUrl(this.workspacePath);
+        if (!url) throw new Error("Backend not started yet.");
+        return this.clientFactory(url);
+      }),
       chatgpt: buildChatGPTDeps(this.runtimeManager, () => {
         const url = this.runtimeManager.backendUrl(this.workspacePath);
         if (!url) throw new Error("Backend not started yet.");

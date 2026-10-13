@@ -175,7 +175,8 @@ export function createChatGPTHandler(
           return;
         }
         case "settings/openExternal": {
-          if (!EXTERNAL_ALLOWLIST.some((prefix) => msg.url.startsWith(prefix))) {
+          if (!EXTERNAL_ALLOWLIST.some((prefix) => msg.url.startsWith(prefix))
+              && !["https://claude.ai/settings/usage", "https://claude.ai/settings/billing"].includes(msg.url)) {
             throw new Error("That link can't be opened from settings.");
           }
           await deps.openExternal(msg.url);
