@@ -2822,3 +2822,51 @@ describe("Phase 3 approval admission integration", () => {
     expect(backend.getConfig).toHaveBeenCalledTimes(2); expect(ui.showError).not.toHaveBeenCalled(); c.dispose();
   });
 });
+
+
+describe("CrucibleController — selected thread identity", () => {
+  const thread = (threadId: string) => ({ threadId, workspacePath: "/tmp/workspace", title: `Title for ${threadId}`,
+    messages: [{ role: "agent" as const, type: "text", content: `Message for ${threadId}`, timestamp: "" }], touchedFiles: [] });
+  function fixture() {
+    const state: StubBackendState = { submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [], getResultCalls: [], planFeedbackCalls: [] };
+    const backend = createStubBackend(state);
+    backend.getChatThread = vi.fn(async id => thread(id));
+    backend.listChatThreads = vi.fn(async () => ["first", "second"].map(id => ({
+      threadId: id, workspacePath: "/tmp/workspace", title: `Title for ${id}`, createdAt: "", agentsRunning: 0,
+    })));
+    backend.getConfig = vi.fn(async () => ({ provider: { backend: "scripted" } })) as BackendTaskClient["getConfig"];
+    const clear = vi.fn(); const append = vi.fn();
+    const c = new CrucibleController(() => backend, new MemorySessionStore(), createSettings(),
+      createUi({ clearChatThread: clear, appendChatMessage: append }), { openDiff: async () => {} });
+    return { c, backend, clear, append };
+  }
+  test("opening, switching and creating threads send the loaded thread identity with the transcript clear", async () => {
+    const { c, backend, clear } = fixture();
+    try {
+      await c.openChat();
+      expect(clear).toHaveBeenLastCalledWith("first");
+      await c.switchChatThread("second");
+      expect(clear).toHaveBeenLastCalledWith("second");
+      await c.switchChatThread("first");
+      expect(clear).toHaveBeenLastCalledWith("first");
+      expect(backend.listChatThreads).toHaveBeenCalledTimes(1);
+      await c.newChatThread();
+      expect(clear).toHaveBeenLastCalledWith("chat-stub");
+    } finally { c.dispose(); }
+  });
+  test("a delayed older switch cannot overwrite the newer selected identity or transcript", async () => {
+    const { c, backend, clear, append } = fixture();
+    let finish!: (value: ReturnType<typeof thread>) => void;
+    backend.getChatThread = vi.fn(id => id === "first"
+      ? new Promise<ReturnType<typeof thread>>(resolve => { finish = resolve; })
+      : Promise.resolve(thread(id)));
+    try {
+      const older = c.switchChatThread("first");
+      await c.switchChatThread("second");
+      finish(thread("first")); await older;
+      expect(clear.mock.calls).toEqual([["second"]]);
+      expect(append).toHaveBeenCalledExactlyOnceWith(thread("second").messages[0]);
+      expect(c.activeThreadId).toBe("second");
+    } finally { c.dispose(); }
+  });
+});

@@ -89,7 +89,7 @@ export interface ControllerUI {
   hideChatThinking(): void;
   setChatInputEnabled(enabled: boolean): void;
   renderChatThreadList(threads: ChatThreadSummary[], activeThreadId: string): void;
-  clearChatThread(): void;
+  clearChatThread(threadId?: string): void;
   // Chat rewind: the preview feeds the confirm dialog, the prefill hands the rewound
   // message's text back to the composer for edit-or-resend.
   showRewindPreview(preview: RewindPreview): void;
@@ -715,7 +715,7 @@ export class CrucibleController {
       try {
         const thread = await client.getChatThread(this.activeThreadId);
         if (!current()) return;
-        this.ui.clearChatThread();
+        this.ui.clearChatThread(this.activeThreadId);
         this.renderContext(true);
         for (const message of thread.messages) {
           this.ui.appendChatMessage(message);
@@ -750,7 +750,7 @@ export class CrucibleController {
     this.activeThreadId = thread.threadId;
     epoch = this.contextView();
     this.ui.openChatPanel();
-    this.ui.clearChatThread();
+    this.ui.clearChatThread(thread.threadId);
     this.ui.clearLiveGates();
     this.ui.clearLivePlan();
     this.lastLiveSignature = null;
@@ -778,7 +778,7 @@ export class CrucibleController {
     const client = this.createClient(url);
     const thread = await client.getChatThread(threadId);
     if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl()) || url !== this.settings.getBackendBaseUrl()) return;
-    this.ui.clearChatThread();
+    this.ui.clearChatThread(threadId);
     this.renderContext(true);
     // Drop the previous thread's live cards; the new thread's /live poll repopulates.
     this.ui.clearLiveGates();

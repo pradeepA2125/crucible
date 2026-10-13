@@ -19,6 +19,15 @@ function setup() {
   return { host, postMessage, receive: (m: unknown) => receive(m) };
 }
 describe("ChatPanel context bridge", () => {
+  test("thread hydration forwards the selected identity while routine clears remain compatible", () => {
+    const { host, postMessage } = setup();
+    host.clearThread("second-thread");
+    host.clearThread();
+    expect(postMessage.mock.calls).toEqual([
+      [{ type: "clearThread", threadId: "second-thread" }],
+      [{ type: "clearThread" }],
+    ]);
+  });
   test("the production controller UI adapter forwards measurements and clears to the panel", () => {
     const source = readFileSync(new URL("../src/extension.ts", import.meta.url), "utf8");
     const ast = ts.createSourceFile("extension.ts", source, ts.ScriptTarget.Latest, true);

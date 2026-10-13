@@ -33,6 +33,26 @@ describe("useAppState", () => {
     expect(result.current.state.activeThreadId).toBe("t1");
   });
 
+  it("selects the loaded thread when clearing its transcript, without replacing the thread list", () => {
+    const { result } = renderHook(() => useAppState());
+    const threads = [
+      { threadId: "first", title: "First thread", createdAt: "2026-10-14" },
+      { threadId: "second", title: "Second thread", createdAt: "2026-10-14" },
+    ];
+    act(() => {
+      fireMessage({ type: "renderThreadList", threads, activeThreadId: "first" });
+      fireMessage({ type: "appendMessage", message: { role: "user", type: "text", content: "Old message", timestamp: "", metadata: {} } });
+      fireMessage({ type: "clearThread", threadId: "second" });
+    });
+    expect(result.current.state.activeThreadId).toBe("second");
+    expect(result.current.state.threads).toEqual(threads);
+    expect(result.current.state.messages).toEqual([]);
+    act(() => fireMessage({ type: "thread_title_updated", payload: { thread_id: "second", title: "Renamed second thread" } }));
+    expect(result.current.state.threads.find(t => t.threadId === result.current.state.activeThreadId)?.title).toBe("Renamed second thread");
+    act(() => fireMessage({ type: "clearThread" }));
+    expect(result.current.state.activeThreadId).toBe("second");
+  });
+
   // 2. plan_card dedup
   it("plan_card dedup: identical content collapses; new content appends as second version", () => {
     const { result } = renderHook(() => useAppState());

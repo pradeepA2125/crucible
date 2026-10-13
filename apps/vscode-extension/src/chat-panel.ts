@@ -560,8 +560,8 @@ export class ChatPanel {
     this.panel?.webview.postMessage({ type: "renderThreadList", threads, activeThreadId });
   }
 
-  clearThread(): void {
-    this.panel?.webview.postMessage({ type: "clearThread" });
+  clearThread(threadId?: string): void {
+    this.panel?.webview.postMessage({ type: "clearThread", ...(threadId === undefined ? {} : { threadId }) });
   }
 
   showRewindPreview(preview: RewindPreview): void {

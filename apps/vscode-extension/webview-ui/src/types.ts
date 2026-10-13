@@ -416,7 +416,7 @@ export type ExtensionMessage =
   | { type: "hideThinking" }
   | { type: "setInputEnabled"; enabled: boolean }
   | { type: "renderThreadList"; threads: ThreadSummary[]; activeThreadId: string }
-  | { type: "clearThread" }
+  | { type: "clearThread"; threadId?: string }
   | { type: "renderLiveGates"; gates: LiveGateView[] }
   | { type: "renderLivePlan"; plan: LivePlanView }
   | { type: "clearLivePlan" }

@@ -463,8 +463,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     renderChatThreadList: (threads, activeThreadId) => {
       chatPanel.renderThreadList(threads, activeThreadId);
     },
-    clearChatThread: () => {
-      chatPanel.clearThread();
+    clearChatThread: (threadId) => {
+      chatPanel.clearThread(threadId);
     },
     showRewindPreview: (preview) => {
       chatPanel.showRewindPreview(preview);

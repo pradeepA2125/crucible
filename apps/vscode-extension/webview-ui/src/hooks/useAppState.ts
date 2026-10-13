@@ -136,6 +136,9 @@ function reducer(state: AppState, action: Action): AppState {
     case "clearThread":
       return {
         ...state,
+        // Transcript hydration also selects its thread. Routine clears that do
+        // not navigate retain the existing identity.
+        activeThreadId: msg.threadId ?? state.activeThreadId,
         messages: [],
         contextUsage: null,
         contextUsageStale: false,
