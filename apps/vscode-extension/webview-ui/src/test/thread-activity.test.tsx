@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { TranscriptItems } from "../components/ThreadView";
 import type { ChatMsg, ToolEventView } from "../types";
@@ -19,8 +19,11 @@ const common = { turnActive: false, queuedIds: [], planVersions: new Map(), onRe
 describe("TranscriptItems", () => {
   it("renders activity lines, narration and the changes card in order", () => {
     render(<TranscriptItems messages={msgs} {...common} />);
+    expect(screen.getByText("Found the bug.")).not.toBeVisible();
+    expect(screen.getByText("Fixed.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Worked" }));
     expect(screen.getAllByTestId("activity-group")).toHaveLength(2);
-    expect(screen.getByText("Found the bug.")).toBeInTheDocument();
+    expect(screen.getByText("Found the bug.")).toBeVisible();
     expect(screen.getByTestId("turn-changes")).toBeInTheDocument();
     expect(screen.queryAllByTestId("avatar-spacer")).toHaveLength(0);
   });
@@ -28,7 +31,9 @@ describe("TranscriptItems", () => {
   it("renders the same items for a reloaded copy of the thread", () => {
     const { container: a } = render(<TranscriptItems messages={msgs} {...common} />);
     const { container: b } = render(<TranscriptItems messages={JSON.parse(JSON.stringify(msgs))} {...common} />);
-    expect(b.innerHTML).toBe(a.innerHTML);
+    // Disclosure ids are unique per mounted transcript; the rendered content is identical.
+    const stableMarkup = (html: string) => html.replace(/:r[\da-z]+:/g, "disclosure-id");
+    expect(stableMarkup(b.innerHTML)).toBe(stableMarkup(a.innerHTML));
   });
 
   it("groups finished live pills, and keeps one group once they are sealed into a message", () => {

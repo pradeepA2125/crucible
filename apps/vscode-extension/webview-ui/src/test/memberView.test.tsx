@@ -127,6 +127,7 @@ describe("MemberView", () => {
   it("opens a chapter to the shared folded activity summary, then exposes individual tools", () => {
     renderView();
     fireEvent.click(screen.getByRole("button", { name: /Chapter 1/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Worked" }));
     const summary = screen.getByRole("button", { name: "Read a file" });
     expect(summary).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("button", { name: "Read" })).toBeNull();
@@ -178,6 +179,7 @@ describe("MemberView in implementation and review", () => {
     expect(screen.getByTestId("edits-1")).toHaveTextContent("a.py");
     expect(screen.getByTestId("edits-1")).toHaveTextContent("+4");
     expect(screen.getByTestId("handed-1")).toHaveTextContent("round_price");
+    fireEvent.click(screen.getByRole("button", { name: "Worked" }));
     expect(screen.getByRole("button", { name: "Edited a.py +4 −0" })).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByTestId("turn-changes")).toBeNull();
   });

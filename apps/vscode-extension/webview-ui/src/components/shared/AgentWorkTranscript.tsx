@@ -21,6 +21,6 @@ export function AgentWorkTranscript({ messages, live = NO_TOOLS, running = false
   const start = startedAt ? Date.parse(startedAt) : mountedAt.current;
   return <TranscriptItems messages={messages} turnActive={running} streamingToolEvents={finished}
     renderMessage={renderMessage} showChanges={showChanges}
-    renderTail={() => pending && <TransientActivity bubble={bubble} waiting={waiting}
-      startedAt={Number.isFinite(start) ? start : mountedAt.current} />} />;
+    renderWorkTail={pending ? () => <TransientActivity bubble={bubble} waiting={waiting}
+      startedAt={Number.isFinite(start) ? start : mountedAt.current} /> : undefined} />;
 }

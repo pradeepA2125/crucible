@@ -220,6 +220,7 @@ The existing Tailwind `@theme` names (`--color-surface`, `--color-text-2` and so
   - Code stays at `--fs-body`; tables use that readable size with 8px vertical cell padding and horizontal rules instead of a boxed grid.
   - Gates and cards line up with the column edge.
 - **Activity.**
+  - **Turn work disclosure (14 October):** progress notes and their tool batches share an outer Working / Worked section. Live work opens by default; completed work folds away unless the user chose to inspect it. Expanded progress keeps the normal answer prose, with independent collapsed tool summaries between notes. Final answers, reports, plans, legacy decision cards and the changes summary remain outside the work disclosure. Standalone roster and board cards stay directly accessible. Work disclosure state is scoped to the selected chat, child or member chapter.
   - **Folded header:** the existing action summary ("Read 4 files, ran 2 commands ›") on a muted `--fs-body` row with a small activity icon and disclosure chevron. The 14 October readability refinement removes the full-width hairline rule. No elapsed time.
   - **Expanded:** one `--fs-body` line per step: icon, verb, then the target in muted text.
   - **Kept:** failed and not-applied outcomes, shared thoughts, and keyboard-reachable tool details.

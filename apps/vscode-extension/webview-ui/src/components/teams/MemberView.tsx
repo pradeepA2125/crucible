@@ -123,7 +123,7 @@ export function MemberView({ teamId, agentId }: { teamId: string; agentId: strin
       </section>
       <div className="relative grid min-w-0 gap-2.5 pl-[22px] before:absolute before:bottom-2 before:left-[7px] before:top-2 before:w-[1.5px] before:bg-[var(--color-border-strong)] before:content-['']">
         {chapters.map((c, i) => (
-          <Chapter key={c.n} chapter={c} defaultOpen={i === chapters.length - 1} label={label} roster={roster}
+          <Chapter key={`${teamId}-${agentId}-${c.n}`} chapter={c} defaultOpen={i === chapters.length - 1} label={label} roster={roster}
             posts={posts} isProposal={isProposal} live={c.current ? aview.live : []} now={row?.now ?? ""}
             waiting={status === "waiting"} />
         ))}

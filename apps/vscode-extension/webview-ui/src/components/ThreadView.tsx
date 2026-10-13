@@ -427,10 +427,10 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
           <EmptyState onPick={setDraft} />
         ) : (
           <>
-            <TranscriptItems messages={state.messages} turnActive={state.turnActive} turnRunning={turnRunning}
+            <TranscriptItems key={state.activeThreadId} messages={state.messages} turnActive={state.turnActive} turnRunning={turnRunning}
               queuedIds={state.queuedIds} planVersions={planVersionMap} onRewindRequest={setRewindMessageId}
               streamingToolEvents={liveFinishedEvents}
-              renderTail={() => (
+              renderWorkTail={state.retryStatus || showTransient ? () => (
                 <>
                   {/* Retry-status bubble — takes precedence over both the thinking
                       status line and the streaming bubble below while a retry is
@@ -455,10 +455,10 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
                     <TransientActivity bubble={transientBubble} startedAt={streamStartedAt}
                       fallback={state.thinkingStatus} waiting={waitingOnGate} />
                   )}
-                  {!state.retryStatus && state.streaming?.text && (
-                    <AgentRow content={state.streaming.text} streaming hideThinkingBlock />
-                  )}
                 </>
+              ) : undefined}
+              renderTail={() => !state.retryStatus && state.streaming?.text && (
+                <AgentRow content={state.streaming.text} streaming hideThinkingBlock />
               )} />
           </>
         )}

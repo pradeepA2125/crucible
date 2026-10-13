@@ -50,7 +50,7 @@ export function AgentTranscript({ agentId }: { agentId: string }) {
           {detail.prompt}
         </div>
       </div>
-      <AgentWorkTranscript messages={view.messages} live={view.live} running={!isTerminalAgent(status)}
+      <AgentWorkTranscript key={agentId} messages={view.messages} live={view.live} running={!isTerminalAgent(status)}
         waiting={status === "waiting"} startedAt={agents[agentId]?.activationStartedAt ?? detail.activationStartedAt ?? detail.startedAt}
         renderMessage={m => m.metadata?.report === true
           ? <ReportBlock text={m.content} status={String(m.metadata?.status ?? status)} />

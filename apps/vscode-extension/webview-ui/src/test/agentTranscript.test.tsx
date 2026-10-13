@@ -67,6 +67,7 @@ describe("AgentTranscript", () => {
     const transcript: ChatMsg[] = tools.map(event => ({ role: "agent", type: "text", content: "", timestamp: AT, metadata: { tool_events: [event] } }));
     transcript.push({ role: "agent", type: "text", content: "Fixed the limiter.", timestamp: AT, metadata: { report: true, status: "completed" } });
     render(<AgentsContext.Provider value={withView(detail("completed", transcript, "Fixed the limiter."))}><AgentTranscript agentId="agent-a" /></AgentsContext.Provider>);
+    fireEvent.click(screen.getByRole("button", { name: "Worked" }));
     const summary = screen.getByRole("button", { name: "Read 2 files, ran a command · 1 failed" });
     expect(summary).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("button", { name: "Read a.py" })).toBeNull();
@@ -112,6 +113,7 @@ describe("AgentTranscript", () => {
     const ui = withView(detail("stopped", [], "Stopped before the read completed."), true);
     render(<AgentsContext.Provider value={ui}><AgentTranscript agentId="agent-a" /></AgentsContext.Provider>);
     expect(screen.queryByTestId("transient-activity")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Worked" }));
     fireEvent.click(screen.getByRole("button", { name: "Tool activity" }));
     expect(screen.getByRole("button", { name: "Reading" })).toBeInTheDocument();
     expect(screen.getByText("Stopped before the read completed.")).toBeInTheDocument();
@@ -122,5 +124,17 @@ describe("AgentTranscript", () => {
     const box = screen.getByTestId("agent-box-agent-a");
     expect(box.style.height).toBe("min(240px, 40vh)");
     expect(box.style.overscrollBehavior).toBe("contain");
+  });
+
+  it("does not carry an opened work section to a different child", () => {
+    const transcript: ChatMsg[] = [{ role: "agent", type: "text", content: "Checking.", timestamp: AT, metadata: { progress: true } }];
+    const ui = withView(detail("completed", transcript));
+    const other = { ...ui, views: { ...ui.views, "agent-b": ui.views["agent-a"] } };
+    const { rerender } = render(<AgentsContext.Provider value={other}><AgentTranscript agentId="agent-a" /></AgentsContext.Provider>);
+    fireEvent.click(screen.getByRole("button", { name: "Worked" }));
+    expect(screen.getByText("Checking.")).toBeVisible();
+    rerender(<AgentsContext.Provider value={other}><AgentTranscript agentId="agent-b" /></AgentsContext.Provider>);
+    expect(screen.getByRole("button", { name: "Worked" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("Checking.")).not.toBeVisible();
   });
 });
