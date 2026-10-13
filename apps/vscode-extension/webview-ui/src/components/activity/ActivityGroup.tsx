@@ -38,9 +38,12 @@ function ToolsStep({ events }: { events: ToolEventView[] }) {
   return (
     <>
       {splitByThought(events).map((run, i) => (
-        <div key={i} className="grid min-w-0 gap-1">
-          {run.thought && <div data-testid="activity-thought" className="text-meta text-text-3">{run.thought}</div>}
-          {run.events.map((event) => <ActivityLine key={event.id} event={event} />)}
+        <div key={i} data-testid="activity-batch"
+          className="grid min-w-0 gap-3 border-t border-border pt-4 first:border-t-0 first:pt-0">
+          {run.thought && <div data-testid="activity-thought" className="text-body leading-relaxed text-text-2 [overflow-wrap:anywhere]">{run.thought}</div>}
+          <div className="grid min-w-0 gap-2">
+            {run.events.map((event) => <ActivityLine key={event.id} event={event} />)}
+          </div>
         </div>
       ))}
     </>
@@ -99,7 +102,7 @@ export const ActivityGroup = memo(function ActivityGroup({ steps }: { steps: Act
         <span aria-hidden="true" className="shrink-0"><Icon name={open ? "chev-d" : "chev-r"} size={11} /></span>
       </button>
       {open && (
-        <div data-testid="activity-detail" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5">
+        <div data-testid="activity-detail" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 pt-2">
           {steps.map((step, i) => step.type === "tools" ? <ToolsStep key={i} events={step.events} />
             : step.type === "edit" ? <EditRow key={i} step={step} />
             : <div key={i} className="text-body text-text-3">{step.text.replace(/^[✓✗]\s*/, "")}</div>)}
