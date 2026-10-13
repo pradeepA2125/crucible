@@ -484,13 +484,15 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
 
       <TeamStrip />
 
-      <WorkBar
-        workbar={state.workbar}
-        liveStatus={state.liveStatus}
-        thinkingStatus={state.thinkingStatus}
-        tokenProgress={state.tokenProgress}
-        visible={workbarVisible}
-      />
+      <div data-testid="workbar-column" className="mx-auto min-w-0 w-full max-w-[760px] px-4 flex-shrink-0">
+        <WorkBar
+          workbar={state.workbar}
+          liveStatus={state.liveStatus}
+          thinkingStatus={state.thinkingStatus}
+          tokenProgress={state.tokenProgress}
+          visible={workbarVisible}
+        />
+      </div>
 
       <div className="mx-auto w-full max-w-[760px] px-4 pb-3 pt-2 flex-shrink-0">
         <InputArea

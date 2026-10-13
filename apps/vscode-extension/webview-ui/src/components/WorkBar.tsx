@@ -67,7 +67,7 @@ function TokenCounter({ progress }: { progress: TokenProgressView }) {
 
   return (
     <span
-      className="flex-shrink-0 flex items-center gap-2 font-mono tabular-nums text-meta"
+      className="flex-shrink-0 max-w-full flex flex-wrap items-center gap-2 font-mono tabular-nums text-meta"
       style={{ color: dim }}
       aria-label={
         `${input ?? 0} input tokens, ${thinking} thinking tokens, ` +
@@ -158,7 +158,7 @@ export function WorkBar({ workbar, liveStatus, thinkingStatus, tokenProgress, vi
   if (!visible && tokenProgress) {
     return (
       <div
-        className="relative flex items-center gap-2 px-3 py-1 flex-shrink-0"
+        className="relative flex min-w-0 flex-wrap items-center gap-2 px-3 py-1 flex-shrink-0"
         style={{ borderTop: "1px solid var(--color-border)", background: "var(--color-surface)" }}
       >
         <span className="flex-1 min-w-0" />
@@ -229,7 +229,7 @@ export function WorkBar({ workbar, liveStatus, thinkingStatus, tokenProgress, vi
 
   return (
     <div
-      className="relative flex items-center gap-2 px-3 py-2 flex-shrink-0"
+      className="relative flex min-w-0 flex-wrap items-center gap-2 px-3 py-2 flex-shrink-0"
       style={{
         borderTop: "1px solid var(--color-border)",
         background: "var(--color-surface)",
