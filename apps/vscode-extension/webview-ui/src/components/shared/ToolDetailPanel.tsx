@@ -18,21 +18,21 @@ export function ToolDetailPanel({ event }: Props) {
 
   return (
     <div
-      className="anim-rise rounded-card border overflow-hidden"
+      className="min-w-0 anim-rise rounded-card border overflow-hidden"
       style={{
         borderColor: "var(--border)",
         background: "var(--color-surface)",
       }}
     >
       <div
-        className="flex items-center gap-1.5 px-[11px] py-[7px] border-b border-border"
+        className="flex min-w-0 flex-wrap items-center gap-1.5 px-[11px] py-[7px] border-b border-border"
         style={{ background: "var(--surface-2)" }}
       >
         <Icon name={icon} size={11} className="text-accent" />
-        <span className="mono text-caption font-semibold text-accent-ink">{event.tool}</span>
+        <span className="min-w-0 [overflow-wrap:anywhere] mono text-caption font-semibold text-accent-ink">{event.tool}</span>
 
         {event.thought && (
-          <span className="text-caption italic text-text-3 ml-1">{event.thought}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere] text-caption italic text-text-3 ml-1">{event.thought}</span>
         )}
 
         <span className="ml-auto flex items-center gap-2 text-caption text-text-4">
@@ -44,7 +44,6 @@ export function ToolDetailPanel({ event }: Props) {
               {outputLineCount} lines
             </span>
           )}
-          
         </span>
       </div>
 
@@ -52,7 +51,7 @@ export function ToolDetailPanel({ event }: Props) {
         <div className="text-caption font-semibold uppercase tracking-widest text-text-4 mb-1.5">
           INPUT
         </div>
-        <div className="mono text-caption leading-[1.8]">
+        <div className="min-w-0 [overflow-wrap:anywhere] mono text-caption leading-[1.8]">
           {Object.entries(event.args ?? {}).map(([k, v]) => (
             <div key={k}>
               <span className="text-text-3">{k}:</span>{" "}

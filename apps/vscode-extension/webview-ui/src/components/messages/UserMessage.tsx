@@ -103,7 +103,7 @@ export function UserMessage({
             if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
               return (
                 <code key={i} className="mono rounded-control px-1"
-                  style={{ background: "color-mix(in srgb, var(--on-accent) 16%, transparent)" }}>
+                  style={{ background: "var(--user-code-bg)" }}>
                   {part.slice(1, -1)}
                 </code>
               );
@@ -111,7 +111,7 @@ export function UserMessage({
             return renderTextSegment(part, `seg-${i}`);
           })}
           {queued && (
-            <div data-testid="queued-tag" className="mt-1 text-caption" style={{ opacity: 0.85 }}>
+            <div data-testid="queued-tag" className="mt-1 text-caption">
               Queued — the agent picks this up at its next step
             </div>
           )}

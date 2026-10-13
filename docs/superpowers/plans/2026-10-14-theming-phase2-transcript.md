@@ -1337,3 +1337,7 @@ Claude session `8cd8dc9f-b5bc-436a-bd6f-6a67840f4aa3` stopped at Task 3 after co
 The installed chat was inspected at editor width in Match VS Code. Narrow widths, Crucible Light, high contrast and reduced motion were checked in the real-browser test fixture. A fresh live model turn and interactive theme/side-panel checks were not run: the user was actively using VS Code during the final UI pass. No appearance settings were changed. Those checks remain a short follow-up; the automated paths are covered.
 
 Phase 3 is next: the composer/model-menu/effort-slider restyle and backend-wide approval-mode contract described in spec §3. It has not been implemented in this continuation. Nothing was pushed.
+
+### Separate whole-phase review follow-up
+
+The 14 October continuation initially performed implementation self-review and an accessibility audit, then fast-forwarded Phase 2. After the user pointed out the missing separate review, Codex reviewed the full diff and fixed expanded-tool overflow, user-code/queued-label contrast, and missing tone selection in the browser fixture. Findings, reproductions and verification are in `docs/superpowers/2026-10-14-theming-phase2-review.md`. The full webview suite and typecheck passed again. Phase 3 has not started; the live-check limits above remain explicit.

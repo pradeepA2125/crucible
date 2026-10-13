@@ -8,7 +8,7 @@ import { ActivityLine } from "./ActivityLine";
 const basename = (path: string) => path.split("/").pop() || path;
 
 // A tool batch emits every member with the same step thought, so a run of events sharing
-// one thought is one model step: show the thought once, above that step's pills.
+// one thought is one model step: show the thought once, above that step's lines.
 function splitByThought(events: ToolEventView[]): { thought?: string; events: ToolEventView[] }[] {
   const runs: { thought?: string; events: ToolEventView[] }[] = [];
   for (const event of events) {

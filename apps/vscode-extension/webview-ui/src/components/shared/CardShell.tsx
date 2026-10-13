@@ -24,7 +24,7 @@ interface Props {
 /**
  * CardShell — shared structural primitive for all card-style messages and gates.
  *
- * Produces: rounded-control card, inset hairline + soft drop-shadow, an icon+title header
+ * Produces: flat bordered card with the shared card radius and an icon+title header
  * (clickable toggle when expandable=true), and a children slot for the body.
  * All styling is driven by CSS vars so callers can override border/header tint.
  */

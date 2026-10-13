@@ -27,6 +27,8 @@
   --warning-border: color-mix(in srgb, var(--warning) 30%, transparent);
   --diff-add-bg: color-mix(in srgb, var(--diff-add) 10%, transparent);
   --diff-del-bg: color-mix(in srgb, var(--diff-del) 9%, transparent);
+  /* Darken the chip so --on-accent keeps its contrast inside a user bubble. */
+  --user-code-bg: color-mix(in srgb, var(--accent-fill) 84%, #000000);
 }
 
 :root,
@@ -216,4 +218,5 @@
   --hairline: var(--vscode-contrastBorder, #6fc3df);
   --diff-add-bg: transparent;
   --diff-del-bg: transparent;
+  --user-code-bg: transparent;
 }

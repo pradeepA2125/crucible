@@ -60,7 +60,7 @@ describe("ActivityGroup", () => {
     render(<ActivityGroup steps={long} />);
     expect(screen.getByTestId("activity-summary").className).toContain("truncate");
   });
-  it("lists each tool step as one line, not steps (spec §2)", () => {
+  it("lists each tool step as one line (spec §2)", () => {
     render(<ActivityGroup steps={steps} />);
     fireEvent.click(screen.getByRole("button", { name: /Read a file/ }));
     expect(screen.getByRole("button", { name: /Read a\.py/ })).toBeInTheDocument();

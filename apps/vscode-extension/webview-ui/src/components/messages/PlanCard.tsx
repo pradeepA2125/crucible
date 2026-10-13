@@ -65,7 +65,6 @@ export function PlanCard({ content, taskId, readOnly = false, version }: Props) 
       className={[
         "rounded-card border overflow-hidden",
         "bg-surface",
-        // Hairline inset + soft shadow
         // Accent border when expanded
         expanded ? "border-[var(--accent-brd)]" : "border-border",
       ].join(" ")}

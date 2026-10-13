@@ -13,7 +13,7 @@ export function ActivityLine({ event }: { event: ToolEventView }) {
   const [open, setOpen] = useState(false);
   const { verb, target } = toolLine(event);
   return (
-    <div className="grid min-w-0 gap-1">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1">
       <button type="button" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen(!open)}
         className="flex min-w-0 items-center gap-2 text-left text-body text-text-2 hover:text-text rounded-control focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]">
         <span aria-hidden="true" className="shrink-0 text-text-3"><Icon name={toolIcon(event.tool)} size={13} /></span>
@@ -21,7 +21,7 @@ export function ActivityLine({ event }: { event: ToolEventView }) {
         {target && <span className="min-w-0 truncate text-text-3">{target}</span>}
         {event.isError && <span className="shrink-0" style={{ color: "var(--danger)" }}>failed</span>}
       </button>
-      {open && <div id={panelId}><ToolDetailPanel event={event} /></div>}
+      {open && <div id={panelId} className="min-w-0"><ToolDetailPanel event={event} /></div>}
     </div>
   );
 }
