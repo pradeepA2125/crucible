@@ -102,7 +102,7 @@ export const ActivityGroup = memo(function ActivityGroup({ steps }: { steps: Act
         <span aria-hidden="true" className="shrink-0"><Icon name={open ? "chev-d" : "chev-r"} size={11} /></span>
       </button>
       {open && (
-        <div data-testid="activity-detail" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 pt-2">
+        <div data-testid="activity-detail" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 rounded-card border border-border bg-surface p-3">
           {steps.map((step, i) => step.type === "tools" ? <ToolsStep key={i} events={step.events} />
             : step.type === "edit" ? <EditRow key={i} step={step} />
             : <div key={i} className="text-body text-text-3">{step.text.replace(/^[✓✗]\s*/, "")}</div>)}
