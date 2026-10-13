@@ -17,3 +17,7 @@ Reviewed shared effects: all uses of the prose token follow the workbench font s
 - Screenshot: `.tmp/transcript-readability-preview.png`. Local package: `.tmp/theme3-handoff/crucible-transcript-rhythm-reviewed.vsix`.
 
 The screenshot uses representative fixture content in the real transcript components. The active VS Code session is left running; reload is needed to assess this build with the user's full thread and editor theme. Nothing is pushed.
+
+## Team board width follow-up
+
+Following the user's clarification, only the team window's horizontal positioning changes: centered, maximum 760px wide, shrinking to the panel width minus its existing 12px side margins. Its full-height presentation, top/bottom offsets, backdrop, scrolling and member tabs are preserved. Reviewed the complete follow-up against `16ec2c8`; no blocking findings. All 15 team-window tests and the production webview build passed. The real-component browser preview measured 760px width at 1280px (260px equal margins), and 296px width at 320px (12px equal margins), with no horizontal overflow. Both retained the existing 40px top and 12px bottom offsets, and the board body scrolled internally. Screenshot: `.tmp/team-board-width-preview.png`; local package: `.tmp/theme3-handoff/crucible-team-board-width-reviewed.vsix`. The extension host bundle is unchanged.

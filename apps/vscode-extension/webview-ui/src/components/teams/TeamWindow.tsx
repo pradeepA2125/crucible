@@ -23,7 +23,7 @@ interface Props {
   onClose(): void;
 }
 
-/** A team full height over the thread (spec 2026-10-05 §6–§7): a header with the road the
+/** A team full height in a centered chat-width column (spec 2026-10-05 §6–§7): a header with the road the
  * team travels and who is doing what, the Board first, then one tab per member. */
 export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
   const teamsUi = useTeamsUi();
@@ -53,7 +53,7 @@ export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
         if (e.target === e.currentTarget) onClose();
       }}>
       <div role="dialog" aria-modal="true" aria-label={`Team ${team.name}`}
-        className="surface-card anim-pop absolute inset-x-3 bottom-3 top-10 flex flex-col overflow-hidden">
+        className="surface-card anim-pop absolute left-1/2 -translate-x-1/2 w-[calc(100%-24px)] max-w-[760px] bottom-3 top-10 flex flex-col overflow-hidden">
         <div className="accent-wash grid grid-cols-[minmax(0,1fr)] gap-2.5 px-3.5 pb-2.5 pt-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
           <div className="flex flex-wrap items-center gap-2.5">
             <Avatar label="main" roster={roster} />
