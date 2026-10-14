@@ -43,6 +43,25 @@ describe("combined model effort controls", () => {
     deliver(null, native(["low", "high"], "low"));
     expect(slider).toBeEnabled(); expect(screen.getByText("Model default: Low")).toBeInTheDocument();
   });
+  it("previews a mouse drag across notches and validates only the released level", () => {
+    open("low", native(["low", "medium", "high"])); vi.mocked(vscode.postMessage).mockClear();
+    const slider = screen.getByRole("slider");
+    fireEvent.input(slider, { target: { value: "2" } });
+    fireEvent.input(slider, { target: { value: "3" } });
+    expect(vscode.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "setReasoningEffort" }));
+    expect(slider).toBeEnabled(); expect(slider).toHaveAttribute("aria-valuetext", "HIGH");
+    fireEvent.change(slider, { target: { value: "3" } });
+    expect(vscode.postMessage).toHaveBeenCalledTimes(1);
+    expect(vscode.postMessage).toHaveBeenLastCalledWith({ type: "setReasoningEffort", level: "high" });
+  });
+  it("sends nothing when a drag returns to the current level", () => {
+    open("low", native(["low", "medium", "high"])); vi.mocked(vscode.postMessage).mockClear();
+    const slider = screen.getByRole("slider");
+    fireEvent.input(slider, { target: { value: "3" } });
+    fireEvent.change(slider, { target: { value: "1" } });
+    expect(vscode.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "setReasoningEffort" }));
+    expect(slider).toHaveAttribute("aria-valuetext", "LOW");
+  });
   it("keeps the menu open on pending, acknowledgement and provider error", () => {
     open("high", native(["low", "medium", "high"]));
     fireEvent.change(screen.getByRole("slider"), { target: { value: "2" } });
