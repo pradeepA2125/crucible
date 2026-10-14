@@ -140,3 +140,15 @@ it("drops the supported chip when a restarted backend has an older capability", 
   expect(t.c.current()).toMatchObject({ tier: "older", mode: "accept_edits", confirmed: false });
   expect(t.setGlobalReviewPref).not.toHaveBeenCalled();
 });
+
+describe("approval view publishing", () => {
+  it("does not re-render an unchanged view on every /live poll", async () => {
+    const t = setup({ owned: true }); await t.c.connect();
+    const renders = t.render.mock.calls.length;
+    t.c.observe(state({ owned: true }), "p");
+    t.c.observe(state({ owned: true }), "p");
+    expect(t.render).toHaveBeenCalledTimes(renders);
+    t.c.observe(state({ owned: true, autoAccept: true, version: 1 }), "p");
+    expect(t.render).toHaveBeenCalledTimes(renders + 1);
+  });
+});

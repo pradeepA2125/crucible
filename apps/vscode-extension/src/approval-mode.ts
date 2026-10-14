@@ -53,7 +53,10 @@ export class ApprovalCoordinator {
   }
   current(): ApprovalView { return this.view; }
   private publish(patch: Partial<ApprovalView>): void {
-    this.view = { ...this.view, ...patch, warningDismissed: this.deps.warningDismissed() };
+    const next = { ...this.view, ...patch, warningDismissed: this.deps.warningDismissed() };
+    // The /live poll observes every second; re-rendering an unchanged view re-renders the whole webview.
+    if (JSON.stringify(next) === JSON.stringify(this.view)) return;
+    this.view = next;
     this.deps.render(this.view);
   }
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
