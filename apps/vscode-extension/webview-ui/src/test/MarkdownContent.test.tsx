@@ -1,4 +1,6 @@
 import { render, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import { MarkdownContent } from "../components/shared/MarkdownContent";
 
@@ -51,11 +53,14 @@ describe("MarkdownContent as plain prose (spec §2)", () => {
     expect(root.className).toContain("[&_p]:[text-wrap:pretty]");
   });
 
-  it("renders inline code as a neutral chip on surface-1", () => {
+  it("renders inline code through the shared accent highlight at prose size", () => {
     const { container } = render(<MarkdownContent content="Use `retry()` here." />);
     const root = container.firstElementChild as HTMLElement;
-    expect(root.className).toContain("[&_:not(pre)>code]:bg-[var(--surface-1)]");
-    expect(root.className).not.toContain("[&_code]:text-code");
+    expect(root.className).toContain("message-markdown");
+    expect(root.className).not.toContain(":not(pre)>code]");
+    const css = readFileSync(join(__dirname, "..", "index.css"), "utf8");
+    const rule = css.slice(css.indexOf(".message-markdown :not(pre) > code {"));
+    expect(rule).toMatch(/^[^}]*background: var\(--accent-bg\);[^}]*font-size: inherit;/);
   });
 
   it("still wraps a very long unbroken token (Review Focus 1)", () => {

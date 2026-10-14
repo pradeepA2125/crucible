@@ -92,7 +92,8 @@ code, pre, .mono {
 }
 
 :root[data-tone="light"]:not([data-theme="hc"]) .message-markdown :not(pre) > code {
-  color: color-mix(in srgb, var(--accent) 90%, #000);
+  /* Mixing toward the theme's own ink keeps the token rule and the measured contrast. */
+  color: color-mix(in srgb, var(--accent) 90%, var(--text-1));
 }
 
 .tool-thought {
