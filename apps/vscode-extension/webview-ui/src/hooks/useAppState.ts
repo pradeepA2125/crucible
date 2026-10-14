@@ -53,7 +53,7 @@ const INITIAL: AppState = {
   agentsRunning: 0,
   planMode: false,
   stepReview: true,
-  approval: { tier: "unknown", snapshot: null, mode: null, confirmed: false, pending: false, warningDismissed: false, error: null, notice: null },
+  approval: { tier: "unknown", snapshot: null, mode: null, confirmed: false, pending: false, warningDismissed: false, trusted: true, error: null, notice: null },
   agents: {},
   agentViews: {},
   teams: {},

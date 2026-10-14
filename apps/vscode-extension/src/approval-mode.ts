@@ -8,6 +8,8 @@ export interface ApprovalView {
   confirmed: boolean;
   pending: boolean;
   warningDismissed: boolean;
+  /** Full access is only applied in a trusted workspace. */
+  trusted: boolean;
   error: string | null;
   notice: string | null;
 }
@@ -19,8 +21,15 @@ export interface ApprovalDependencies {
   saveMode(mode: ApprovalMode): Promise<void>;
   warningDismissed(): boolean;
   saveWarningDismissed(): Promise<void>;
+  isTrusted(): boolean;
+  /** Per-workspace: Full access was confirmed here, by a selection or the first-send dialog. */
+  firstSendAcknowledged(): boolean;
+  acknowledgeFirstSend(): Promise<void>;
+  confirmFirstFullAccessSend(): Promise<FirstSendChoice>;
   render(view: ApprovalView): void;
 }
+export type FirstSendChoice = "continue" | "accept_edits" | "cancel";
+
 export function isApprovalMode(value: unknown): value is ApprovalMode {
   return value === "ask" || value === "accept_edits" || value === "full_access";
 }
@@ -49,15 +58,19 @@ export class ApprovalCoordinator {
   private observedProcessId: string | undefined;
   constructor(private readonly deps: ApprovalDependencies) {
     this.view = { tier: "unknown", snapshot: null, mode: null, confirmed: false, pending: false,
-      warningDismissed: deps.warningDismissed(), error: null, notice: null };
+      warningDismissed: deps.warningDismissed(), trusted: deps.isTrusted(), error: null, notice: null };
   }
   current(): ApprovalView { return this.view; }
   private publish(patch: Partial<ApprovalView>): void {
-    const next = { ...this.view, ...patch, warningDismissed: this.deps.warningDismissed() };
+    const next = { ...this.view, ...patch, warningDismissed: this.deps.warningDismissed(), trusted: this.deps.isTrusted() };
     // The /live poll observes every second; re-rendering an unchanged view re-renders the whole webview.
     if (JSON.stringify(next) === JSON.stringify(this.view)) return;
     this.view = next;
     this.deps.render(this.view);
+  }
+  /** Full access never applies to an untrusted workspace; the saved preference is kept for trusted ones. */
+  private allowedMode(mode: ApprovalMode): ApprovalMode {
+    return mode === "full_access" && !this.deps.isTrusted() ? "accept_edits" : mode;
   }
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
     const next = this.queue.catch(() => undefined).then(work);
@@ -107,27 +120,32 @@ export class ApprovalCoordinator {
           }
           return;
         }
-        if (state.owned) {
+        const ownedMode = state.owned ? modeFor(state) : null;
+        if (state.owned && ownedMode === this.allowedMode(ownedMode ?? "ask")) {
           this.adopt(state);
-          if (!this.deps.savedMode() && modeFor(state)) await this.persist(modeFor(state)!);
+          if (!this.deps.savedMode() && ownedMode) await this.persist(ownedMode);
           this.publish({ pending: false });
           return;
         }
         const saved = this.deps.savedMode();
-        const mode = saved ?? migrateApproval(state.shellPolicy, this.deps.reviewOn());
+        const preferred = state.owned ? ownedMode! : saved ?? migrateApproval(state.shellPolicy, this.deps.reviewOn());
+        const mode = this.allowedMode(preferred);
         try {
           const applied = await client.setApprovalMode({ ...policyFor(mode), resolveWaiting: false,
             expectedProcessId: state.processId, expectedVersion: state.version });
           if (this.endpointChanged()) continue;
           this.adopt(applied);
-          await this.persist(mode);
-          this.publish({ pending: false, notice: !saved && state.shellPolicy === "allow_all" && this.deps.reviewOn()
+          if (mode === preferred) await this.persist(mode);
+          // An untrusted workspace's fallback is explained by view.trusted, not a notice.
+          this.publish({ pending: false, notice: mode === preferred && !saved && state.shellPolicy === "allow_all" && this.deps.reviewOn()
             ? "Commands now ask for approval. You can change this in approval modes." : null });
           return;
         } catch (error) {
           const current = this.conflict(error);
           if (!current) throw error;
-          if (current.owned) { this.adopt(current); this.publish({ pending: false }); return; }
+          if (current.owned && modeFor(current) === this.allowedMode(modeFor(current) ?? "ask")) {
+            this.adopt(current); this.publish({ pending: false }); return;
+          }
           // Another restart/unowned conflict: read config again, never resolve edits.
         }
       }
@@ -175,6 +193,7 @@ export class ApprovalCoordinator {
       return;
     }
     this.adopt(snapshot);
+    if (this.view.mode === "full_access" && !this.deps.isTrusted()) void this.connect().catch(() => undefined);
   }
   async recover(error: unknown): Promise<boolean> {
     if (!isApprovalAdmissionError(error)) return false;
@@ -190,6 +209,7 @@ export class ApprovalCoordinator {
         if (this.endpointChanged()) this.publish({ tier: "unknown", snapshot: null, mode: null, confirmed: false });
         if (this.view.tier === "unknown" || (this.view.tier === "supported" && !this.view.confirmed)) await this.connectNow();
         if (this.view.tier === "legacy") throw new Error("Approval modes need the chat controller");
+        if (mode === "full_access" && !this.deps.isTrusted()) throw new Error("Full access needs a trusted workspace");
         if (mode === "full_access" && !this.deps.warningDismissed() && !fullAccessConfirmed) throw new Error("Confirm Full access first");
         const client = this.deps.client();
         if (this.view.tier === "older") {
@@ -226,5 +246,30 @@ export class ApprovalCoordinator {
         this.publish({ pending: false, error: `Not applied — retry: ${error instanceof Error ? error.message : String(error)}` });
       }
     });
+  }
+  /** Trust granted mid-session: re-apply a saved Full access preference the trust check held back. */
+  trustGranted(): Promise<void> {
+    this.publish({});
+    if (this.deps.savedMode() !== "full_access" || this.view.mode === "full_access") return Promise.resolve();
+    return this.select("full_access", true);
+  }
+  /** A user's own Full access choice in this workspace is its confirmation; no first-send dialog follows. */
+  async acknowledgeUserSelection(): Promise<void> {
+    if (this.view.mode !== "full_access") return;
+    try { await this.deps.acknowledgeFirstSend(); }
+    catch { this.publish({ error: "Applied, but the Full access confirmation could not be saved." }); }
+  }
+  /** The first message sent under Full access in a workspace asks once, so a preference carried over
+   * from another workspace never runs commands here unannounced. False means do not send. */
+  async confirmFirstSend(): Promise<boolean> {
+    if (this.view.mode !== "full_access" || this.deps.firstSendAcknowledged()) return true;
+    const choice = await this.deps.confirmFirstFullAccessSend();
+    if (choice === "continue") {
+      await this.deps.acknowledgeFirstSend();
+      return true;
+    }
+    if (choice === "cancel") return false;
+    await this.select("accept_edits");
+    return this.current().mode === "accept_edits";
   }
 }

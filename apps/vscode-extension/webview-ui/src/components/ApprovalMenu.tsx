@@ -31,6 +31,13 @@ function FullAccessWarning({ onCancel, onConfirm, returnTo }: {
     </div>
   );
 }
+/** Errors and notices take a full row under the composer controls; inside the chip's
+ * flex item they squeezed the whole footer row. */
+export function ApprovalNotice({ approval }: { approval: ApprovalModeView }) {
+  if (approval.error) return <p role="alert" className="basis-full text-caption text-red [overflow-wrap:anywhere]">{approval.error}</p>;
+  if (approval.notice) return <p role="status" className="basis-full text-caption text-text-3 [overflow-wrap:anywhere]">{approval.notice}</p>;
+  return null;
+}
 export function ApprovalMenu({ approval }: { approval: ApprovalModeView }) {
   const root = useRef<HTMLDivElement>(null);
   const chip = useRef<HTMLButtonElement>(null);
@@ -59,7 +66,9 @@ export function ApprovalMenu({ approval }: { approval: ApprovalModeView }) {
   return (
     <div ref={root} className="relative min-w-0 max-w-full">
       <button ref={chip} type="button" aria-haspopup="menu" aria-expanded={open} aria-label={`Approval mode: ${label}`}
-        disabled={approval.tier === "legacy"} title={approval.tier === "legacy" ? "Approval modes need the chat controller" : label}
+        disabled={approval.tier === "legacy"}
+        title={approval.tier === "legacy" ? "Approval modes need the chat controller"
+          : approval.trusted ? label : `${label} — Full access is off until you trust this workspace`}
         onClick={() => setOpen(!open)} className="flex h-7 min-w-0 max-w-full items-center gap-1 rounded-control px-1.5 text-meta text-text-2 hover:bg-surface-2 hover:text-text disabled:opacity-60">
         <Icon name="shield" size={13} /><span className="min-w-0 truncate">{label}</span>
         {approval.pending || requested ? <span aria-label="Updating approval mode">…</span> : <Icon name="chev-d" size={10} />}
@@ -74,22 +83,21 @@ export function ApprovalMenu({ approval }: { approval: ApprovalModeView }) {
           e.preventDefault(); items[index]?.focus();
         }}>
         {APPROVAL_MODES.map(mode => <button key={mode.id} type="button" role="menuitemradio" aria-checked={approval.mode === mode.id}
-          disabled={connecting || approval.pending || requested || mode.id === "full_access" && approval.tier !== "supported"}
+          disabled={connecting || approval.pending || requested || mode.id === "full_access" && (approval.tier !== "supported" || !approval.trusted)}
           onClick={() => choose(mode.id)} className="grid w-full gap-0.5 rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">
           <span className="flex items-center gap-2 text-body text-text"><Icon name={mode.icon} size={13} />{mode.label}{approval.mode === mode.id ? " ✓" : ""}</span>
-          <span className="text-caption text-text-3">{mode.description}</span>
+          <span className="text-caption text-text-3">{mode.id === "full_access" && !approval.trusted ? "Needs a trusted workspace." : mode.description}</span>
         </button>)}
         <button type="button" role="menuitemradio" aria-checked={false} disabled className="w-full px-2 py-2 text-left text-caption text-text-3 opacity-60">Auto · coming later</button>
         <div className="grid gap-1 border-t border-border p-2 text-caption text-text-3">
           {approval.tier === "older" && <p>Command approval is set in Settings. This window’s setting{approval.confirmed ? "" : " is unconfirmed — choose a mode"}.</p>}
+          {!approval.trusted && <p className="text-text-2">This workspace isn’t trusted, so Full access is off. Trust the workspace to use it.</p>}
           {approval.tier === "supported" && approval.snapshot && <p>Edits: {approval.snapshot.autoAccept ? "accepted automatically" : "reviewed"}. Commands: {approval.snapshot.shellPolicy === "allow_all" ? "run without asking" : "ask unless remembered"}.</p>}
           <p>Protected paths and untrusted-agent edits always need review. Remembered command rules run without asking.</p>
           <p>Sub-agents follow their definitions: Plan cannot edit; Accept edits and Don’t ask apply edits automatically.</p>
           <p>MCP tools keep their own approval. Input to an already-running terminal session isn’t gated.</p>
         </div>
       </div>}
-      {approval.error && <p role="alert" className="max-w-full text-caption text-red [overflow-wrap:anywhere]">{approval.error}</p>}
-      {approval.notice && <p role="status" className="max-w-full text-caption text-text-3 [overflow-wrap:anywhere]">{approval.notice}</p>}
       {warning && <FullAccessWarning returnTo={chip} onCancel={() => setWarning(false)} onConfirm={remember => { setWarning(false); choose("full_access", true, remember); }} />}
     </div>
   );

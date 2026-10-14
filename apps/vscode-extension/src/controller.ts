@@ -1051,14 +1051,23 @@ export class CrucibleController {
     const client = this.createClient(this.settings.getBackendBaseUrl());
     let sendEpoch = this.contextView();
     const currentSend = () => this.contextState.current(sendEpoch, this.settings.getBackendBaseUrl());
+    // InputArea already cleared the draft: every refusal gives the text back (spec §5.3).
+    const restoreDraft = () => this.ui.restoreDraft(originalDraftText ?? text, draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined);
     let expectedProcessId: string | undefined;
     try { if (this.approval) expectedProcessId = await this.approvalReady(); }
     catch (error) {
       if (!currentSend()) return;
       if (this.activeThreadId) this.ui.retryDecision?.(this.activeThreadId, "mode");
-      this.ui.restoreDraft(originalDraftText ?? text, draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined);
+      restoreDraft();
       this.ui.setChatInputEnabled(true);
       this.ui.showError(`Approval mode not confirmed — retry: ${formatError(error)}`);
+      return;
+    }
+    if (this.approval && !(await this.approval.confirmFirstSend())) {
+      if (!currentSend()) return;
+      if (this.activeThreadId) this.ui.retryDecision?.(this.activeThreadId, "mode");
+      restoreDraft();
+      this.ui.setChatInputEnabled(true);
       return;
     }
 
@@ -1073,8 +1082,7 @@ export class CrucibleController {
       } catch (error) {
         if (!currentSend()) return;
         this.ui.showError(`Failed to create chat thread: ${formatError(error)}`);
-        if (this.activeThreadId) this.ui.retryDecision?.(this.activeThreadId, "mode");
-      this.ui.restoreDraft(originalDraftText ?? text, draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined);
+        restoreDraft();
         return;
       }
     }
@@ -1119,7 +1127,7 @@ export class CrucibleController {
       // InputArea already cleared the draft: give the text back (spec §5.3).
       this.ui.removeChatMessage(messageId);
       if (this.activeThreadId) this.ui.retryDecision?.(this.activeThreadId, "mode");
-      this.ui.restoreDraft(originalDraftText ?? text, draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined);
+      restoreDraft();
       this.ui.setChatInputEnabled(true);
       if (await this.recoverApproval(error)) return;
       if (!this.isBenignConflict(error)) {
@@ -1823,12 +1831,17 @@ export class CrucibleController {
   async setApprovalMode(mode: unknown, confirmedFullAccess = false, dontShowAgain = false): Promise<void> {
     if (!isApprovalMode(mode) || !this.approval) return;
     await this.approval.select(mode, confirmedFullAccess, dontShowAgain);
+    await this.approval.acknowledgeUserSelection();
     this.lastLiveSignature = null;
     void this.pollThreadLiveState();
   }
 
   private async approvalReady(): Promise<string | undefined> {
     return this.approval?.ready();
+  }
+
+  async approvalTrustGranted(): Promise<void> {
+    await this.approval?.trustGranted();
   }
 
   private async recoverApproval(error: unknown): Promise<boolean> {

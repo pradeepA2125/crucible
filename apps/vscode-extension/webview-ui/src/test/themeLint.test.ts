@@ -97,7 +97,7 @@ describe("theme lint — Phase 2 transcript scope", () => {
   }
 });
 
-export const PHASE3_SCOPE = ["InputArea", "ModelMenu", "ApprovalMenu", "EffortSlider", "ContextMeter", "WorkBar", "ChatSettingsOverlay"].map(name => `components/${name}.tsx`);
+export const PHASE3_SCOPE = ["InputArea", "ModelMenu", "ApprovalMenu", "EffortSlider", "ContextMeter", "WorkBar", "ChatSettingsOverlay", "FullAccessFirstSendDialog"].map(name => `components/${name}.tsx`);
 describe("theme lint — Phase 3 composer scope", () => {
   for (const file of PHASE3_SCOPE) it(`${file} uses tokens and flat decoration`, () => {
     const offenders = lines(file).filter(text => !text.trim().startsWith("//") && !text.trim().startsWith("*")).filter(text => COLOR_LITERAL.test(text) || TW_SIZE.test(text) || TW_RADIUS.test(text) || INLINE_SIZE.test(text) || DECORATION.test(text));

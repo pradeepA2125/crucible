@@ -1,4 +1,5 @@
-import type { ApprovalView } from "./approval-mode.js";
+import type { ApprovalView, FirstSendChoice } from "./approval-mode.js";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as vscode from "vscode";
 import type {
@@ -131,6 +132,24 @@ export class ChatPanel {
   }
   retryDecision(threadId: string, kind: "mode" | "clarify" | "team_plan", gateId?: string): void {
     void this.panel?.webview.postMessage({ type: "decisionRetry", threadId, kind, gateId });
+  }
+
+  // The first-send Full access question is asked by the React app, not a VS Code modal, so the
+  // same dialog guards a standalone host. Pending questions survive a webview reload.
+  private fullAccessQuestions = new Map<string, { workspace: string; resolve(choice: FirstSendChoice): void }>();
+  confirmFullAccessFirstSend(workspace: string): Promise<FirstSendChoice> {
+    if (!this.panel) return Promise.resolve("cancel");
+    const requestId = randomUUID();
+    return new Promise(resolve => {
+      this.fullAccessQuestions.set(requestId, { workspace, resolve });
+      void this.panel?.webview.postMessage({ type: "confirmFullAccessFirstSend", requestId, workspace });
+    });
+  }
+  private answerFullAccessQuestion(requestId: unknown, choice: unknown): void {
+    const question = typeof requestId === "string" ? this.fullAccessQuestions.get(requestId) : undefined;
+    if (!question) return;
+    this.fullAccessQuestions.delete(requestId as string);
+    question.resolve(choice === "continue" || choice === "accept_edits" ? choice : "cancel");
   }
 
   renderApproval(view: ApprovalView): void {
@@ -296,6 +315,9 @@ export class ChatPanel {
       let p: Promise<void>;
       if (m["type"] === "webviewReady") {
         if (this.approvalView) this.renderApproval(this.approvalView);
+        for (const [requestId, { workspace }] of this.fullAccessQuestions) {
+          void this.panel?.webview.postMessage({ type: "confirmFullAccessFirstSend", requestId, workspace });
+        }
         this.renderContextUsage(this.lastContextUsage, this.contextUsageStale);
         // Webview state resets on reload; the workbar is SSE-fed (not in the
         // /live poll), so replay the last posted value or step progress shows
@@ -311,6 +333,9 @@ export class ChatPanel {
           enabled: this.onGetStepReview ? this.onGetStepReview() : true,
         });
         p = this.onReady();
+      } else if (m["type"] === "fullAccessFirstSendChoice") {
+        this.answerFullAccessQuestion(m["requestId"], m["choice"]);
+        p = Promise.resolve();
       } else if (m["type"] === "setApprovalMode") {
         p = this.approvalHandler?.(m["mode"], m["confirmedFullAccess"] === true, m["dontShowAgain"] === true) ?? Promise.resolve();
       } else if (m["type"] === "setPlanMode") {
@@ -523,6 +548,8 @@ export class ChatPanel {
       });
     });
     this.panel.onDidDispose(() => {
+      for (const { resolve } of this.fullAccessQuestions.values()) resolve("cancel");
+      this.fullAccessQuestions.clear();
       this.themeSubscription?.();
       this.themeSubscription = null;
       this.panel = null;

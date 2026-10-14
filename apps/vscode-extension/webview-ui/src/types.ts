@@ -448,6 +448,7 @@ export type ExtensionMessage =
   | { type: "planModeState"; enabled: boolean }
   | { type: "decisionRetry"; threadId: string; kind: "mode" | "clarify" | "team_plan"; gateId?: string }
   | { type: "approvalState"; approval: ApprovalModeView }
+  | { type: "confirmFullAccessFirstSend"; requestId: string; workspace: string }
   | { type: "reviewPrefState"; enabled: boolean }
   // Chat rewind: the preview opens the confirm dialog; the prefill lands the rewound
   // message's text back in the composer after the server-authoritative reload.
@@ -467,6 +468,7 @@ export type ExtensionMessage =
 export type WebviewMessage =
   | { type: "webviewReady" }
   | { type: "setApprovalMode"; mode: ApprovalMode; confirmedFullAccess?: boolean; dontShowAgain?: boolean }
+  | { type: "fullAccessFirstSendChoice"; requestId: string; choice: "continue" | "accept_edits" | "cancel" }
   | { type: "sendMessage"; text: string; originalDraftText?: string; draftId?: string; stepReview?: boolean; forcedSkills?: string[]; mentionedPaths?: string[]; imageAttachments?: { name: string; mediaType: string; dataUrl: string; bytes: number }[]; planMode?: boolean }
   | { type: "rewindPreview"; messageId: string }
   | { type: "rewindConfirm"; messageId: string }
@@ -548,6 +550,7 @@ export interface ApprovalModeView {
   tier: "unknown" | "supported" | "older" | "legacy";
   snapshot: { supported: true; autoAccept: boolean; shellPolicy: "ask" | "allow_all"; version: number; owned: boolean; processId: string } | null;
   mode: ApprovalMode | null; confirmed: boolean; pending: boolean; warningDismissed: boolean;
+  trusted: boolean;
   error: string | null; notice: string | null;
 }
 

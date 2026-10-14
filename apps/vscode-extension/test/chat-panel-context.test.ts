@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, test, vi } from "vitest";
@@ -9,15 +10,40 @@ const js = ts.transpile(declaration.getText(tree), { target: ts.ScriptTarget.ES2
 // The class source runs without its module scope, so bind the theme helpers it uses
 // (theming Phase 1: the message handler answers themeReady before anything else).
 const themeHub = new ThemeHub();
-const ChatPanel = new Function("exports", "themeReadyReply", "themeHub", `${js}; return ChatPanel;`)({}, themeReadyReply, themeHub);
+const ChatPanel = new Function("exports", "themeReadyReply", "themeHub", "randomUUID", `${js}; return ChatPanel;`)({}, themeReadyReply, themeHub, randomUUID);
 function setup() {
   const host = Object.create(ChatPanel.prototype) as any;
   let receive!: (message: unknown) => void;
   const postMessage = vi.fn();
   host.panel = { webview: { postMessage, onDidReceiveMessage: (fn: typeof receive) => { receive = fn; } }, onDidDispose: () => {} };
   host.onReady = async () => {}; host.lastWorkbarInfo = null; host.lastContextUsage = null; host.contextUsageStale = false; host.modelRefreshEpoch = 0;
+  host.fullAccessQuestions = new Map();
   return { host, postMessage, receive: (m: unknown) => receive(m) };
 }
+describe("ChatPanel first-send Full access question", () => {
+  test("asks the React app, re-asks after a webview reload and resolves with its answer", async () => {
+    const { host, postMessage, receive } = setup();
+    host.registerHandlers();
+    const answer = host.confirmFullAccessFirstSend("repo");
+    const [[asked]] = postMessage.mock.calls;
+    expect(asked).toEqual({ type: "confirmFullAccessFirstSend", requestId: expect.any(String), workspace: "repo" });
+    postMessage.mockClear();
+    receive({ type: "webviewReady" });
+    expect(postMessage).toHaveBeenCalledWith(asked);
+    receive({ type: "fullAccessFirstSendChoice", requestId: asked.requestId, choice: "accept_edits" });
+    await expect(answer).resolves.toBe("accept_edits");
+  });
+  test("an unknown answer is Cancel, and no panel means Cancel", async () => {
+    const { host, postMessage, receive } = setup();
+    host.registerHandlers();
+    const answer = host.confirmFullAccessFirstSend("repo");
+    receive({ type: "fullAccessFirstSendChoice", requestId: postMessage.mock.calls[0][0].requestId, choice: "yes please" });
+    await expect(answer).resolves.toBe("cancel");
+    host.panel = null;
+    await expect(host.confirmFullAccessFirstSend("repo")).resolves.toBe("cancel");
+  });
+});
+
 describe("ChatPanel context bridge", () => {
   test("thread hydration forwards the selected identity while routine clears remain compatible", () => {
     const { host, postMessage } = setup();

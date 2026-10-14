@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import { Icon } from "./Icon";
 import { ModelMenu } from "./ModelMenu";
-import { ApprovalMenu } from "./ApprovalMenu";
+import { ApprovalMenu, ApprovalNotice } from "./ApprovalMenu";
 import { usePopover } from "./shared/usePopover";
 import { ContextMeter } from "./ContextMeter";
 import { vscode } from "../vscodeApi";
@@ -398,7 +398,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
   }
   const effectiveApproval: ApprovalModeView = approval ?? {
     tier: "older", snapshot: null, mode: stepReview ? "ask" : "accept_edits",
-    confirmed: true, pending: false, warningDismissed: false, error: null, notice: null,
+    confirmed: true, pending: false, warningDismissed: false, trusted: true, error: null, notice: null,
   };
   const canSend = !availability.disabled && pendingImages === 0 && (draft.trim().length > 0 || imageAttachments.length > 0);
 
@@ -501,6 +501,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface-2 text-text disabled:opacity-50"><Icon name="stop" size={13} /></button>
         : <button type="button" onClick={doSend} disabled={!canSend} aria-label="Send" title="Send (Enter)"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent-fill)] text-[var(--on-accent)] hover:bg-[var(--accent-fill-hover)] disabled:opacity-40 disabled:cursor-default"><Icon name="send" size={14} /></button>}
+        <ApprovalNotice approval={effectiveApproval} />
       </div>
     </div>
   );

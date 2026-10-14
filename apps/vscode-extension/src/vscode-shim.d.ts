@@ -219,6 +219,8 @@ declare module "vscode" {
 
   export namespace workspace {
     const workspaceFolders: readonly WorkspaceFolder[] | undefined;
+    const isTrusted: boolean;
+    function onDidGrantWorkspaceTrust(listener: () => unknown): Disposable;
     function getConfiguration(section?: string, scope?: Uri): Configuration;
     function getWorkspaceFolder(uri: Uri): WorkspaceFolder | undefined;
     namespace fs {

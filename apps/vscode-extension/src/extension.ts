@@ -661,7 +661,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     warningDismissed: () => context.globalState.get<boolean>("crucible.fullAccessWarningDismissed", false),
     saveWarningDismissed: () => context.globalState.update("crucible.fullAccessWarningDismissed", true),
+    isTrusted: () => vscode.workspace.isTrusted,
+    // Per workspace: the saved mode is global, so Full access can arrive from another workspace.
+    firstSendAcknowledged: () => context.workspaceState.get<boolean>("crucible.fullAccessFirstSendAcknowledged", false),
+    acknowledgeFirstSend: () => context.workspaceState.update("crucible.fullAccessFirstSendAcknowledged", true),
+    confirmFirstFullAccessSend: () =>
+      chatPanel.confirmFullAccessFirstSend(vscode.workspace.workspaceFolders?.[0]?.name ?? "this workspace"),
   });
+  context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => {
+    void controller.approvalTrustGranted();
+  }));
   chatPanel.setApprovalHandler((mode, confirmed, remember) => controller.setApprovalMode(mode, confirmed, remember));
 
   // Task-subsystem flag (GET /v1/config): when off, the controller handles changes inline

@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ApprovalSnapshot, BackendTaskClient } from "@crucible/editor-client";
-import { ApprovalCoordinator, migrateApproval, type ApprovalMode } from "../src/approval-mode";
+import { ApprovalCoordinator, migrateApproval, type ApprovalMode, type FirstSendChoice } from "../src/approval-mode";
 const state = (patch: Partial<ApprovalSnapshot> = {}): ApprovalSnapshot => ({ supported: true, autoAccept: false, shellPolicy: "ask", version: 0, owned: false, processId: "p", ...patch });
-function setup(options: { saved?: ApprovalMode; review?: boolean; owned?: boolean; older?: boolean; legacy?: boolean } = {}) {
-  let snapshot = state({ owned: options.owned ?? false });
+function setup(options: { saved?: ApprovalMode; review?: boolean; owned?: boolean; older?: boolean; legacy?: boolean;
+  trusted?: boolean; firstSend?: FirstSendChoice; shellPolicy?: "ask" | "allow_all" } = {}) {
+  let snapshot = state({ owned: options.owned ?? false, ...(options.shellPolicy ? { shellPolicy: options.shellPolicy, autoAccept: options.shellPolicy === "allow_all" } : {}) });
+  let trusted = options.trusted ?? true;
+  let acknowledged = false;
+  const confirmFirstFullAccessSend = vi.fn(async () => options.firstSend ?? "continue");
   let saved = options.saved;
   let warning = false;
   const getConfig = vi.fn(async () => ({ approval: options.older || options.legacy ? undefined : snapshot,
@@ -17,8 +21,11 @@ function setup(options: { saved?: ApprovalMode; review?: boolean; owned?: boolea
   const render = vi.fn();
   const c = new ApprovalCoordinator({ client: () => ({ getConfig, setApprovalMode, setGlobalReviewPref } as unknown as BackendTaskClient),
     savedMode: () => saved, reviewOn: () => options.review ?? true, saveMode, render,
-    warningDismissed: () => warning, saveWarningDismissed: async () => { warning = true; } });
-  return { c, getConfig, setApprovalMode, setGlobalReviewPref, saveMode, render, setState: (s: ApprovalSnapshot) => { snapshot = s; } };
+    warningDismissed: () => warning, saveWarningDismissed: async () => { warning = true; },
+    isTrusted: () => trusted, firstSendAcknowledged: () => acknowledged,
+    acknowledgeFirstSend: async () => { acknowledged = true; }, confirmFirstFullAccessSend });
+  return { c, getConfig, setApprovalMode, setGlobalReviewPref, saveMode, render, confirmFirstFullAccessSend,
+    setState: (s: ApprovalSnapshot) => { snapshot = s; }, trust: () => { trusted = true; }, acknowledged: () => acknowledged };
 }
 describe("approval migration", () => {
   it.each([["ask", true, "ask"], ["ask", false, "accept_edits"], ["allow_all", true, "ask"], ["allow_all", false, "full_access"]] as const)("%s/%s → %s", (shell, review, mode) => expect(migrateApproval(shell, review)).toBe(mode));
@@ -150,5 +157,66 @@ describe("approval view publishing", () => {
     expect(t.render).toHaveBeenCalledTimes(renders);
     t.c.observe(state({ owned: true, autoAccept: true, version: 1 }), "p");
     expect(t.render).toHaveBeenCalledTimes(renders + 1);
+  });
+});
+
+describe("workspace trust", () => {
+  it("applies Accept edits instead of a saved Full access and keeps the preference", async () => {
+    const t = setup({ saved: "full_access", trusted: false });
+    await t.c.connect();
+    expect(t.setApprovalMode).toHaveBeenCalledWith(expect.objectContaining({ autoAccept: true, shellPolicy: "ask", resolveWaiting: false }));
+    expect(t.saveMode).not.toHaveBeenCalled();
+    expect(t.c.current()).toMatchObject({ mode: "accept_edits", trusted: false, notice: null });
+  });
+  it("downgrades a backend already running with Full access", async () => {
+    const t = setup({ owned: true, shellPolicy: "allow_all", trusted: false });
+    await t.c.connect();
+    expect(t.setApprovalMode).toHaveBeenCalledWith(expect.objectContaining({ shellPolicy: "ask", resolveWaiting: false }));
+    expect(t.c.current().mode).toBe("accept_edits");
+  });
+  it("refuses a Full access selection", async () => {
+    const t = setup({ owned: true, trusted: false }); await t.c.connect();
+    t.setApprovalMode.mockClear();
+    await t.c.select("full_access", true);
+    expect(t.setApprovalMode).not.toHaveBeenCalled();
+    expect(t.c.current().error).toContain("trusted workspace");
+  });
+  it("re-applies the saved Full access once trust is granted", async () => {
+    const t = setup({ saved: "full_access", trusted: false }); await t.c.connect();
+    t.trust(); await t.c.trustGranted();
+    expect(t.c.current()).toMatchObject({ mode: "full_access", trusted: true });
+    expect(t.acknowledged()).toBe(false);
+  });
+});
+
+describe("first send under Full access", () => {
+  async function fullAccess(firstSend: FirstSendChoice) {
+    const t = setup({ saved: "full_access", firstSend }); await t.c.connect();
+    expect(t.c.current().mode).toBe("full_access");
+    return t;
+  }
+  it("asks once per workspace and remembers Continue", async () => {
+    const t = await fullAccess("continue");
+    expect(await t.c.confirmFirstSend()).toBe(true);
+    expect(await t.c.confirmFirstSend()).toBe(true);
+    expect(t.confirmFirstFullAccessSend).toHaveBeenCalledTimes(1);
+  });
+  it("does not send on Cancel and asks again next time", async () => {
+    const t = await fullAccess("cancel");
+    expect(await t.c.confirmFirstSend()).toBe(false);
+    expect(t.acknowledged()).toBe(false);
+  });
+  it("switches to Accept edits and sends", async () => {
+    const t = await fullAccess("accept_edits");
+    expect(await t.c.confirmFirstSend()).toBe(true);
+    expect(t.c.current().mode).toBe("accept_edits");
+    expect(t.setApprovalMode).toHaveBeenLastCalledWith(expect.objectContaining({ shellPolicy: "ask", autoAccept: true }));
+  });
+  it("never asks outside Full access or after the user chose it here", async () => {
+    const t = setup({ owned: true }); await t.c.connect();
+    expect(await t.c.confirmFirstSend()).toBe(true);
+    await t.c.select("full_access", true); await t.c.acknowledgeUserSelection();
+    expect(await t.c.confirmFirstSend()).toBe(true);
+    expect(t.confirmFirstFullAccessSend).not.toHaveBeenCalled();
   });
 });
