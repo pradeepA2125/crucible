@@ -5,6 +5,12 @@ export function isLongReport(text: string): boolean {
   return Array.from(text.trim()).length > 420 || text.trim().split("\n").length > 6;
 }
 
+/** A cut inside a code fence would render everything after it as code; close it before the ellipsis. */
+export function closeOpenFence(excerpt: string): string {
+  const fences = excerpt.split("\n").map(line => /^\s*(```|~~~)/.exec(line)?.[1]).filter(Boolean);
+  return fences.length % 2 === 1 ? `${excerpt}\n${fences[fences.length - 1]}\n\n…` : `${excerpt}…`;
+}
+
 /** Long reports start with an actual excerpt, rather than clipping a full
  * markdown tree (which would leave hidden links and controls keyboard reachable).
  * Expansion restores the exact report through the surface's existing renderer. */
@@ -15,7 +21,7 @@ export function ReportDisclosure({ text, label, renderContent = content => <Mark
   const bodyId = useId();
   const open = choice.text === text && choice.open;
   const long = isLongReport(text);
-  const excerpt = Array.from(text.trimStart().split("\n").slice(0, 4).join("\n")).slice(0, 320).join("").trimEnd() + "…";
+  const excerpt = closeOpenFence(Array.from(text.trimStart().split("\n").slice(0, 4).join("\n")).slice(0, 320).join("").trimEnd());
   return (
     <div data-testid="report-disclosure" className="grid min-w-0 gap-2">
       <div id={bodyId} className="min-w-0">{renderContent(long && !open ? excerpt : text)}</div>

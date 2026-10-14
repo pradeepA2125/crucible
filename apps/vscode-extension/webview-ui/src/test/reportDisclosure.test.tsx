@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ReportDisclosure } from "../components/shared/ReportDisclosure";
+import { closeOpenFence, ReportDisclosure } from "../components/shared/ReportDisclosure";
 
 vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
 
@@ -35,5 +35,10 @@ describe("ReportDisclosure", () => {
     rerender(<><ReportDisclosure text={second} label="review report" /><ReportDisclosure text={first} label="helper report" /></>);
     const controls = screen.getAllByRole("button").map(button => button.getAttribute("aria-controls"));
     expect(new Set(controls).size).toBe(2);
+  });
+
+  it("closes a code fence the excerpt cut open, so later prose is not rendered as code", () => {
+    expect(closeOpenFence("Ran:\n```bash\nnpm test")).toBe("Ran:\n```bash\nnpm test\n```\n\n…");
+    expect(closeOpenFence("Ran:\n```bash\nnpm test\n```\nDone")).toBe("Ran:\n```bash\nnpm test\n```\nDone…");
   });
 });

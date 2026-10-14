@@ -10,7 +10,12 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from agentd.chat.approval import ApprovalConflict, ApprovalManaged, ApprovalModeRequest, ApprovalState
+from agentd.chat.approval import (
+    ApprovalConflict,
+    ApprovalManaged,
+    ApprovalModeRequest,
+    ApprovalState,
+)
 from agentd.chat.models import (
     ChatCommandDecisionRequest,
     ChatMcpDecisionRequest,
@@ -32,6 +37,7 @@ from agentd.domain.models import (
     ReviewPrefRequest,
     ScopeDecisionRequest,
     ScopeDecisionResponse,
+    ShellPolicy,
     StepDecisionRequest,
     StepProgress,
     TaskArtifactEntry,
@@ -261,7 +267,8 @@ def build_router(
         if expected is None:
             return  # old clients retain the original admission behavior
         if not isinstance(expected, str) or not expected:
-            raise HTTPException(status_code=422, detail="expected_process_id must be a nonempty string")
+            raise HTTPException(
+                status_code=422, detail="expected_process_id must be a nonempty string")
         state = approval_report()
         if not state.get("owned") or state.get("process_id") != expected:
             raise HTTPException(status_code=409, detail={
@@ -1537,7 +1544,8 @@ def build_router(
             if _provider_access is not None:
                 live.provider_access = _provider_access(thread_id)
             _approval = approval_report()
-            live.approval = ApprovalState.model_validate(_approval) if _approval.get("supported") else _approval
+            live.approval = (ApprovalState.model_validate(_approval)
+                             if _approval.get("supported") else _approval)
             live.message_count = len(thread.messages)
             _process_id = getattr(_chat_agent, "context_process_id", None)
             if _process_id is not None:
@@ -1891,11 +1899,13 @@ def build_router(
             setter = getattr(_chat_agent, "set_approval_mode", None)
             if setter is None:
                 raise HTTPException(status_code=409, detail="chat controller required")
-            from agentd.domain.models import ShellPolicy
             try:
-                result = setter(auto_accept=request.auto_accept,
-                    shell_policy=ShellPolicy(request.shell_policy), resolve_waiting=request.resolve_waiting,
-                    expected_process_id=request.expected_process_id, expected_version=request.expected_version)
+                result = setter(
+                    auto_accept=request.auto_accept,
+                    shell_policy=ShellPolicy(request.shell_policy),
+                    resolve_waiting=request.resolve_waiting,
+                    expected_process_id=request.expected_process_id,
+                    expected_version=request.expected_version)
             except ApprovalConflict as exc:
                 raise HTTPException(status_code=409, detail=exc.state.model_dump()) from exc
             return result.model_dump()

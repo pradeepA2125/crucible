@@ -7,8 +7,6 @@ explore→classify→route pipeline. F1 implements QA + clarify; propose_mode ga
 """
 from __future__ import annotations
 
-from agentd.chat.approval import ApprovalConflict, ApprovalManaged, ApprovalModeResult, ApprovalState
-
 import asyncio
 import json
 import logging
@@ -22,6 +20,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from agentd.chat.approval import (
+    ApprovalConflict,
+    ApprovalManaged,
+    ApprovalModeResult,
+    ApprovalState,
+)
 from agentd.chat.controller_factory import (
     is_skills_enabled,
     is_subagents_enabled,
