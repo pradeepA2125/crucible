@@ -10,6 +10,12 @@ import { effortStops, EFFORT_LABEL, type EffortLevel, type EffortView } from "..
 import { EffortSlider } from "./EffortSlider";
 import { usePopover } from "./shared/usePopover";
 const optionKey = (opt: { backend: string; model: string }) => `${opt.backend}:${opt.model}`;
+/** One header per provider, in first-appearance order: repeating it on every row doubled the list. */
+function groupByProvider(options: ModelOption[]): [string, ModelOption[]][] {
+  const groups = new Map<string, ModelOption[]>();
+  for (const opt of options) groups.set(opt.label, [...(groups.get(opt.label) ?? []), opt]);
+  return [...groups];
+}
 
 /** Model and effort share a popover; provider acknowledgements own the displayed state. */
 export function ModelMenu() {
@@ -24,6 +30,7 @@ export function ModelMenu() {
   const [effortError, setEffortError] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const chip = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLDivElement>(null);
   const modelRequest = useRef<string | null>(null);
   const effortRequest = useRef<EffortLevel | "default" | null>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -49,6 +56,9 @@ export function ModelMenu() {
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, []);
+  useEffect(() => {
+    if (open) list.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.scrollIntoView?.({ block: "nearest" });
+  }, [open]);
   const busy = swapping !== null || effortPending !== null;
   function chooseModel(opt: ModelOption) {
     if (opt.active || modelRequest.current !== null || effortRequest.current !== null) return;
@@ -75,27 +85,37 @@ export function ModelMenu() {
         {busy ? <span aria-label="Checking with provider">…</span> : <Icon name="chev-d" size={10} />}
       </button>
       {open && <div role="dialog" aria-label="Model and reasoning effort" style={position}
-        className="absolute bottom-full z-50 mb-2 max-h-[65vh] overflow-y-auto overscroll-contain rounded-card border border-border-strong bg-surface-3 text-meta [overflow-wrap:anywhere]">
-        {plan && <div className="flex flex-wrap items-center gap-1.5 border-b border-border p-3 text-caption text-text-3">
+        className="absolute bottom-full z-50 mb-2 flex max-h-[65vh] flex-col overflow-hidden rounded-card border border-border-strong bg-surface-3 text-meta [overflow-wrap:anywhere]">
+        {plan && <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border px-3 py-2 text-caption text-text-3">
           {plan === "claude" ? <ClaudeLogo size={12} /> : <ChatGPTLogo size={12} />}
           <span>{plan === "claude" ? "Using Claude plan" : "Using ChatGPT plan"}</span>
           <a href={plan === "claude" ? CLAUDE_USAGE_URL : CHATGPT_USAGE_URL} onClick={e => { e.preventDefault(); vscode.postMessage({ type: "settings/openExternal", url: plan === "claude" ? CLAUDE_USAGE_URL : CHATGPT_USAGE_URL }); }}
             className="text-accent underline hover:text-text">Manage usage</a>
         </div>}
-        <div className="grid gap-0.5 p-1" role="group" aria-label="Models">
-          {options.map(opt => <button key={optionKey(opt)} type="button" disabled={busy} aria-pressed={opt.active} onClick={() => chooseModel(opt)}
-            className="grid w-full min-w-0 gap-0.5 rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">
-            <span className="flex min-w-0 items-center gap-1.5 text-caption text-text-3"><span className="min-w-0 truncate">{opt.label}</span>{opt.active && <Icon name="check" size={11} />}{swapping === optionKey(opt) && <span>…</span>}</span>
-            <span className="[overflow-wrap:anywhere] text-body text-text">{opt.display ?? opt.model}</span>
-          </button>)}
+        <div ref={list} data-testid="model-list" role="group" aria-label="Models"
+          className="min-h-0 max-h-[240px] overflow-y-auto overscroll-contain p-1">
+          {groupByProvider(options).map(([label, group]) => <div key={label} role="group" aria-label={label}>
+            <div aria-hidden="true" className="truncate px-2 pb-0.5 pt-2 text-caption text-text-3">{label}</div>
+            {group.map(opt => <button key={optionKey(opt)} type="button" disabled={busy} aria-pressed={opt.active} onClick={() => chooseModel(opt)}
+              title={opt.display ?? opt.model}
+              className="flex w-full min-w-0 items-center gap-2 rounded-control px-2 py-1 text-left text-body text-text hover:bg-surface-2 disabled:opacity-50">
+              <span className="sr-only">{label}: </span>
+              <span className="min-w-0 flex-1 truncate">{opt.display ?? opt.model}</span>
+              {swapping === optionKey(opt) && <span aria-hidden="true">…</span>}
+              {opt.active && <Icon name="check" size={12} />}
+            </button>)}
+          </div>)}
           {!options.length && <p className="p-2 text-caption text-text-3">No validated providers yet — add one in Settings.</p>}
-          {error && <p role="alert" className="p-2 text-caption text-red">{error}</p>}
         </div>
-        <EffortSlider effort={effort} pending={effortPending} error={effortError} busy={swapping !== null} onChoose={chooseEffort} />
-        <button type="button" onClick={() => { vscode.postMessage({ type: "openSettings" }); setOpen(false); }}
-          className="flex w-full items-center gap-1.5 border-t border-border px-3 py-2 text-meta text-text-2 hover:bg-surface-2">
-          <Icon name="gear" size={12} />Provider settings…
-        </button>
+        {error && <p role="alert" className="shrink-0 border-t border-border px-3 py-2 text-caption text-red">{error}</p>}
+        {/* Pinned below the scrolling list, so effort never needs a scroll to reach. */}
+        <div className="shrink-0">
+          <EffortSlider effort={effort} pending={effortPending} error={effortError} busy={swapping !== null} onChoose={chooseEffort} />
+          <button type="button" onClick={() => { vscode.postMessage({ type: "openSettings" }); setOpen(false); }}
+            className="flex w-full items-center gap-1.5 border-t border-border px-3 py-2 text-meta text-text-2 hover:bg-surface-2">
+            <Icon name="gear" size={12} />Provider settings…
+          </button>
+        </div>
       </div>}
     </div>
   );

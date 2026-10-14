@@ -60,6 +60,25 @@ describe("ModelMenu", () => {
   });
 });
 
+describe("ModelMenu list layout", () => {
+  beforeEach(() => vi.clearAllMocks());
+  it("names each provider once, one line per model, with effort outside the scrolling list", () => {
+    render(<ModelMenu />);
+    deliver({ type: "modelList", current: { backend: "claude_subscription", model: "b" }, options: [
+      { backend: "claude_subscription", label: "Claude subscription", model: "a", display: "Claude Haiku", active: false },
+      { backend: "claude_subscription", label: "Claude subscription", model: "b", display: "Claude Sonnet", active: true },
+      { backend: "gemini", label: "Google Gemini", model: "g", active: false },
+    ], effort: { level: "low", support: { supported: ["low", "high"], unsupported: {} } } });
+    fireEvent.click(screen.getByRole("button", { name: /Model: Claude Sonnet/ }));
+    const list = screen.getByTestId("model-list");
+    expect(list.className).toContain("max-h-[240px]");
+    expect(list.className).toContain("overflow-y-auto");
+    expect(screen.getAllByText("Claude subscription")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Claude subscription: Claude Sonnet" })).toHaveAttribute("aria-pressed", "true");
+    expect(list.contains(screen.getByRole("slider"))).toBe(false);
+  });
+});
+
 describe("ModelMenu on the ChatGPT plan", () => {
   beforeEach(() => vi.clearAllMocks());
 
