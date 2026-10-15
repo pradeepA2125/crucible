@@ -766,9 +766,12 @@ the model to check each claim and applies_when, ignore unrelated entries, and re
 before relying on them. IDs, revisions, topic, claim and applicability are supplied; full
 detail is available through the scoped read tool. Scope/lifecycle validation stays in code.
 
-Append-only delivery, shown-ID deduplication, six bounded working-set refreshes per turn,
-rewind and compaction revalidation remain. Working-set refreshes also work without local
-models. Inspector traces distinguish offered catalog IDs from relevance judgments, full
+Automatic recall runs once at user-turn start, including without local models. The owner
+disabled automatic file/error working-set refreshes on October 15 after the usefulness
+review. Explicit `search_memory` and `read_memory` remain available throughout the turn.
+Append-only delivery, shown-ID deduplication, rewind and compaction revalidation remain.
+Compaction may restore already offered live catalog entries without a new search.
+Inspector traces distinguish offered catalog IDs from relevance judgments, full
 reads and actual use. BGE failures fall back to retrieval order, never to a provider call.
 
 Use the existing BGE loader and bounded R → C → Q / claim-plus-detail inputs.

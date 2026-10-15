@@ -23,7 +23,6 @@ MAX_CATALOG = 15
 RANKED_CATALOG = 10
 MAX_ORDERING_POOL = 20
 RERANK_MIN_CANDIDATES = 9
-MAX_MID_TRIGGERS = 6
 
 
 def catalog(memory: DurableMemory) -> str:
@@ -160,8 +159,6 @@ class RecallTurn:
     signals: Signals
     allow_recall: bool = True
     started: bool = False
-    mid_triggers: int = 0
-    seen_work: set[str] = field(default_factory=set)
     current_entries: dict[str, tuple[str, str]] = field(default_factory=dict)
     reappended: set[str] = field(default_factory=set)
     budget_key: str = ""
@@ -238,14 +235,12 @@ class RecallCoordinator:
         signals: Signals,
         *,
         allow_recall: bool = True,
-        history: History | None = None,
         budget_key: str = "",
     ) -> None:
         if run_id in self.turns and self.turns[run_id].key == key:
             return
         turn = RecallTurn(key, signals, allow_recall=allow_recall)
         turn.budget_key = budget_key or key
-        turn.seen_work = working_items(history or [])
         self.turns[run_id] = turn
 
     @staticmethod
@@ -395,38 +390,20 @@ class RecallCoordinator:
         context: ScopeContext,
         history: History,
         *,
-        mid_turn: bool = False,
         workspace: str = "",
     ) -> tuple[dict[str, object] | None, RecallTraceV2 | None]:
         turn = self.turns.get(run_id)
         if turn is None:
             return None, None
-        if not turn.allow_recall:
+        if not turn.allow_recall or turn.started:
             return None, None
+        # One automatic lookup per user turn. Later file/error discovery is left
+        # to explicit search_memory calls, rather than appending more catalogs.
+        turn.started = True
         signals = turn.signals
-        if mid_turn and turn.mid_triggers >= MAX_MID_TRIGGERS:
-            return None, None
         entities = working_items(history, workspace)
-        if mid_turn:
-            fresh = entities - turn.seen_work
-            if not fresh:
-                return None, None
-            turn.mid_triggers += 1
-            turn.seen_work.update(fresh)
-            thought = ""
-            for message in reversed(history):
-                evidence = message.get("_evidence")
-                if isinstance(evidence, dict) and isinstance(evidence.get("thought"), str):
-                    thought = str(evidence["thought"])
-                    break
-            signals = Signals(thought + "\n" + "\n".join(sorted(fresh)), signals.c, signals.r)
-        else:
-            if turn.started:
-                return None, None
-            turn.started = True
-            turn.seen_work.update(entities)
         trace = RecallTraceV2(
-            trigger="working_set" if mid_turn else "turn_start",
+            trigger="turn_start",
             signals=signals.payload(),
             status="no_candidates",
         )

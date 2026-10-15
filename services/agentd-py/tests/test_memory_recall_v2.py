@@ -183,7 +183,7 @@ async def test_bge_only_orders_with_full_details_and_applies_when_no_score_gate(
 
 
 @pytest.mark.asyncio
-async def test_bge_failure_degrades_to_catalog_and_keeps_keyword_midturn_refresh(tmp_path):
+async def test_bge_failure_degrades_to_catalog_without_midturn_refresh(tmp_path):
     store = DurableMemoryStore(tmp_path / "m.db")
     seed_ordering_pool(store)
     entry = store.put(memory(), CTX, origin="agent_nomination")
@@ -200,8 +200,7 @@ async def test_bge_failure_degrades_to_catalog_and_keeps_keyword_midturn_refresh
     history = [
         {"role": "tool_result", "content": "observation", "delivered_read": {"path": "src/new.py"}}
     ]
-    _, mid = await coordinator.trigger("r", CTX, history, mid_turn=True)
-    assert mid is not None and "BGE" not in mid.selection_method
+    assert await coordinator.trigger("r", CTX, history) == (None, None)
     assert coordinator.ranker is None
 
 
@@ -299,25 +298,47 @@ def test_working_set_paths_symbols_and_error_signatures():
 
 
 @pytest.mark.asyncio
-async def test_keyword_midturn_trigger_cap_and_no_repeated_working_set(tmp_path):
+@pytest.mark.parametrize("initial_match", [False, True])
+async def test_only_user_turn_start_searches_despite_new_paths_and_errors(
+    tmp_path, monkeypatch, initial_match
+):
     store = DurableMemoryStore(tmp_path / "m.db")
-    store.put(memory(), CTX, origin="agent_nomination")
+    if initial_match:
+        store.put(memory(), CTX, origin="agent_nomination")
     coordinator = RecallCoordinator(CandidateSearch(store))
+    searches = []
+    original = coordinator.search.search
+
+    async def record_search(*args, **kwargs):
+        searches.append(args[0].payload())
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(coordinator.search, "search", record_search)
     coordinator.begin("r", "human", Signals("memory"))
-    await coordinator.trigger("r", CTX, [])
-    history = []
+    message, first_trace = await coordinator.trigger("r", CTX, [])
+    assert first_trace.trigger == "turn_start"
+    history = [message] if message else []
+    late = store.put(
+        memory(content="Memory guidance saved after the first lookup"),
+        CTX,
+        origin="agent_nomination",
+    )
     for index in range(7):
         history.append(
             {
                 "role": "tool_result",
-                "content": "new observation",
+                "content": f"ImportError: new failure {index}",
+                "is_error": True,
                 "delivered_read": {"path": f"src/path{index}.py"},
+                "_evidence": {"thought": "Inspect the newly discovered failure"},
             }
         )
-        _, trace = await coordinator.trigger("r", CTX, history, mid_turn=True)
-        assert (trace is not None) == (index < 6)
-        assert await coordinator.trigger("r", CTX, history, mid_turn=True) == (None, None)
-    assert coordinator.turns["r"].mid_triggers == 6
+        assert await coordinator.trigger("r", CTX, history) == (None, None)
+    assert len(searches) == 1
+    coordinator.begin("r", "next-human", Signals("memory"))
+    _, next_trace = await coordinator.trigger("r", CTX, history)
+    assert next_trace.trigger == "turn_start" and late.id in next_trace.delivered
+    assert len(searches) == 2 and searches[1]["Q"] == "memory"
 
 
 @pytest.mark.asyncio

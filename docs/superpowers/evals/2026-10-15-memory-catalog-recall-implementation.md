@@ -17,9 +17,10 @@ is deferred. Plan: `../plans/2026-10-15-memory-catalog-recall.md`.
 - No runtime LLM judge remains. Historical standalone judge evaluation lives under
   `agentd/eval/memory_judge_legacy.py`; its caller and schema checks were updated.
   Provider swaps continue to reach the curator and compaction summarizer.
-- Keyword-only working-set refreshes now work without a local scorer. The six-refresh
-  bound, shown-ID deduplication, append-only delivery, compaction revalidation, rewind,
-  and concurrent retirement/revision protection remain.
+- Automatic lookup runs once at user-turn start, including without a local scorer.
+  Shown-ID deduplication, append-only delivery, compaction revalidation, rewind,
+  and concurrent retirement/revision protection remain. The owner subsequently
+  disabled automatic working-set refreshes; see the final checkpoint below.
 - The inspector labels catalog offers rather than claiming relevance, full reads or
   actual model use. It does not yet link catalog offers to later `read_memory` calls.
   BGE scores are explicitly ordering hints without a cutoff or calibrated confidence.
@@ -117,3 +118,50 @@ behavior was changed during the following review:
 
 Machine-specific `.vscode/settings.json` and the unrelated October 8 landing-refresh
 plan are outside this memory checkpoint and remain local.
+
+## Owner-approved turn-start-only automatic recall
+
+After reviewing the retained runtime artifacts, the owner requested disabling automatic
+mid-turn refreshes. The inventory found 45 working-set traces under the earlier gated
+rules: 36 had no candidates, nine had candidates but delivered none. These are correlated
+attempts, not independent task outcomes, and do not measure the new catalog rule's quality.
+Git history also establishes that file/error refreshes were introduced in this redesign;
+the older harness cached recall per run/query instead.
+
+The coordinator now allows one automatic attempt per user-turn key, even when that attempt
+finds nothing or fails. Later file paths, errors and task-step text cannot start another
+automatic search or append a new catalog. A new user-turn key permits the next lookup.
+Explicit search/read tools remain available mid-turn. Compaction may revalidate and restore
+already offered entries without a new lookup; historical working-set traces remain readable.
+
+Regression coverage counts actual searches across multiple controller calls, preserves a
+real explicit `read_memory` call, and checks that new paths/errors cannot trigger searches
+after either an empty or populated initial lookup. A matching memory saved later in a turn
+is discoverable at the next user-turn start. Local installation remains unchanged.
+
+Validation: 49 focused recall/tool/controller/harness/prompt-golden tests passed.
+Focused ruff and `git diff --check` passed. Mypy passed for the two changed memory
+modules with `--follow-imports=silent`; the default import-traversing invocation
+reported 372 errors across 50 files, so this is not a repository-wide type-check pass.
+The owner subsequently authorized committing, pushing and installing this follow-up.
+
+## Subsequent authorized local installation
+
+`scripts/dev/install-local.sh --no-backend` built the editor client, webview and extension,
+validated the released runtime manifest, packaged and installed the VSIX, and refreshed the
+indexer successfully. Installed extension and memory-webview asset hashes match this build.
+The managed Python environment already imports this checkout, so no reinstall or environment
+deletion was needed. Existing chunk-size and packaging advisories remain.
+
+Before reloading, the authenticated local API reported all 72 conversations idle, zero live
+agents and no pending gates. A VS Code window reload started a new managed backend process.
+Its health HMAC and workspace/process binding verified, memory remained enabled, both local
+models reported ready and the provider remained ChatGPT. The VS Code status indicator showed
+the new backend connection. No hosted model request was made for this deployment; this is
+installation/startup verification, not a new recall-quality evaluation.
+
+The previous installed extension is backed up under
+`.crucible/state/deploy-backups/memory-turn-start-only-2026-10-15/`. Install log:
+`/private/tmp/memory-turn-start-local-install-2026-10-15.log`; filtered pre/post runtime
+checks: `/private/tmp/memory-turn-start-install-before.json` and
+`/private/tmp/memory-turn-start-install-after.json`.

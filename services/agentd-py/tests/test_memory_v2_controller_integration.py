@@ -65,7 +65,9 @@ async def test_controller_recall_skips_notice_and_uses_prior_completed_answer(tm
 
 
 @pytest.mark.asyncio
-async def test_v2_controller_delivers_once_with_keyword_only_models_and_real_tool_slots(tmp_path):
+async def test_v2_controller_delivers_once_with_keyword_only_models_and_real_tool_slots(
+    tmp_path, monkeypatch
+):
     chat = ChatThreadStore(tmp_path / "chat.db")
     thread = chat.create_thread(str(tmp_path))
     judge_calls = []
@@ -89,6 +91,14 @@ async def test_v2_controller_delivers_once_with_keyword_only_models_and_real_too
     )
     harness = build_memory_harness(cfg, Transport(), "fake", workspace_path=str(tmp_path))
     harness.bind_memory_state(chat)
+    searches = []
+    original_search = harness._v2_recall.search.search
+
+    async def record_search(*args, **kwargs):
+        searches.append(args[0].payload())
+        return await original_search(*args, **kwargs)
+
+    monkeypatch.setattr(harness._v2_recall.search, "search", record_search)
     context = harness.scope_context(thread.thread_id)
     entry = harness.durable_store.put(
         DurableMemory(
@@ -165,6 +175,7 @@ async def test_v2_controller_delivers_once_with_keyword_only_models_and_real_too
         seed_history=[{"role": "user", "content": "Fix transaction writes"}],
     )
     assert result.kind == "answer" and judge_calls == []
+    assert len(searches) == 1  # The read_file result must not cause another lookup.
     assert all(
         sum("[m:" in str(message.get("content")) for message in history) == 1
         for history in captured

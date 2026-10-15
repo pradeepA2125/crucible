@@ -200,7 +200,7 @@ class MemoryHarness:
         if self._v2_recall is not None:
             self._v2_recall.begin(
                 run_id, key, Signals(query, "" if child else closing, "" if child else recap),
-                history=history, allow_recall=allow_recall,
+                allow_recall=allow_recall,
                 budget_key=budget_key,
             )
 
@@ -310,10 +310,9 @@ class MemoryHarness:
                                          "sources": ["compaction_reappend"]}
                                         for memory_id in offered],
                         ))
-                turn = self._v2_recall.turns.get(run_id)
                 message, trace = await self._v2_recall.trigger(
                     run_id, self.scope_context(run_id), prep.history,
-                    mid_turn=bool(turn and turn.started), workspace=self._scope_id,
+                    workspace=self._scope_id,
                 )
                 if message:
                     prep.history.append(message)

@@ -14,9 +14,9 @@ curator, compactor, legacy pipeline, or deferred global consolidation discussion
 - Each offered line contains ID, revision, claim, topic and applicability, not full
   detail. Explain the actual retrieval/ordering method, possible false positives,
   and that the main model should ignore irrelevant entries and use `read_memory`.
-- Keep append-only history, shown-ID deduplication, six working-set refreshes per
-  turn, compaction revalidation and scoped explicit reads. Keyword-only refreshes
-  must work without optional local ML dependencies.
+- Run automatic recall once at user-turn start. New files and errors do not start
+  additional automatic searches. Keep append-only history, shown-ID deduplication,
+  compaction revalidation and scoped explicit search/read tools during the turn.
 - Inspector labels distinguish a catalog offer from relevance, a full read or use.
   Existing traces remain readable. Do not invent model verdicts for offered entries.
 - Reuse the installed BGE loader and bounded combined-context/full-detail formatter.
@@ -41,8 +41,9 @@ branch iteration. Historical LLM judge experiments remain runnable as evaluation
 
 Branch implementation and validation are recorded in
 `../evals/2026-10-15-memory-catalog-recall-implementation.md`. Functional verification
-is complete; actual main-model selection/answer-quality evaluation and local installation
-have not been performed in this iteration.
+is complete. Subsequent owner-approved turn-start-only recall and local installation
+are recorded there too. Actual main-model selection/answer-quality evaluation remains
+unperformed for the catalog iteration.
 
 
 Explicit-tool follow-through: `search_memory` now shares the automatic ordering policy
