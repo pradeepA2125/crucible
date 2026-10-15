@@ -342,6 +342,7 @@ class DefaultReasoningEngine(ReasoningEngine):
         system_instructions = format_controller_system_prompt(
             tool_definitions, project_instructions=instructions, skills_catalog=skills_catalog,
             render_ctx=render_ctx, persona=persona, component_sizes=component_sizes,
+            memory_v2=bool(plan_context.get("memory_v2")),
         )
         user_payload = build_controller_step_payload(
             plan_context, history, tool_definitions, phase=phase,
@@ -355,6 +356,7 @@ class DefaultReasoningEngine(ReasoningEngine):
         schema = controller_response_schema(
             phase=phase, allowed_types=allowed_types, tight=tight, anyof=anyof,
             all_fields_required=all_fields_required,
+            memory_v2=bool(plan_context.get("memory_v2")),
             team_member=render_ctx is not None and render_ctx.has_team)
         from agentd.context_metrics import logical_context
         from agentd.performance import capturing, context_measurement

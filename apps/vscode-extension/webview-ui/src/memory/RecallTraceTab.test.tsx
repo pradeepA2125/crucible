@@ -28,6 +28,48 @@ function trace(overrides: Partial<RecallTrace> = {}): RecallTrace {
 }
 
 describe("RecallTraceTab", () => {
+  test("catalog offers do not imply relevance, a full read or use", () => {
+    render(<RecallTraceTab trace={{
+      version: 2, trigger: "turn_start", status: "injected", judge: "main_model",
+      rule: "candidate_catalog_v1", selectionMethod: "keyword + BGE ordering",
+      signals: { Q: "request", C: "", R: "" },
+      candidates: [{ id: "a", catalog: "[m:a@1] when: preview: fixture data", sources: ["keyword:Q"] }],
+      scores: { a: { combined: 0.01 } }, reasons: {}, verdicts: {}, delivered: ["a"],
+      invalidIds: [], invalidatedIds: [],
+    }} />);
+    expect(screen.getByText("Catalog offered")).toBeTruthy();
+    expect(screen.getByText(/does not mean the model read or used it/)).toBeTruthy();
+    expect(screen.getByText(/no acceptance cutoff/)).toBeTruthy();
+    expect(screen.getByText(/Left to the main model/)).toBeTruthy();
+    expect(screen.queryByText("Relevant", { exact: true })).toBeNull();
+  });
+  test("v2 shows the combined score and actual shortened reranker input", () => {
+    render(<RecallTraceTab trace={{
+      version: 2, trigger: "turn_start", status: "injected", judge: "reranker",
+      signals: { Q: "request", C: "", R: "" },
+      candidates: [{ id: "a", catalog: "[m:a@1] lesson", sources: ["keyword:Q"] }],
+      scores: { a: { combined: 0.76 } }, reasons: {}, verdicts: { a: true }, delivered: ["a"],
+      invalidIds: [], invalidatedIds: [], rule: "combined_rcq_body_v1",
+      rerankInput: { query: "Current request: request", truncatedSignals: ["Q"],
+        truncatedMemoryIds: [], maxPairTokens: 511 },
+    }} />);
+    expect(screen.getByText("combined: 0.760")).toBeTruthy();
+    expect(screen.getByText(/511 tokens maximum/)).toBeTruthy();
+    expect(screen.getByText("Shortened context: Q")).toBeTruthy();
+    expect(screen.getByText("Shortened memories: none")).toBeTruthy();
+  });
+  test("v2 displays actual delivery, reasons and empty status without invented legacy scores", () => {
+    render(<RecallTraceTab trace={{
+      version: 2, trigger: "turn_start", status: "injected", judge: "llm",
+      signals: { Q: "request", C: "previous", R: "recap" },
+      candidates: [{ id: "a", catalog: "[m:a@1] lesson", sources: ["keyword:Q"] }],
+      scores: {}, reasons: { a: "needed now" }, verdicts: { a: true }, delivered: ["a"],
+      invalidIds: [], invalidatedIds: [],
+    }} />);
+    expect(screen.getByText("needed now")).toBeTruthy();
+    expect(screen.getByText("Delivered", { exact: true })).toBeTruthy();
+    expect(screen.queryByText(/importance/)).toBeNull();
+  });
   test("renders the summary line with reranked + candidate count", () => {
     render(<RecallTraceTab trace={trace()} />);
     expect(screen.getByText(/what does X do/)).toBeTruthy();

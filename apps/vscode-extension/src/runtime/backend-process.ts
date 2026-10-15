@@ -22,6 +22,7 @@ export interface BackendSettings {
   skillsDisabled?: string[];           // → CRUCIBLE_SKILLS_DISABLED (comma-joined)
   contextWindow?: number; // → CRUCIBLE_MEMORY_WINDOW_TOKENS
   reasoningEffort?: string; // → CRUCIBLE_REASONING_EFFORT
+  localModels?: boolean;
 }
 export interface ChildHandle {
   pid: number;
@@ -149,7 +150,7 @@ export function buildBackendEnv(
     // One shared request budget; NIM free tier allows ~40/min per key (spec §3.11).
     CRUCIBLE_PROVIDER_MAX_RPM: "35",
     CRUCIBLE_EXEC_SESSIONS_ENABLED: "1",
-    CRUCIBLE_SEMANTIC_RETRIEVAL: "true",
+    CRUCIBLE_LOCAL_MODELS: settings.localModels === false ? "0" : "1",
     CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT: "false",
     CRUCIBLE_SHELL_POLICY: "ask",
     CRUCIBLE_SCOPE_POLICY: "ask",

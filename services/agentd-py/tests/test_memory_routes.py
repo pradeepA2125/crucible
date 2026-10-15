@@ -45,6 +45,18 @@ def test_inspect_soft_empty_without_trace(tmp_path, monkeypatch):
     assert r.status_code == 200 and r.json().get("entries", []) == []
 
 
+def test_curation_inspector_rejects_unknown_and_foreign_threads(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRUCIBLE_LOCAL_MODELS", "0")
+    c = _client(tmp_path, monkeypatch)
+    unknown = c.get("/v1/memory/curation", params={"thread_id": "not-here"})
+    assert unknown.status_code == 404
+    thread = c.post("/v1/chat/threads", json={"workspace": str(tmp_path)}).json()
+    status = c.get("/v1/memory/curation", params={"thread_id": thread["thread_id"]})
+    assert status.status_code == 200 and status.json()["enabled"] is False
+    foreign = c.post("/v1/chat/threads", json={"workspace": "/foreign"}).json()
+    assert c.get("/v1/memory/curation", params={"thread_id": foreign["thread_id"]}).status_code == 404
+
+
 def test_inspect_serves_persisted_trace(tmp_path, monkeypatch):
     # The trace lands at chat/<thread>/<turn>/memory-recall-NN.json — the route must glob
     # the turn_id level, not the thread level. (A prior .parent over-strip matched nothing.)

@@ -1065,6 +1065,25 @@ class ChatController:
             "goal": goal, "workspace_path": self._workspace_path,
             # run_id keys the per-thread compaction segments + anchored summary.
             "run_id": thread_id}
+        if getattr(self._memory_harness, "recall_v2", False):
+            self._memory_harness.bind_memory_state(self._store)
+            thread = self._store.get_thread(thread_id)
+            plan_context["memory_v2"] = True
+            plan_context["memory_recap"] = thread.recap if thread else ""
+            plan_context["memory_turn_key"] = turn_id or channel_id
+            plan_context["memory_budget_key"] = (
+                self._store.turn_message_id(thread_id, turn_id or "")
+                or next((message.id for message in reversed(thread.messages if thread else [])
+                         if message.role == "user" and message.id), None)
+                or turn_id or channel_id
+            )
+            from agentd.memory.recall_context import previous_closing
+
+            plan_context["memory_closing"] = previous_closing(
+                {"role": message.role, "type": message.type, "content": message.content,
+                 "metadata": message.metadata}
+                for message in reversed(thread.messages if thread else [])
+            )
         # A clarify-resume continues an in-flight EDIT feature — NOT a fresh entry — so the
         # loop must NOT show the "first action, decide your approach" entry hint. The per-turn
         # _edit_applied flag resets on the new loop, and a cohesive (no-list) edit leaves the
@@ -1201,6 +1220,7 @@ class ChatController:
                 text=(f"⚠️ {describe_access_stop(stopped)}" if stopped is not None
                       else f"⚠️ The turn failed and had to stop: {exc}"),
                 history=partial_hist,
+                system_notice=True,
             )
         finally:
             # Released on EVERY exit (including the re-raised cancel) so a later
@@ -1228,6 +1248,21 @@ class ChatController:
         # seed_history instead of re-exploring cold (mirrors the planner persisting
         # planning_conversation_history on the TaskRecord).
         self._store.set_controller_history(thread_id, outcome.history or [])
+        if getattr(self._memory_harness, "recall_v2", False) and outcome.kind in {
+            "answer", "submit_changes",
+        }:
+            from agentd.memory.recap import validate_recap
+
+            for entry in reversed(outcome.history or []):
+                if entry.get("role") != "assistant":
+                    continue
+                try:
+                    action = json.loads(str(entry.get("content", "")))
+                    if isinstance(action, dict) and action.get("type") in {"answer", "submit_changes"}:
+                        self._store.set_recap(thread_id, validate_recap(action.get("recap")))
+                        break
+                except (ValueError, TypeError):
+                    continue
         if turn_id:
             # Delivered once the text is in persisted history (spec §5.2).
             self._store.deliver_claimed_notices(thread_id, turn_id)
@@ -1349,6 +1384,7 @@ class ChatController:
             thread_id, turn_id, content,
             metadata.get("tool_events") or [],  # type: ignore[arg-type]
             metadata.get("thinking_log"),  # type: ignore[arg-type]
+            system_notice=outcome.system_notice,
         ):
             return
         self._store.append_message(
@@ -1358,6 +1394,8 @@ class ChatController:
     def _turn_metadata(outcome: ControllerOutcome) -> dict[str, object]:
         """Durable pills + thinking for a turn's agent message (reload survival)."""
         metadata: dict[str, object] = {}
+        if outcome.system_notice:
+            metadata["system_notice"] = True
         if outcome.tool_events:
             metadata["tool_events"] = outcome.tool_events
         if outcome.thinking_log:
@@ -3577,7 +3615,10 @@ class ChatController:
                 TodoToolSource(ledger, render_ctx=render_ctx),
             ]
             memory_source = self._memory_harness.memory_tool_source(
-                run_id, allow_remember=False)
+                run_id, allow_remember=False,
+                **({"thread_id": thread_id}
+                   if getattr(self._memory_harness, "recall_v2", False) else {}),
+            )
             if memory_source is not None:
                 built.append(memory_source)
             if is_skills_enabled():
@@ -3674,6 +3715,13 @@ class ChatController:
             "artifact_thread_id": thread_id,
             "artifact_turn_id": f"{turn_id}/agents/{ctx.agent_id}/a{activation}",
             "artifact_seed_len": 0, "edit_is_resume": False}
+        if getattr(self._memory_harness, "recall_v2", False):
+            self._memory_harness.bind_memory_state(self._store)
+            plan_context["memory_v2"] = True
+            plan_context["memory_turn_key"] = f"{turn_id}:{ctx.agent_id}:a{activation}"
+            plan_context["memory_budget_key"] = (
+                self._store.turn_message_id(thread_id, turn_id) or turn_id
+            )
 
         def subtree_files() -> list[str]:
             ids = self._store.subtree_agent_ids(ctx.agent_id)

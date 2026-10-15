@@ -8,9 +8,24 @@ from pathlib import Path
 import pytest
 
 from agentd.chat.controller import ChatController
+from agentd.chat.controller_loop import ControllerOutcome
 from agentd.chat.storage import ChatThreadStore
 from agentd.orchestrator.broadcaster import EventBroadcaster
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
+
+
+@pytest.mark.parametrize("inflight", [False, True])
+def test_generated_notice_provenance_survives_closing_persistence(tmp_path, inflight):
+    store = ChatThreadStore(tmp_path / "chat.sqlite3")
+    thread = store.create_thread(str(tmp_path), title="t")
+    if inflight:
+        store.upsert_inflight_pills(thread.thread_id, "turn", [{"tool": "read_file"}])
+    outcome = ControllerOutcome(kind="answer", text="provider unavailable", system_notice=True)
+    _ctrl(tmp_path, store)._write_turn_message(thread.thread_id, "turn", outcome.text, outcome)
+    messages = store.get_thread(thread.thread_id).messages
+    assert len(messages) == 1
+    assert messages[0].metadata["system_notice"] is True
+    assert "inflight_turn_id" not in messages[0].metadata
 
 
 def _ctrl(tmp_path, store):

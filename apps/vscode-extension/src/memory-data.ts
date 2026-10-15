@@ -1,4 +1,4 @@
-import type { RecallTrace, MemoryView } from "@crucible/editor-client";
+import type { RecallTrace, MemoryView, CurationStatus, MemorySnapshot } from "@crucible/editor-client";
 
 // vscode-free so it's unit-testable (the extension's vitest runs in a node env with no
 // vscode module). MemoryPanel (memory-panel.ts) consumes handleMemoryMessage from here.
@@ -14,6 +14,8 @@ export interface MemoryDataSource {
   getInspect(threadId: string): Promise<RecallTrace | null>;
   browse(filter: MemoryBrowseFilter): Promise<MemoryView[]>;
   getChain(memoryId: string): Promise<MemoryView[]>;
+  getCuration?(threadId: string): Promise<CurationStatus>;
+  getSnapshot?(threadId: string): Promise<MemorySnapshot>;
 }
 
 // Webview → host messages (mirror webview-ui/src/memory/types.ts MemoryToHost).
@@ -34,27 +36,50 @@ export async function handleMemoryMessage(
   workspacePath: string,
   post: PostFn
 ): Promise<void> {
-  try {
-    if (msg.type === "ready" || msg.type === "refresh") {
-      const trace = await source.getInspect(threadId);
-      post({ type: "trace", trace });
-      const memories = await source.browse({
-        scopeKind: "workspace",
-        scopeId: workspacePath,
-        includeRetired: false,
-      });
-      post({ type: "list", memories });
-    } else if (msg.type === "browse") {
-      // The webview doesn't own scopeId (the workspace path) — fill it when empty.
-      const filter: MemoryBrowseFilter = {
-        ...msg.filter,
-        scopeId: msg.filter.scopeId || workspacePath,
-      };
+  const fail = (resource: string, err: unknown) => post({ type: "error", resource,
+    message: err instanceof Error ? err.message : String(err) });
+  if (msg.type === "ready" || msg.type === "refresh") {
+    await Promise.all([
+      (async () => {
+        try { post({ type: "trace", trace: await source.getInspect(threadId) }); }
+        catch (err) { fail("trace", err); }
+      })(),
+      (async () => {
+        try {
+          post({ type: "curation", status: threadId && source.getCuration
+            ? await source.getCuration(threadId) : null });
+        } catch (err) {
+          post({ type: "curation", status: null,
+            error: err instanceof Error ? err.message : String(err) });
+        }
+      })(),
+      (async () => {
+        try {
+          if (source.getSnapshot) {
+            if (!threadId) throw new Error("Open the inspector from a conversation to inspect active memory.");
+            const snapshot = await source.getSnapshot(threadId);
+            post({ type: "snapshot", snapshot });
+            if (snapshot.pipeline !== "legacy" || snapshot.status !== "ready") return;
+          }
+          post({ type: "list", memories: await source.browse({
+            scopeKind: "workspace", scopeId: workspacePath, includeRetired: true,
+          }) });
+        } catch (err) { fail("browser", err); }
+      })(),
+    ]);
+  } else if (msg.type === "browse") {
+    try {
+      if (!["workspace", "thread"].includes(msg.filter.scopeKind)) throw new Error("Unsupported legacy scope.");
+      const filter = { ...msg.filter,
+        scopeId: msg.filter.scopeKind === "thread" ? threadId : workspacePath };
       post({ type: "list", memories: await source.browse(filter) });
-    } else if (msg.type === "loadChain") {
-      post({ type: "chain", memoryId: msg.memoryId, chain: await source.getChain(msg.memoryId) });
-    }
-  } catch (err) {
-    post({ type: "error", message: err instanceof Error ? err.message : String(err) });
+    } catch (err) { fail("browser", err); }
+  } else if (msg.type === "loadChain") {
+    try {
+      const chain = await source.getChain(msg.memoryId);
+      if (chain.some(m => !(m.scopeKind === "workspace" && m.scopeId === workspacePath)
+        && !(m.scopeKind === "thread" && m.scopeId === threadId))) throw new Error("Memory is outside this inspector scope.");
+      post({ type: "chain", memoryId: msg.memoryId, chain });
+    } catch (err) { fail("chain", err); }
   }
 }

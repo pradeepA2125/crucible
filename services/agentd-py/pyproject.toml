@@ -33,6 +33,11 @@ dependencies = [
 crucible-eval = "agentd.eval.cli:main"
 
 [project.optional-dependencies]
+local-models = [
+  "lancedb>=0.20",
+  "sentence-transformers>=3.0",
+  "numpy>=1.24",
+]
 semantic = [
   "lancedb>=0.20",
   "sentence-transformers>=3.0",

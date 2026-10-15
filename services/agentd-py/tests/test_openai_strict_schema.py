@@ -192,6 +192,7 @@ def _every_schema_we_send() -> list[tuple[str, dict[str, object]]]:
     from agentd.chat.classifier import _CLASSIFY_SCHEMA
     from agentd.chat.controller_prompts import controller_response_schema
     from agentd.domain.models import PatchDocumentV2, PlanDocument
+    from agentd.eval.memory_judge_legacy import JUDGE_SCHEMA
     from agentd.memory.consolidator import CANDIDATE_MEMORY_SCHEMA
     from agentd.planning.prompts import planning_response_schema
     from agentd.providers.validate import _PROBE_SCHEMA
@@ -205,6 +206,7 @@ def _every_schema_we_send() -> list[tuple[str, dict[str, object]]]:
         ("plan_document", PlanDocument.model_json_schema()),
         ("patch_document_v2", PatchDocumentV2.model_json_schema()),
         ("consolidator", CANDIDATE_MEMORY_SCHEMA),
+        ("memory_judge", JUDGE_SCHEMA),
         ("probe", _PROBE_SCHEMA),
         ("conventions", DRAFT_CONVENTIONS_RESPONSE_SCHEMA),
         ("narrative", TASK_NARRATIVE_RESPONSE_SCHEMA),
@@ -213,6 +215,10 @@ def _every_schema_we_send() -> list[tuple[str, dict[str, object]]]:
         ("planning_no_patch", planning_response_schema(allow_plan_patch=False)),
     ]
     for phase in ("ACTIVE", "PLAN", "AGENT"):
+        out.append((f"controller_{phase}_v2_anyof",
+                    controller_response_schema(phase=phase, anyof=True, memory_v2=True)))
+        out.append((f"controller_{phase}_v2_flat",
+                    controller_response_schema(phase=phase, memory_v2=True)))
         for team in (False, True):
             out.append((f"controller_{phase}_anyof_team{team}",
                         controller_response_schema(phase=phase, anyof=True, team_member=team)))

@@ -61,7 +61,11 @@ export class SetupPanel {
 
   private buildDeps(): SetupDeps {
     return {
-      install: (onProgress) => this.runtimeManager.install(onProgress),
+      localModels: () => this.runtimeManager.localModels(),
+      install: async (onProgress, localModels = true) => {
+        await this.runtimeManager.setLocalModels(localModels);
+        return this.runtimeManager.install(onProgress);
+      },
       validate: async (req) => {
         const url = this.runtimeManager.backendUrl(this.workspacePath);
         if (!url) {

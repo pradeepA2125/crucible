@@ -434,7 +434,7 @@ describe("agents messages", () => {
   });
 });
 
-describe.each(["crucible.webSearch.enabled", "crucible.webFetch.enabled"])("%s persisted setting", (key) => {
+describe.each(["crucible.webSearch.enabled", "crucible.webFetch.enabled", "crucible.localModels"])("%s persisted setting", (key) => {
   it("round-trips booleans and clears the restart banner after restart", async () => {
     const saved: Record<string, string | boolean> = {};
     const posted: SettingsOutMsg[] = [];

@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from agentd.chat.models import CapturedFile, ChatThread, Checkpoint
 from agentd.chat.storage import ChatThreadStore
+from agentd.history_metadata import message_sequence
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ class RewindOutcome(BaseModel):
     prefill_text: str = ""
     target_created_at: datetime | None = None
     target_seq: int | None = None
+    target_memory_mseq: int = Field(default=0, exclude=True)
 
 
 def resolve_rewind_anchor(store: ChatThreadStore, thread_id: str, message_id: str) -> str:
@@ -118,6 +120,8 @@ class RewindStore:
                 json.dumps(thread.controller_active_skill)
                 if thread.controller_active_skill else None),
             memory_anchor_md=memory_anchor_md,
+            recap=thread.recap,
+            memory_state_json=json.dumps(thread.memory_state),
         )
         self._store.insert_checkpoint(cp)
         self._prune(thread_id)
@@ -231,6 +235,11 @@ class RewindStore:
             return None
         target = span[0]
         outcome = RewindOutcome(target_created_at=target.created_at, target_seq=target.seq)
+        history = json.loads(target.controller_history_json or "[]")
+        outcome.target_memory_mseq = max(
+            (message_sequence(message) or 0 for message in history if isinstance(message, dict)),
+            default=0,
+        )
 
         # 1. Files. Per-path failures are COLLECTED, never raised: a rewind that
         #    half-worked must report it rather than stop silently partway.
@@ -262,6 +271,8 @@ class RewindStore:
             seed_json=target.controller_seed_json,
             todo_json=target.controller_todo_json,
             active_skill_json=target.controller_active_skill_json,
+            recap=target.recap,
+            memory_state_json=target.memory_state_json,
         )
 
         # 3. Drop the rewound checkpoints. Permanent, by design.

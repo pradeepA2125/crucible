@@ -256,6 +256,7 @@ def build_router(
     chat_agent: object | None = None,
     provider_runtime: object | None = None,
     mcp_manager: object | None = None,
+    local_models: object | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/v1", tags=["tasks"])
 
@@ -294,6 +295,11 @@ def build_router(
             "task_subsystem_enabled": is_task_subsystem_enabled(),
             "chat_controller_enabled": is_controller_enabled(),
             "memory_enabled": is_memory_enabled(),
+            "local_models": (
+                local_models.payload() if local_models is not None  # type: ignore[attr-defined]
+                else {"embedder": {"state": "disabled", "error": None},
+                      "reranker": {"state": "disabled", "error": None}}
+            ),
             "skills_enabled": is_skills_enabled(),
             "mcp_enabled": is_mcp_enabled(),
             "exec_sessions_enabled": is_exec_sessions_enabled(),
@@ -541,6 +547,46 @@ def build_router(
             return []
         return [m.model_dump(mode="json")
                 for m in _memory_store().get_supersede_chain(memory_id)]
+
+    @router.get("/memory/snapshot")
+    async def memory_snapshot(thread_id: str) -> dict:
+        from agentd.chat.controller_factory import is_memory_enabled
+
+        chat_store = getattr(chat_agent, "_store", None)
+        thread = chat_store.get_thread(thread_id) if chat_store is not None else None
+        workspace = os.getenv("CRUCIBLE_WORKSPACE_PATH", "")
+        if thread is None or thread.workspace_path != workspace:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        harness = getattr(chat_agent, "_memory_harness", None)
+        if not is_memory_enabled():
+            return {"pipeline": "disabled", "status": "disabled", "memories": []}
+        if harness is None:
+            return {"pipeline": "unavailable", "status": "unavailable", "memories": []}
+        if not harness.recall_v2:
+            return {"pipeline": "legacy", "status": "ready", "memories": []}
+        store = harness.durable_store
+        if store is None:
+            return {"pipeline": "durable", "status": "unavailable", "memories": []}
+        context = harness.scope_context(thread_id)
+        return {
+            "pipeline": "durable", "status": "ready",
+            "memories": [m.model_dump(mode="json") for m in
+                         store.list_memories(context, include_retired=True)],
+        }
+
+    @router.get("/memory/curation")
+    async def inspect_curation(thread_id: str) -> dict:
+        # Resolve only this backend's workspace and known human thread; never a
+        # bare machine-wide entry/source ID supplied by another repository.
+        chat_store = getattr(chat_agent, "_store", None)
+        thread = chat_store.get_thread(thread_id) if chat_store is not None else None
+        ws = os.getenv("CRUCIBLE_WORKSPACE_PATH", "")
+        if thread is None or thread.workspace_path != ws:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        harness = getattr(chat_agent, "_memory_harness", None)
+        if harness is None:
+            return {"enabled": False, "status": "disabled", "last_mseq": 0}
+        return harness.curation_status(thread_id)
 
     @router.get("/memory/inspect")
     async def inspect_recall(thread_id: str) -> dict:
@@ -2184,6 +2230,12 @@ def build_router(
                 try:
                     retired = harness.retire_since(
                         thread_id, outcome.target_created_at.isoformat())
+                    rewind_evidence = getattr(harness, "rewind_evidence", None)
+                    if callable(rewind_evidence):
+                        retired += rewind_evidence(
+                            thread_id, outcome.target_created_at.isoformat(),
+                            outcome.target_memory_mseq,
+                        )
                     harness.restore_anchor(thread_id, anchor_md)
                 except Exception:
                     import logging as _logging

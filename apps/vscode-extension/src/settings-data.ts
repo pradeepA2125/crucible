@@ -1,4 +1,5 @@
 import type {
+  BackendConfig,
   AgentCatalog,
   AgentDefinitionInput,
   AgentDefinitionView,
@@ -25,6 +26,7 @@ export interface McpServerRow extends McpServerView {
 }
 
 export interface SettingsState {
+  localModels?: BackendConfig["localModels"];
   // contextWindow is the window compaction is using right now, read back from
   // GET /v1/config so the field shows what the process actually has, not what the
   // panel last sent.
@@ -90,7 +92,11 @@ export type SettingsOutMsg =
 
 export interface SettingsDeps {
   client: {
-    getConfig(): Promise<{ provider?: { backend: string; model: string; contextWindow?: number | null | undefined } | null | undefined }>;
+    getConfig(): Promise<{
+      provider?: { backend: string; model: string; contextWindow?: number | null | undefined }
+        | null | undefined;
+      localModels?: BackendConfig["localModels"];
+    }>;
     listMcpServers(): Promise<McpServerList>;
     listSkills(workspace: string): Promise<{ name: string; description: string }[]>;
     validateProvider(req: {
@@ -183,6 +189,7 @@ async function buildState(
     },
     skills: skillSummaries.map((s) => ({ ...s, enabled: !disabledSkills.has(s.name) })),
     envFlags: deps.readEnvFlags(),
+    ...(config.localModels ? { localModels: config.localModels } : {}),
     restartRequired,
   };
 }
@@ -381,7 +388,8 @@ export function createSettingsHandler(
           return;
         }
         case "settings/setEnvFlag": {
-          const booleanFlag = msg.key === "crucible.webSearch.enabled" || msg.key === "crucible.webFetch.enabled";
+          const booleanFlag = msg.key === "crucible.webSearch.enabled"
+            || msg.key === "crucible.webFetch.enabled" || msg.key === "crucible.localModels";
           const value = booleanFlag ? msg.value === "true" : msg.value;
           await deps.updateSetting(msg.key, value);
           restartRequired = true;

@@ -161,6 +161,8 @@ class Checkpoint(BaseModel):
     controller_todo_json: str | None = None
     controller_active_skill_json: str | None = None
     memory_anchor_md: str | None = None
+    recap: str = ""
+    memory_state_json: str | None = None
 
 
 GateKind = Literal["command", "step", "scope", "validation", "mode", "edit", "clarify", "mcp_tool",
@@ -224,6 +226,9 @@ class ChatThread(BaseModel):
     thread_id: str
     workspace_path: str
     title: str = "New Chat"
+    recap: str = ""
+    last_activity_at: datetime | None = None
+    memory_state: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     messages: list[ChatMessage] = Field(default_factory=list)
     touched_files: list[str] = Field(default_factory=list)

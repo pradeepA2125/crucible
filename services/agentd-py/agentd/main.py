@@ -190,10 +190,15 @@ evidence_adapter = build_evidence_adapter(os.getenv("CRUCIBLE_EVIDENCE_ADAPTER",
 planning_adapter = build_planning_adapter(os.getenv("CRUCIBLE_PLANNING_ADAPTER", "generic"))
 
 _semantic_index: object = None
-if _bool_env("CRUCIBLE_SEMANTIC_RETRIEVAL", False):
+from agentd.local_models import LocalModels  # noqa: E402
+
+_local_models = LocalModels.from_env(os.environ)
+if _local_models.enabled and (
+    "CRUCIBLE_LOCAL_MODELS" in os.environ or _bool_env("CRUCIBLE_SEMANTIC_RETRIEVAL", False)
+):
     try:
         from agentd.retrieval.semantic_index import SemanticIndex
-        _semantic_index = SemanticIndex.from_env()
+        _semantic_index = SemanticIndex.from_env(local_models=_local_models)
     except ImportError:
         import logging as _logging
         _logging.getLogger(__name__).warning(
@@ -216,6 +221,27 @@ if _semantic_index is not None:
 
     app.router.add_event_handler(
         "startup", in_background(_warm_semantic_model, "semantic-model-warmup"))
+
+if _local_models.enabled and reasoning_backend != "scripted":
+    async def _warm_local_models() -> None:
+        from agentd.memory.embedder import Embedder
+        from agentd.memory.reranker import Reranker
+
+        def warm() -> None:
+            Embedder(
+                os.getenv("CRUCIBLE_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
+                local_models=_local_models,
+            ).warmup()
+            Reranker(
+                os.getenv("CRUCIBLE_MEMORY_RERANKER_MODEL", "BAAI/bge-reranker-base"),
+                local_models=_local_models,
+                bounded=_bool_env("CRUCIBLE_MEMORY_RECALL_V2", False),
+            ).warmup()
+
+        await asyncio.to_thread(warm)
+
+    app.router.add_event_handler(
+        "startup", in_background(_warm_local_models, "local-model-warmup"))
 def _scope_policy_env() -> ScopePolicy:
     raw = os.getenv("CRUCIBLE_SCOPE_POLICY", "strict").strip().lower()
     try:
@@ -280,6 +306,7 @@ _task_memory_harness = (
     build_memory_harness(
         MemoryConfig.from_env(os.environ), transport, _chat_model,
         workspace_path=_chat_workspace_path,  # enables consolidation (workspace scope)
+        local_models=_local_models,
     )
     if reasoning_backend != "scripted" and tasks_reachable()
     else NO_OP_HARNESS
@@ -316,6 +343,7 @@ _chat_agent = select_chat_handler(
     orchestrator=orchestrator,
     broadcaster=orchestrator.broadcaster,
     retrieval_client=retrieval_client,
+    local_models=_local_models,
     shell_policy=_shell_policy_env(),
     command_decision_timeout_sec=_float_env("CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC", 0.0),
 ) if reasoning_backend != "scripted" else None
@@ -345,6 +373,16 @@ if _exec_manager is not None:
 _reap_subagents = getattr(_chat_agent, "reap_subagents", None)
 if _reap_subagents is not None:
     app.router.add_event_handler("startup", _reap_subagents)
+
+_chat_memory = getattr(_chat_agent, "_memory_harness", None)
+if _chat_memory is not None:
+    _curator = _chat_memory.configure_curator(
+        _chat_thread_store,
+        lambda thread_id: thread_id in getattr(_chat_agent, "_active_turns", {}),
+    )
+    if _curator is not None:
+        app.router.add_event_handler("startup", _curator.start)
+        app.router.add_event_handler("shutdown", _curator.stop)
 
 warn_if_incoherent_flags(logging.getLogger("agentd.startup"))
 
@@ -431,6 +469,7 @@ app.include_router(
         _chat_agent,
         provider_runtime=provider_runtime,
         mcp_manager=_mcp_manager,
+        local_models=_local_models,
     )
 )
 # Settings › Agents (spec §10): writes .crucible/agents in THIS backend's workspace only.

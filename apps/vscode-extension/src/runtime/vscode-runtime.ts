@@ -53,7 +53,10 @@ const SETTING_ENV_MAP: Record<string, string> = {
   "crucible.webSearch.enabled": "CRUCIBLE_WEB_SEARCH_ENABLED",
   "crucible.webFetch.enabled": "CRUCIBLE_WEB_FETCH_ENABLED",
   "crucible.memory.enabled": "CRUCIBLE_MEMORY_ENABLED",
-  "crucible.memory.reranker": "CRUCIBLE_MEMORY_RERANKER",
+  "crucible.memory.experimental.recall": "CRUCIBLE_MEMORY_RECALL_V2",
+  "crucible.memory.experimental.curator": "CRUCIBLE_MEMORY_CURATOR_V2",
+  "crucible.memory.experimental.compaction": "CRUCIBLE_MEMORY_COMPACT_EVIDENCE",
+  "crucible.localModels": "CRUCIBLE_LOCAL_MODELS",
 };
 
 const MAX_RESTART_ATTEMPTS = 3;
@@ -157,7 +160,9 @@ export class RuntimeManager {
     }
   }
 
-  installedRuntime(): { releaseTag: string; components: Record<string, string> } | null {
+  installedRuntime(): {
+    releaseTag: string; components: Record<string, string>; localModels?: boolean;
+  } | null {
     try {
       return JSON.parse(readFileSync(join(this.runtimeDir, "runtime.json"), "utf8"));
     } catch {
@@ -173,6 +178,7 @@ export class RuntimeManager {
     const deps: InstallerDeps = {
       runtimeDir: this.runtimeDir,
       manifest,
+      localModels: this.localModels(),
       download: async (url) => {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`download failed (${res.status}) for ${url}`);
@@ -208,6 +214,7 @@ export class RuntimeManager {
       model: model ?? "",
       extraEnv: this.extraEnvFromSettings(),
       skillsDisabled: this.skillsDisabled(),
+      localModels: this.localModels(),
     };
     const contextWindow = this.contextWindow();
     if (contextWindow !== undefined) settings.contextWindow = contextWindow;
@@ -360,10 +367,13 @@ export class RuntimeManager {
           info.workspaceFolderValue !== undefined);
       if (isUserSet) out[envVar] = String(cfg.get(setting));
     }
+    const storePath = cfg.get<string>("crucible.memory.experimental.storePath", "").trim();
+    if (storePath) out.CRUCIBLE_MEMORY_STORE_PATH = storePath;
     return out;
   }
 
   async startForWorkspace(workspace: string): Promise<{ port: number; reused: boolean }> {
+    await this.reconcileLocalModelPackages(workspace);
     const settings = await this.getProviderSettings();
     if (!settings) {
       throw new Error("No provider configured — run \"Crucible: Run Setup\" first.");
@@ -457,7 +467,32 @@ export class RuntimeManager {
       });
   }
 
+  private localModelInstall: Promise<void> | undefined;
+
+  private async reconcileLocalModelPackages(workspace: string): Promise<void> {
+    if (this.localModelInstall) { await this.localModelInstall; return; }
+    if ((this.installedRuntime()?.localModels ?? true) === this.localModels()) return;
+    const workspaces = [...this.processes.keys()];
+    this.localModelInstall = (async () => {
+      for (const active of workspaces) this.intentionalStops.add(active);
+      try {
+        await Promise.all(workspaces.map(active => this.processes.get(active)?.stop()));
+        const result = await this.install(p => this.output.appendLine(
+          `[local models] ${p.id}: ${p.status}`));
+        if (!result.ok) throw new Error("Local-model installation failed. Open runtime logs.");
+      } finally {
+        for (const active of workspaces) this.intentionalStops.delete(active);
+      }
+    })();
+    try { await this.localModelInstall; } finally { this.localModelInstall = undefined; }
+    for (const active of workspaces.filter(active => active !== workspace)) {
+      this.restartAttempts.delete(active);
+      await this.startForWorkspace(active);
+    }
+  }
+
   async restart(workspace: string): Promise<void> {
+    await this.reconcileLocalModelPackages(workspace);
     const proc = this.processes.get(workspace);
     this.intentionalStops.add(workspace);
     try {
@@ -472,6 +507,18 @@ export class RuntimeManager {
   backendUrl(workspace: string): string | undefined {
     const port = this.ports.get(workspace);
     return port ? `http://127.0.0.1:${port}` : undefined;
+  }
+
+  localModels(): boolean {
+    const explicit = vscode.workspace.getConfiguration().inspect<boolean>("crucible.localModels");
+    return explicit?.globalValue
+      ?? this.context.globalState.get<boolean>("crucible.localModels", true);
+  }
+
+  async setLocalModels(enabled: boolean): Promise<void> {
+    await this.context.globalState.update("crucible.localModels", enabled);
+    await vscode.workspace.getConfiguration().update(
+      "crucible.localModels", enabled, vscode.ConfigurationTarget.Global);
   }
 
   mcpDisabled(): string[] {

@@ -1,180 +1,54 @@
-import type { RecallTrace, RecallTraceEntry, RecallSignals } from "./types";
-
-const KIND_TINT: Record<string, string> = {
-  semantic: "var(--color-code)",
-  procedural: "var(--color-accent)",
-  episodic: "var(--color-green)",
-};
-
-const SIGNALS: { key: keyof RecallSignals; label: string; color: string }[] = [
-  { key: "semantic", label: "semantic", color: "var(--color-code)" },
-  { key: "lexical", label: "lexical", color: "var(--color-code)" },
-  { key: "structural", label: "structural", color: "var(--color-code)" },
-  { key: "importance", label: "importance", color: "var(--color-accent-deep)" },
-  { key: "recency", label: "recency", color: "var(--color-green)" },
-];
-
-function KindBadge({ kind }: { kind: string }) {
-  return (
-    <span
-      className="rounded px-[7px] py-px text-[11px] font-semibold"
-      style={{ background: KIND_TINT[kind] ?? "var(--color-text-3)", color: "var(--color-panel)" }}
-    >
-      {kind}
-    </span>
-  );
-}
-
-function SignalCell({ label, value, color }: { label: string; value: number; color: string }) {
-  const pct = Math.max(0, Math.min(1, value)) * 100;
-  return (
-    <div data-signal={label} className="flex flex-col gap-1">
-      <span className="flex justify-between text-[10px]" style={{ color: "var(--color-text-2)" }}>
-        <span>{label}</span>
-        <span className="tabular-nums" style={{ color: "var(--color-text)" }}>{value.toFixed(2)}</span>
-      </span>
-      <div className="h-1.5 rounded-full" style={{ background: "var(--color-border)" }}>
-        <div className="h-1.5 rounded-full" style={{ width: `${pct}%`, background: color }} />
-      </div>
-    </div>
-  );
-}
-
-function Entry({
-  entry,
-  reranked,
-  fusedRank,
-}: {
-  entry: RecallTraceEntry;
-  reranked: boolean;
-  fusedRank: number;
-}) {
-  let rankSuffix = "";
-  if (reranked && fusedRank !== entry.finalRank) {
-    rankSuffix = ` ${entry.finalRank < fusedRank ? "▲" : "▼"} from #${fusedRank + 1}`;
-  }
-
-  return (
-    <div
-      data-testid={`trace-entry-${entry.memoryId}`}
-      className={`mb-3 rounded-lg border p-3.5 ${entry.injected ? "" : "opacity-55"}`}
-      style={{ borderColor: "var(--color-border-strong)", background: "var(--color-surface)" }}
-    >
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <span className="min-w-0 flex items-center gap-2">
-          <KindBadge kind={entry.kind} />
-          <span className="line-clamp-2 leading-snug" style={{ color: "var(--color-text)" }}>{entry.content}</span>
-        </span>
-        {entry.injected ? (
-          <span
-            className="shrink-0 whitespace-nowrap rounded px-2 py-0.5 text-[11px]"
-            style={{ background: "var(--green-bg)", border: "1px solid var(--green-brd)", color: "var(--color-green)" }}
-          >
-            ✓ injected · #{entry.finalRank + 1}
-            {rankSuffix}
-          </span>
-        ) : (
-          <span
-            className="shrink-0 whitespace-nowrap rounded px-2 py-0.5 text-[11px]"
-            style={{ background: "var(--red-bg)", border: "1px solid var(--red-brd)", color: "var(--color-red)" }}
-          >
-            ✗ below floor
-          </span>
-        )}
-      </div>
-
-      <div
-        className="grid items-end gap-x-4 gap-y-2"
-        style={{ gridTemplateColumns: `repeat(5,1fr) auto${reranked ? " auto" : ""}` }}
-      >
-        {SIGNALS.map((s) => (
-          <SignalCell key={s.key} label={s.label} value={entry.signals[s.key]} color={s.color} />
-        ))}
-        <div className="pl-4 text-right text-[10px]" style={{ borderLeft: "1px solid var(--color-border)", color: "var(--color-text-2)" }}>
-          fused
-          <br />
-          <b className="text-[13px]" style={{ color: "var(--color-text)" }}>{entry.fusedScore.toFixed(3)}</b>
-        </div>
-        {reranked && (
-          <div className="text-right text-[10px]" style={{ color: "var(--color-text-2)" }}>
-            rerank
-            <br />
-            <b className="text-[13px]" style={{ color: "var(--color-green)" }}>
-              {entry.rerankScore !== null ? `${entry.rerankScore.toFixed(2)} ▲` : "—"}
-            </b>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+import type { RecallTrace } from "./types";
+import { readable } from "./presentation";
 
 export function RecallTraceTab({ trace }: { trace: RecallTrace | null }) {
-  if (!trace) {
-    return (
-      <div className="p-3" style={{ color: "var(--color-text-2)" }}>
-        No recall recorded yet. Run a chat turn, then Refresh.
-      </div>
-    );
-  }
-
-  const byFused = [...trace.entries].sort((a, b) => b.fusedScore - a.fusedScore);
-  const fusedRankOf = new Map(byFused.map((e, i) => [e.memoryId, i]));
-
-  return (
-    <div data-testid="memory-trace-tab" className="p-4" style={{ background: "var(--color-panel)", color: "var(--color-text)" }}>
-      <div
-        className="mb-4 rounded-md px-3.5 py-2.5 text-[12px] leading-relaxed"
-        style={{ background: "var(--color-surface-2)", color: "var(--color-text)" }}
-      >
-        <b>query</b> "{trace.query}" &nbsp;·&nbsp; <b>scope</b> {trace.scopeKind} &nbsp;·&nbsp;{" "}
-        <b>{trace.entries.length} candidates</b> &nbsp;·&nbsp;{" "}
-        <span style={{ color: trace.reranked ? "var(--color-green)" : "var(--color-text-2)" }}>
-          reranked {trace.reranked ? "✓" : "✗"}
-        </span>{" "}
-        &nbsp;·&nbsp; <b>floor</b> {trace.floor.toFixed(2)} &nbsp;·&nbsp; <b>k</b> {trace.k}
-      </div>
-
-      {trace.entries.length === 0 ? (
-        <div style={{ color: "var(--color-text-2)" }}>
-          0 candidates (recall returned nothing — empty query or no matches).
+  if (!trace) return <p className="memory-state">No recall recorded yet. Run a chat turn, then Refresh.</p>;
+  const catalog = "version" in trace && trace.rule === "candidate_catalog_v1";
+  if ("version" in trace) return <section data-testid="memory-trace-tab">
+    <p className="memory-context">Latest recall · {readable(trace.trigger)}</p>
+    <p className="memory-status-line">{trace.delivered.length} {catalog ? "offered" : "delivered"} · {trace.candidates.length} candidates</p>
+    <p className="memory-muted">{catalog ? "Catalog entries may be false positives. Offering an entry does not mean the model read or used it." : "Delivered means actually sent, not just judged relevant."}</p>
+    {catalog && trace.selectionMethod && <p className="memory-muted">Selected using {trace.selectionMethod}.</p>}
+    {trace.error && <p role="alert" className="memory-error">{trace.error}</p>}
+    <ul className="memory-trace-list">{trace.candidates.map(candidate => {
+      const delivered = trace.delivered.includes(candidate.id);
+      const combined = trace.scores[candidate.id]?.combined;
+      return <li key={candidate.id} data-testid={`trace-entry-${candidate.id}`}>
+        <div className="memory-decision"><strong className={delivered ? "memory-delivered" : ""}>{catalog ? delivered ? "Catalog offered" : "Not offered" : delivered ? "Delivered" : "Not delivered"}</strong>
+          {combined !== undefined && <span className="memory-score">{catalog ? "BGE ordering" : "combined"}: {combined.toFixed(3)}</span>}
         </div>
-      ) : (
-        trace.entries.map((e) =>
-          e.injected ? (
-            <Entry
-              key={e.memoryId}
-              entry={e}
-              reranked={trace.reranked}
-              fusedRank={fusedRankOf.get(e.memoryId) ?? e.finalRank}
-            />
-          ) : (
-            <div
-              key={e.memoryId}
-              data-testid={`trace-entry-${e.memoryId}`}
-              className="mb-3 rounded-lg border p-3.5 opacity-55"
-              style={{ borderColor: "var(--color-border-strong)", background: "var(--color-surface)" }}
-            >
-              <div className="mb-2 flex items-start justify-between gap-3">
-                <span className="min-w-0 flex items-center gap-2">
-                  <KindBadge kind={e.kind} />
-                  <span className="line-clamp-2 leading-snug" style={{ color: "var(--color-text)" }}>{e.content}</span>
-                </span>
-                <span
-                  className="shrink-0 whitespace-nowrap rounded px-2 py-0.5 text-[11px]"
-                  style={{ background: "var(--red-bg)", border: "1px solid var(--red-brd)", color: "var(--color-red)" }}
-                >
-                  ✗ below floor
-                </span>
-              </div>
-              <div style={{ color: "var(--color-text-3)" }}>
-                fused <b>{e.fusedScore.toFixed(2)}</b> &lt; floor {trace.floor.toFixed(2)} — not
-                injected
-              </div>
-            </div>
-          )
-        )
-      )}
-    </div>
-  );
+        <p className="memory-body">{candidate.catalog}</p>
+        {trace.reasons[candidate.id] && <p>{trace.reasons[candidate.id]}</p>}
+        <details><summary>Decision evidence</summary><dl className="memory-facts">
+          <div><dt>Memory ID</dt><dd>{candidate.id}</dd></div><div><dt>Retrieved by</dt><dd>{candidate.sources.join(", ") || "Not recorded"}</dd></div>
+          <div><dt>{catalog ? "Relevance decision" : "Verdict"}</dt><dd>{catalog ? "Left to the main model; no separate judge" : trace.verdicts[candidate.id] === undefined ? "Not recorded" : trace.verdicts[candidate.id] ? "Relevant" : "Not relevant"}</dd></div>
+          {catalog && trace.scores[candidate.id]?.combined !== undefined && <div><dt>Score meaning</dt><dd>Ordering only; no acceptance cutoff or calibrated confidence.</dd></div>}
+          {Object.entries(trace.scores[candidate.id] ?? {}).filter(([key]) => key !== "combined").map(([key, score]) => <div key={key}><dt>{key}</dt><dd>{score.toFixed(3)}</dd></div>)}
+          {trace.invalidatedIds.includes(candidate.id) && <div><dt>Revalidation</dt><dd>Invalidated before delivery</dd></div>}
+        </dl></details>
+      </li>;
+    })}</ul>
+    {!trace.candidates.length && <p className="memory-state">No candidates for this trigger.</p>}
+    {trace.delivered.some(id => !trace.candidates.some(c => c.id === id)) && <p className="memory-muted">Delivered IDs without candidate details: {trace.delivered.filter(id => !trace.candidates.some(c => c.id === id)).join(", ")}</p>}
+    <details><summary>Raw recall signals & rule</summary>
+      <p>Status: {trace.status} · judge: {trace.judge}</p>
+      {trace.rule && <p>Rule: {trace.rule}</p>}
+      <dl className="memory-facts">{Object.entries(trace.signals).map(([name, value]) => <div key={name}><dt>{({ Q: "Request (Q)", C: "Closing (C)", R: "Recap (R)" } as Record<string, string>)[name] ?? name}</dt><dd>{value || "Not provided"}</dd></div>)}</dl>
+      {trace.invalidIds.length > 0 && <p>Invalid IDs: {trace.invalidIds.join(", ")}</p>}
+      {trace.invalidatedIds.length > 0 && <p>Invalidated IDs: {trace.invalidatedIds.join(", ")}</p>}
+    </details>
+    {trace.rerankInput && <details><summary>Combined reranker input · {trace.rerankInput.maxPairTokens} tokens maximum</summary>
+      <pre>{trace.rerankInput.query}</pre><p>Shortened context: {trace.rerankInput.truncatedSignals.join(", ") || "none"}</p><p>Shortened memories: {trace.rerankInput.truncatedMemoryIds.join(", ") || "none"}</p>
+    </details>}
+  </section>;
+  return <section data-testid="memory-trace-tab" aria-label="Recall decisions">
+    <p className="memory-body">{trace.query}</p><p className="memory-muted">Legacy recall · {trace.entries.length} candidates · scope: {trace.scopeKind} · reranked {trace.reranked ? "✓" : "✗"}</p>
+    {!trace.entries.length && <p className="memory-state">0 candidates (recall returned nothing).</p>}
+    <ul className="memory-trace-list">{trace.entries.map(e => <li key={e.memoryId} data-testid={`trace-entry-${e.memoryId}`}>
+      <div className="memory-decision"><strong className={e.injected ? "memory-delivered" : ""}>{e.injected ? "Delivered · injected" : "Not delivered"}</strong><span className="memory-score">Fused score {e.fusedScore.toFixed(3)}</span>{e.rerankScore !== null && <span className="memory-score">Rerank {e.rerankScore.toFixed(3)}</span>}</div>
+      <p className="memory-body">{e.content}</p><p className="memory-muted">{e.kind} · rank {e.finalRank + 1}</p>
+      {!e.injected && <p className="memory-muted">{e.fusedScore < trace.floor ? "Fused score below floor" : "Not selected for delivery; no further reason recorded."}</p>}
+      <details><summary>Raw ranking signals</summary><dl className="memory-facts">{Object.entries(e.signals).map(([name, value]) => <div key={name} data-signal={name}><dt>{name}</dt><dd>{value.toFixed(3)}</dd></div>)}<div><dt>Floor</dt><dd>{trace.floor}</dd></div><div><dt>Limit</dt><dd>{trace.k}</dd></div><div><dt>Memory ID</dt><dd>{e.memoryId}</dd></div></dl></details>
+    </li>)}</ul>
+  </section>;
 }

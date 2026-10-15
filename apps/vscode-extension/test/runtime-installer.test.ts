@@ -60,6 +60,31 @@ function deps(overrides: Partial<InstallerDeps> = {}): InstallerDeps & { calls: 
 }
 
 describe("RuntimeInstaller", () => {
+  it("opt out installs plain agentd and persists the package choice", async () => {
+    const d = deps({ localModels: false });
+    const result = await new RuntimeInstaller(d).installAll();
+    expect(result.ok).toBe(true);
+    expect(d.calls.find(call => call.includes("pip"))?.at(-1)).toBe("crucible-agentd==0.1.0");
+    expect(JSON.parse(readFileSync(join(d.runtimeDir, "runtime.json"), "utf8")).localModels)
+      .toBe(false);
+  });
+
+  it("changing the local-model choice rebuilds the venv instead of retaining stale extras", async () => {
+    const d = deps({ localModels: true });
+    await new RuntimeInstaller(d).installAll();
+    d.calls.length = 0;
+    d.localModels = false;
+    await new RuntimeInstaller(d).installAll();
+    expect(d.calls.find(call => call.includes("venv"))).toContain("--clear");
+    expect(d.calls.find(call => call.includes("pip"))?.at(-1)).toBe("crucible-agentd==0.1.0");
+    d.calls.length = 0;
+    d.localModels = true;
+    await new RuntimeInstaller(d).installAll();
+    expect(d.calls.find(call => call.includes("venv"))).toContain("--clear");
+    expect(d.calls.find(call => call.includes("pip"))?.at(-1))
+      .toBe("crucible-agentd[local-models]==0.1.0");
+  });
+
   it("happy path installs all nine components and writes runtime.json", async () => {
     const d = deps();
     const result = await new RuntimeInstaller(d).installAll();
@@ -114,22 +139,22 @@ describe("RuntimeInstaller", () => {
     expect(lsps.detail).toMatch(/degraded/i);
   });
 
-  it("agentd install requests the [memory,semantic] extras via the bare-version fallback", async () => {
+  it("agentd install requests the [local-models] extras via the bare-version fallback", async () => {
     const d = deps();
     await new RuntimeInstaller(d).installAll();
     const pipCall = d.calls.find((call) => call.includes("pip"));
     expect(pipCall).toBeDefined();
-    expect(pipCall![pipCall!.length - 1]).toBe("crucible-agentd[memory,semantic]==0.1.0");
+    expect(pipCall![pipCall!.length - 1]).toBe("crucible-agentd[local-models]==0.1.0");
   });
 
-  it("agentd install wraps a manifest wheel URL with the [memory,semantic] extras as a PEP 508 direct reference", async () => {
+  it("agentd install wraps a manifest wheel URL with the [local-models] extras as a PEP 508 direct reference", async () => {
     const d = deps();
     d.manifest.components.agentd = { version: "0.3.0", urls: { any: "https://example.com/pkg.whl" } };
     await new RuntimeInstaller(d).installAll();
     const pipCall = d.calls.find((call) => call.includes("pip"));
     expect(pipCall).toBeDefined();
     expect(pipCall![pipCall!.length - 1]).toBe(
-      "crucible-agentd[memory,semantic] @ https://example.com/pkg.whl");
+      "crucible-agentd[local-models] @ https://example.com/pkg.whl");
   });
 
   it("resume: matching install-state version skips the download", async () => {
@@ -279,7 +304,7 @@ describe("RuntimeInstaller — devSourcePath", () => {
     // Points at the package dir, and keeps the extras the wheel path installs —
     // without them the memory harness and semantic retrieval silently degrade.
     expect(pip!.some((a) => a.includes("/repo/services/agentd-py"))).toBe(true);
-    expect(pip!.some((a) => a.includes("[memory,semantic]"))).toBe(true);
+    expect(pip!.some((a) => a.includes("[local-models]"))).toBe(true);
   });
 
   it("without devSourcePath the wheel/PyPI path is unchanged", async () => {
@@ -295,7 +320,7 @@ describe("RuntimeInstaller — devSourcePath", () => {
     const pip = calls.find((a) => a[0] === "pip" && a[1] === "install");
     expect(pip).toBeDefined();
     expect(pip).not.toContain("-e");
-    expect(pip!.some((a) => a.startsWith("crucible-agentd[memory,semantic]=="))).toBe(true);
+    expect(pip!.some((a) => a.startsWith("crucible-agentd[local-models]=="))).toBe(true);
   });
 });
 

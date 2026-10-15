@@ -119,7 +119,7 @@ export function LiveSlot({
   if (!hasContent) return null;
 
   return (
-    <div className="flex flex-col gap-2 px-3 py-2 flex-shrink-0">
+    <div className="mx-auto flex min-w-0 w-full max-w-[760px] flex-col gap-2 px-4 py-2 flex-shrink-0 [overflow-wrap:anywhere]">
       {hasSessions && (
         <SessionStrip
           items={liveSessions.items}

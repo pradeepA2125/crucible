@@ -23,13 +23,20 @@ function source(over: Partial<MemoryDataSource> = {}): MemoryDataSource {
 }
 
 describe("handleMemoryMessage", () => {
+  test("curation fetch failure leaves recall and browse usable", async () => {
+    const posted: unknown[] = [];
+    const src = source({ getCuration: async () => { throw new Error("no curation route"); } });
+    await handleMemoryMessage({ type: "refresh" }, src, "chat-1", "/ws", (m) => posted.push(m));
+    expect(posted).toContainEqual({ type: "curation", status: null, error: "no curation route" });
+    expect(posted).toContainEqual({ type: "list", memories: [fakeMem("a")] });
+  });
   test("ready fetches inspect + browse and posts trace + list", async () => {
     const posted: unknown[] = [];
     const src = source();
     await handleMemoryMessage({ type: "ready" }, src, "chat-1", "/ws", (m) => posted.push(m));
     expect(src.getInspect).toHaveBeenCalledWith("chat-1");
     expect(src.browse).toHaveBeenCalledWith(
-      expect.objectContaining({ scopeKind: "workspace", scopeId: "/ws", includeRetired: false })
+      expect.objectContaining({ scopeKind: "workspace", scopeId: "/ws", includeRetired: true })
     );
     expect(posted).toContainEqual({ type: "trace", trace: fakeTrace() });
     expect(posted).toContainEqual({ type: "list", memories: [fakeMem("a")] });

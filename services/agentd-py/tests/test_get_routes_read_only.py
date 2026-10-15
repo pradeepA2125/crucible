@@ -27,6 +27,10 @@ REVIEWED_READ_ONLY_GET_ROUTES = frozenset({
     ("api/routes.py", "/mcp/servers"),
     ("api/routes.py", "/memory"),
     ("api/routes.py", "/memory/inspect"),
+    # Reads existing thread/workspace membership and curation state only. It
+    # never constructs a store, starts a worker, refreshes a model or retries jobs.
+    ("api/routes.py", "/memory/curation"),
+    ("api/routes.py", "/memory/snapshot"),  # existing durable store; scoped SELECT only
     ("api/routes.py", "/memory/{memory_id}/chain"),
     ("api/routes.py", "/skills"),
     ("api/routes.py", "/tasks/{task_id}"),
@@ -40,6 +44,10 @@ REVIEWED_READ_ONLY_GET_ROUTES = frozenset({
     # Reads records, returns summaries without tokens. Model listing (may refresh, i.e.
     # write) is deliberately POST.
     ("api/chatgpt_auth_routes.py", "/registrations"),
+    # Reviewed while running the full redesign regressions; these baseline
+    # handlers read in-memory status / public account summaries, without refresh.
+    ("api/claude_auth_routes.py", "/attempts/{attempt_id}"),
+    ("api/claude_auth_routes.py", "/registrations"),
     ("main.py", "/health"),
 })
 

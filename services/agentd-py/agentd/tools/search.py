@@ -8,6 +8,7 @@ from asyncio.subprocess import PIPE
 from pathlib import Path
 
 from agentd.child_env import child_env
+from agentd.local_models import semantic_ready
 from agentd.tools.registry import ToolOutput
 
 _MAX_MATCHES = 50
@@ -206,8 +207,12 @@ async def search_semantic(
 ) -> ToolOutput:
     if not query:
         return ToolOutput(output="Error: query is required", is_error=True)
+    if not semantic_ready(semantic_index):
+        return ToolOutput(output="Semantic search unavailable; use search_code.", is_error=True)
     try:
-        chunks = semantic_index.query(query, top_k=max(1, min(top_k, 20)))  # type: ignore[attr-defined]
+        chunks = await asyncio.to_thread(
+            semantic_index.query, query, top_k=max(1, min(top_k, 20)),  # type: ignore[attr-defined]
+        )
     except Exception as exc:
         return ToolOutput(output=f"Error: semantic search failed: {exc}", is_error=True)
 

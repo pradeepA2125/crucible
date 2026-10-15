@@ -14,11 +14,39 @@ function deliver(data: unknown) {
 describe("SetupApp", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("walks welcome → install → provider → done", () => {
+  it("restores the saved opt-out and ignores late preferences after a new choice", () => {
     render(<SetupApp />);
-    expect(screen.getByLabelText(/Step 1 of 4/)).toBeTruthy();
+    expect(vscode.postMessage).toHaveBeenCalledWith({ type: "setup/preferences" });
+    deliver({ type: "setup/preferences", localModels: false });
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    const checkbox = screen.getByRole("checkbox") as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(checkbox);
+    deliver({ type: "setup/preferences", localModels: false });
+    expect(checkbox.checked).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: /Install runtime/ }));
-    expect(vscode.postMessage).toHaveBeenCalledWith({ type: "setup/install" });
+    expect(vscode.postMessage).toHaveBeenCalledWith({ type: "setup/install", localModels: true });
+  });
+
+  it("lets the user opt out before any package installation starts", () => {
+    render(<SetupApp />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(vscode.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "setup/install" }));
+    const choice = screen.getByRole("checkbox");
+    expect((choice as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(choice);
+    fireEvent.click(screen.getByRole("button", { name: /Install runtime/ }));
+    expect(vscode.postMessage).toHaveBeenCalledWith({
+      type: "setup/install", localModels: false,
+    });
+  });
+  it("walks welcome → models → install → provider → done", () => {
+    render(<SetupApp />);
+    expect(screen.getByLabelText(/Step 1 of 5/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: /Install runtime/ }));
+    expect(vscode.postMessage).toHaveBeenCalledWith({ type: "setup/install", localModels: true });
     deliver({ type: "setup/progress", component: "uv", status: "done" });
     deliver({ type: "setup/installDone", ok: true });
     expect(screen.getByLabelText("Model")).toBeTruthy();
@@ -30,6 +58,7 @@ describe("SetupApp", () => {
 
   it("shows Retry when install fails", () => {
     render(<SetupApp />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(screen.getByRole("button", { name: /Install runtime/ }));
     deliver({ type: "setup/progress", component: "agentd", status: "failed", detail: "pip exploded" });
     deliver({ type: "setup/installDone", ok: false });
@@ -43,6 +72,7 @@ describe("SetupApp — Use your ChatGPT plan", () => {
 
   function toProviderStep() {
     render(<SetupApp />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
     fireEvent.click(screen.getByRole("button", { name: /Install runtime/ }));
     deliver({ type: "setup/installDone", ok: true });
   }
@@ -86,7 +116,8 @@ describe("SetupApp — Use your ChatGPT plan", () => {
 
 it("starts Claude setup and waits for the connection to be put into use", () => {
   render(<SetupApp />);
-  fireEvent.click(screen.getByRole("button", { name: /Install runtime/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(screen.getByRole("button", { name: /Install runtime/ }));
   deliver({ type: "setup/installDone", ok: true });
   fireEvent.click(screen.getByRole("button", { name: "Continue with Claude" }));
   expect(vscode.postMessage).toHaveBeenCalledWith({ type: "setup/startForClaude" });

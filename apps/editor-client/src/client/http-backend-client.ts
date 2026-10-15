@@ -31,7 +31,11 @@ import {
   RecallTraceSchema,
   type RecallTrace,
   MemoryViewSchema,
+  MemorySnapshotSchema,
+  type MemorySnapshot,
   type MemoryView,
+  CurationStatusSchema,
+  type CurationStatus,
   SkillSummarySchema,
   AgentCatalogSchema,
   AgentDefinitionViewSchema,
@@ -963,6 +967,7 @@ export class HttpBackendClient implements BackendTaskClient {
       taskSubsystemEnabled: raw["task_subsystem_enabled"] ?? false,
       chatControllerEnabled: raw["chat_controller_enabled"] ?? false,
       memoryEnabled: raw["memory_enabled"] ?? false,
+      ...(raw["local_models"] !== undefined ? { localModels: raw["local_models"] } : {}),
       skillsEnabled: raw["skills_enabled"] ?? false,
       mcpEnabled: raw["mcp_enabled"] ?? false,
       subagentsEnabled: raw["subagents_enabled"] ?? false,
@@ -1344,12 +1349,42 @@ export class HttpBackendClient implements BackendTaskClient {
     const raw = await this.fetchJson(
       `/v1/memory/inspect?thread_id=${encodeURIComponent(threadId)}`
     ) as Record<string, unknown>;
+    if (raw["version"] === 2) {
+      const input = raw["rerank_input"] as Record<string, unknown> | undefined;
+      return RecallTraceSchema.parse({
+        ...raw, invalidIds: raw["invalid_ids"] ?? [], invalidatedIds: raw["invalidated_ids"] ?? [],
+        selectionMethod: raw["selection_method"],
+        rerankInput: input?.["query"] === undefined ? undefined : {
+          query: input["query"], truncatedSignals: input["truncated_signals"],
+          truncatedMemoryIds: input["truncated_memory_ids"], maxPairTokens: input["max_pair_tokens"],
+        },
+      });
+    }
     // Soft-empty: the route returns {} or {entries: []} when no trace is recorded yet.
     const entries = raw["entries"] as unknown[] | undefined;
     if (raw["query"] === undefined || !entries || entries.length === 0) {
       return null;
     }
     return RecallTraceSchema.parse(mapRecallTrace(raw));
+  }
+
+  async getMemorySnapshot(threadId: string): Promise<MemorySnapshot> {
+    return MemorySnapshotSchema.parse(await this.fetchJson(
+      `/v1/memory/snapshot?thread_id=${encodeURIComponent(threadId)}`
+    ));
+  }
+
+  async getMemoryCuration(threadId: string): Promise<CurationStatus> {
+    const raw = await this.fetchJson(
+      `/v1/memory/curation?thread_id=${encodeURIComponent(threadId)}`
+    ) as Record<string, unknown>;
+    return CurationStatusSchema.parse({
+      enabled: raw["enabled"], status: raw["status"] ?? "pending",
+      lastMseq: raw["last_mseq"] ?? 0, failures: raw["failures"] ?? 0,
+      saved: raw["saved"] ?? 0, dropped: raw["dropped"] ?? 0, chunks: raw["chunks"] ?? 0,
+      retryAt: raw["retry_at"] ?? null, error: raw["error"] ?? null,
+      updatedAt: raw["updated_at"] ?? null,
+    });
   }
 
   async listMemories(filter: {

@@ -43,6 +43,7 @@ async def test_usage_limit_ends_the_turn_with_a_card(tmp_path: Path) -> None:
     last = store.get_thread(thread.thread_id).messages[-1]  # type: ignore[union-attr]
     assert last.role == "agent"
     assert last.content.startswith("⚠️ Usage limit reached.")
+    assert last.metadata["system_notice"] is True
     assert "turn failed" not in last.content
     card = ctrl.provider_access(thread.thread_id)
     assert card is not None and card["kind"] == "usage_limit"
@@ -51,3 +52,4 @@ async def test_usage_limit_ends_the_turn_with_a_card(tmp_path: Path) -> None:
     engine.limited = False
     await ctrl.handle_message(thread.thread_id, "again", channel_id="c1")
     assert ctrl.provider_access(thread.thread_id) is None
+    assert not store.get_thread(thread.thread_id).messages[-1].metadata.get("system_notice")

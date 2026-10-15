@@ -14,6 +14,7 @@ def build_app(
     workspace_path: str,
     *,
     draft_conventions_responses: list[dict] | None = None,
+    local_models: object | None = None,
 ) -> FastAPI:
     """Construct a self-contained FastAPI app for a given workspace path.
 
@@ -69,7 +70,7 @@ def build_app(
         orchestrator=None,
         broadcaster=orchestrator.broadcaster,
     )
-    router = build_router(store, orchestrator, ws_manager, None, agent)
+    router = build_router(store, orchestrator, ws_manager, None, agent, local_models=local_models)
     app = FastAPI()
     app.include_router(router)
     # Test seam: route tests reach the chat handler to attach per-test doubles

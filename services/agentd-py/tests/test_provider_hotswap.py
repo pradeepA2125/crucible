@@ -11,7 +11,6 @@ from agentd.reasoning.engine import DefaultReasoningEngine
 from agentd.storage.in_memory import InMemoryTaskStore
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
-
 NO_EFFORT_SUPPORT = {
     "supported": [], "unsupported": {},
     "control": {"options": [], "source": "transport", "default": None,
@@ -30,6 +29,35 @@ class _Transport:
 def _runtime() -> tuple[ProviderRuntime, DefaultReasoningEngine]:
     engine = DefaultReasoningEngine(model="old-model", transport=_Transport("old"))
     return ProviderRuntime(backend="openai", model="old-model", engines=[engine]), engine
+
+
+@pytest.mark.asyncio
+async def test_validated_swap_updates_memory_callbacks(monkeypatch):
+    from agentd.memory.curator import make_curator
+    from agentd.memory.harness import MemoryHarness, make_engine_summarizer
+    from agentd.memory.provider import MemoryProvider
+
+    calls = []
+
+    class Transport:
+        async def generate_text(self, **kwargs):
+            calls.append(kwargs["model"])
+            return "<summary>memory anchor</summary>"
+
+        async def generate_json(self, **kwargs):
+            calls.append(kwargs["model"])
+            return {"memories": []}
+
+    binding = MemoryProvider(Transport(), "old")
+    sink = MemoryHarness(enabled=True, compactor=None)
+    sink._provider = binding
+    runtime = ProviderRuntime(backend="openai", model="old", engines=[], window_sinks=[sink])
+    summary, curator = make_engine_summarizer(binding, ""), make_curator(binding, "")
+    await summary("", "source")
+    monkeypatch.setattr(runtime_mod, "build_transport", lambda *_args, **_kwargs: Transport())
+    await runtime.swap(backend="groq", model="new")
+    await curator({"transcript": "source", "existing": []})
+    assert calls[-1] == "new" and binding.model == "new"
 
 
 def _client(tmp_path: Path, rt: ProviderRuntime | None) -> TestClient:

@@ -32,6 +32,7 @@ export interface InstallerDeps {
   // backend edits on reload — the same loop start-backend.sh gives the dev path.
   // Unset in every normal install; the wheel path is untouched.
   devSourcePath?: string;
+  localModels?: boolean;
 }
 export type ComponentStatus = "pending" | "running" | "done" | "failed" | "skipped";
 export interface ComponentProgress { id: ComponentId; status: ComponentStatus; detail?: string }
@@ -101,16 +102,20 @@ export class RuntimeInstaller {
       emit({ id, status: "running" });
       let progress: ComponentProgress;
       try {
+        const key = stalenessKey(spec, this.platform)
+          + (id === "agentd" && this.deps.localModels === false ? ":keyword-only" : "");
         if (id === "agentd" && !uvOk) {
           progress = { id, status: "failed", detail: "uv unavailable" };
         } else if (
-          state[id] === stalenessKey(spec, this.platform) && (await this.artifactPresent(id))
+          state[id] === key && (await this.artifactPresent(id))
         ) {
           progress = { id, status: "done", detail: "already installed" };
         } else {
-          progress = await this.installOne(id);
+          const changedModels = id === "agentd" && state[id] !== undefined
+            && state[id]!.endsWith(":keyword-only") !== (this.deps.localModels === false);
+          progress = await this.installOne(id, changedModels);
           if (progress.status === "done") {
-            state[id] = stalenessKey(spec, this.platform);
+            state[id] = key;
             writeState(this.deps.runtimeDir, state);
           }
         }
@@ -127,7 +132,8 @@ export class RuntimeInstaller {
       const versions = Object.fromEntries(
         ORDER.map((id) => [id, this.deps.manifest.components[id].version]));
       writeFileSync(join(this.deps.runtimeDir, "runtime.json"), JSON.stringify(
-        { releaseTag: this.deps.manifest.releaseTag, components: versions }, null, 2));
+        { releaseTag: this.deps.manifest.releaseTag, components: versions,
+          localModels: this.deps.localModels !== false }, null, 2));
     }
     return { ok, components: results };
   }
@@ -156,7 +162,7 @@ export class RuntimeInstaller {
     return existsSync(join(this.deps.runtimeDir, "node_modules"));
   }
 
-  private async installOne(id: ComponentId): Promise<ComponentProgress> {
+  private async installOne(id: ComponentId, changedModels = false): Promise<ComponentProgress> {
     const spec = this.deps.manifest.components[id];
     if (id === "jre") {
       const url = spec.urls?.[this.platform];
@@ -193,14 +199,14 @@ export class RuntimeInstaller {
     }
     if (id === "agentd") {
       const uv = binPath(this.deps.runtimeDir, "uv", this.platform);
-      const venv = await this.deps.exec(uv, ["venv", join(this.deps.runtimeDir, "venv"), "--python", "3.12"]);
+      const venv = await this.deps.exec(uv, [
+        "venv", join(this.deps.runtimeDir, "venv"), "--python", "3.12",
+        ...(changedModels ? ["--clear"] : ["--allow-existing"]),
+      ]);
       if (venv.code !== 0) throw new Error(`uv venv failed: ${venv.stderr.slice(0, 400)}`);
-      // [memory] pulls in sentence-transformers/numpy (and PyTorch, transitively) so the
-      // memory harness (on by default — see agentd/memory/config.py) works out of the box
-      // instead of silently degrading its embedder. [semantic] adds lancedb so semantic
-      // retrieval (CRUCIBLE_SEMANTIC_RETRIEVAL, on by default via start-backend.sh) also
-      // works out of the box rather than degrading to graph-only retrieval — found live:
-      // without it, every index build logged "lancedb is required for semantic retrieval."
+      // One optional extra serves code retrieval and memory. On a choice change,
+      // rebuilding this venv removes old optional dependencies without touching caches,
+      // credentials or workspace state. RuntimeManager stops shared backends first.
       // PEP 508 direct-reference syntax ("name[extras] @ url") is required to combine an
       // extras marker with a URL install.
       // Editable from a checkout when devSourcePath is set, else the released wheel
@@ -210,11 +216,12 @@ export class RuntimeInstaller {
       const devPkg = this.deps.devSourcePath
         ? join(this.deps.devSourcePath, "services", "agentd-py")
         : null;
+      const extras = this.deps.localModels === false ? "" : "[local-models]";
       const target = devPkg
-        ? `${devPkg}[memory,semantic]`
+        ? `${devPkg}${extras}`
         : spec.urls?.any
-          ? `crucible-agentd[memory,semantic] @ ${spec.urls.any}`
-          : `crucible-agentd[memory,semantic]==${spec.version}`;
+          ? `crucible-agentd${extras} @ ${spec.urls.any}`
+          : `crucible-agentd${extras}==${spec.version}`;
       const pipArgs = ["pip", "install", "--python",
                        venvPython(this.deps.runtimeDir, this.platform)];
       if (devPkg) pipArgs.push("-e");

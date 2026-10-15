@@ -18,6 +18,7 @@ from agentd.domain.models import (
     PlanEvidencePack,
     PlanEvidenceSymbol,
 )
+from agentd.local_models import semantic_ready
 from agentd.retrieval.chunker import ScoredChunk
 from agentd.runtime.adapters import EvidenceAdapter, GenericEvidenceAdapter
 
@@ -206,7 +207,7 @@ class RetrievalArtifactClient:
         )
 
     def semantic_enabled(self) -> bool:
-        return self._semantic_index is not None
+        return semantic_ready(self._semantic_index)
 
     def trigger_index_build(self, workspace_path: str) -> object | None:
         """Synchronously build/update the semantic index from the current snapshot.
@@ -215,7 +216,7 @@ class RetrievalArtifactClient:
         is disabled, the snapshot doesn't exist, or another build is running (that
         build then runs once more for this request).
         """
-        if self._semantic_index is None:
+        if not self.semantic_enabled():
             return None
         stats: object | None = None
         while True:
@@ -333,7 +334,7 @@ class RetrievalArtifactClient:
         # Never build the semantic index here: this is the chat/task path, and a build reads
         # and chunks the workspace (seconds on a large repo). Query whatever index exists and
         # request a background build when the snapshot is newer than what was indexed.
-        if self._semantic_index is not None:
+        if self.semantic_enabled():
             index = self._semantic_index
             if not index.is_ready():  # type: ignore[attr-defined]
                 index.open_existing(workspace_path)  # type: ignore[attr-defined]
@@ -522,7 +523,7 @@ class RetrievalArtifactClient:
         # ── Semantic retrieval (if index is ready) ────────────────────────────
         semantic_results: list[ScoredChunk] = []
         semantic_file_scores: dict[str, float] = {}
-        if self._semantic_index is not None:
+        if self.semantic_enabled():
             try:
                 sem_index = self._semantic_index
                 if sem_index.is_ready():  # type: ignore[union-attr]

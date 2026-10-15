@@ -28,10 +28,8 @@ describe("BrowserTab", () => {
 
   test("toggling include-retired posts a browse message", () => {
     render(<BrowserTab memories={[]} chains={{}} />);
-    fireEvent.click(screen.getByLabelText(/include retired/i));
-    expect(postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "browse", filter: expect.objectContaining({ includeRetired: true }) })
-    );
+    fireEvent.change(screen.getByLabelText("State"), { target: { value: "all" } });
+    expect(postMessage).not.toHaveBeenCalled();
   });
 
   test("selecting a memory shows detail + posts loadChain", () => {

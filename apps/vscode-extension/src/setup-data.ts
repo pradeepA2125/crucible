@@ -11,8 +11,10 @@ import {
 } from "./chatgpt-settings.js";
 
 export interface SetupDeps {
+  localModels?(): boolean;
   install(
     onProgress: (p: { id: string; status: string; detail?: string }) => void,
+    localModels?: boolean,
   ): Promise<{ ok: boolean }>;
   validate(req: {
     backend: string;
@@ -45,7 +47,8 @@ export interface SetupDeps {
 
 // webview → host
 export type SetupInMsg =
-  | { type: "setup/install" }
+  | { type: "setup/preferences" }
+  | { type: "setup/install"; localModels?: boolean }
   | { type: "setup/validate"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "setup/save"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "setup/openChat" }
@@ -56,6 +59,7 @@ export type SetupInMsg =
 
 // host → webview
 export type SetupOutMsg =
+  | { type: "setup/preferences"; localModels: boolean }
   | { type: "setup/progress"; component: string; status: string; detail?: string | undefined }
   | { type: "setup/installDone"; ok: boolean }
   | { type: "setup/validateResult"; ok: boolean; model?: string; error?: string; jsonMode?: string; warning?: string }
@@ -214,8 +218,13 @@ export function createSetupHandler(
               status: p.status,
               detail: p.detail,
             }),
+            msg.localModels ?? true,
           );
           post({ type: "setup/installDone", ok: result.ok });
+          return;
+        }
+        case "setup/preferences": {
+          post({ type: "setup/preferences", localModels: deps.localModels?.() ?? true });
           return;
         }
         case "setup/validate": {

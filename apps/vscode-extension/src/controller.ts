@@ -372,8 +372,18 @@ export class CrucibleController {
     return {
       getInspect: (tid) =>
         tid ? this.memoryClient().getMemoryInspect(tid) : Promise.resolve(null),
+      getSnapshot: (tid) => {
+        const client = this.memoryClient();
+        if (!client.getMemorySnapshot) throw new Error("Active memory inspection is unavailable from this backend.");
+        return client.getMemorySnapshot(tid);
+      },
       browse: (filter) => this.memoryClient().listMemories(filter),
       getChain: (memoryId) => this.memoryClient().getSupersedeChain(memoryId),
+      getCuration: (tid) => {
+        const client = this.memoryClient();
+        if (!client.getMemoryCuration) throw new Error("Curation status is unavailable from this backend.");
+        return client.getMemoryCuration(tid);
+      },
     };
   }
 

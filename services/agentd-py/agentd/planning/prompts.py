@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 
+from agentd.history_metadata import project_history
+
 # Fallback when the caller does not thread the real budget through plan_context.
 # Mirrors TaskBudget.max_planning_tool_calls / max_revision_tool_calls in domain/models.py.
 _DEFAULT_MAX_TOOL_CALLS = 50
@@ -484,7 +486,7 @@ def build_planning_step_payload(
         else ""
     )
     if history:
-        payload["conversation_history"] = history
+        payload["conversation_history"] = project_history(history)
         if iteration >= max_calls - 1:
             payload["instruction"] = (
                 f"⚠ FINAL TOOL CALL: you have used {iteration}/{max_calls} tool calls. "

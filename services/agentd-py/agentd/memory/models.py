@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
+from typing import TYPE_CHECKING, Literal
+from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from agentd.memory.scope import ScopeKind
+
+if TYPE_CHECKING:
+    from agentd.memory.recall_v2 import RecallTraceV2
 
 # A conversation history / message list as the loops pass it around.
 History = list[dict[str, object]]
@@ -26,6 +33,10 @@ class CompactionSegment(BaseModel):
     seq: int
     content: str
     created_at: datetime
+    mseq: int | None = None
+    role: str | None = None
+    tool: str | None = None
+    metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class AnchoredSummary(BaseModel):
@@ -62,6 +73,7 @@ class TurnPreparation:
     evicted_seq_lo: int | None = None  # surfaced so the harness can consolidate the evicted slice
     evicted_seq_hi: int | None = None
     recall_trace: RecallTrace | None = None  # Phase 3 — inspector trace (forward-ref)
+    recall_traces: list[RecallTraceV2] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -101,6 +113,48 @@ class Memory(BaseModel):
     source_seq_lo: int | None  # A+link span into compaction_segments
     source_seq_hi: int | None
     created_at: datetime       # ingestion time
+
+
+class DurableMemory(BaseModel):
+    """V2 durable claim, separate from legacy entries during rollout."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    id: str = Field(default_factory=lambda: uuid4().hex, min_length=1)
+    scope_kind: ScopeKind
+    scope_id: str = Field(min_length=1)
+    kind: MemoryKind
+    content: str = Field(min_length=1, max_length=140)
+    topic: str = Field(min_length=1, max_length=60)
+    applies_when: str = Field(min_length=1, max_length=160)
+    detail: str = Field(default="", max_length=2000)
+    entities: list[str] = Field(default_factory=list)
+    provenance: Literal["user_said", "tool_verified", "agent_inferred"]
+    source_thread_id: str = Field(min_length=1)
+    source_message_id: int = Field(ge=1, strict=True)
+    revision: int = Field(default=1, ge=1)
+    valid_from: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    valid_to: datetime | None = None
+    superseded_by: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    embedding_state: Literal["pending", "done"] = "pending"
+    embedding_model: str | None = None
+    embedded_hash: str | None = None
+
+    @field_validator("content", "topic", "applies_when", "detail", mode="before")
+    @classmethod
+    def strip_text(cls, value: object) -> str:
+        if not isinstance(value, str):
+            raise ValueError("Memory text must be a string")
+        return value.strip()
+
+    @property
+    def scope_key(self) -> str:
+        return f"{self.scope_kind}:{self.scope_id}"
+
+    @property
+    def embedding_text(self) -> str:
+        return f"{self.topic}\n{self.applies_when}\n{self.content}"
 
 
 class CandidateMemory(BaseModel):

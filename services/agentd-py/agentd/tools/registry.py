@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from agentd.local_models import semantic_ready
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 from agentd.tools.approvals import denial_text
 from agentd.tools.read_policy import adaptive_reads_enabled
@@ -289,7 +290,7 @@ class ToolRegistry:
                 ),
             ]
 
-        if self._semantic_index is not None:
+        if semantic_ready(self._semantic_index):
             tools.append(
                 ToolDefinition(
                     name="search_semantic",
@@ -449,7 +450,7 @@ class ToolRegistry:
 
         if name == "search_semantic":
             from agentd.tools.search import search_semantic
-            if self._semantic_index is None:
+            if not semantic_ready(self._semantic_index):
                 return ToolOutput(output="Error: semantic index not available", is_error=True)
             return await search_semantic(
                 query=str(args.get("query", "")),

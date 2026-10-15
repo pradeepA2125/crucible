@@ -1,0 +1,2532 @@
+{
+  "version": 1,
+  "author": "Codex",
+  "labels_frozen_before_scoring": true,
+  "limitations": [
+    "Synthetic candidate-judge matrix; does not establish production candidate recall or task success.",
+    "No independent Claude labels yet; no historical recaps or frozen-trace baseline scores yet."
+  ],
+  "split_policy": "First three memory topics development; remaining two held out, within every pattern.",
+  "cases": [
+    {
+      "id": "100-source-ids",
+      "pattern": "100",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix source ID reuse after chat rewind.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "100-repo-scope",
+      "pattern": "100",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix memory reads leaking entries between repositories.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "100-device-init",
+      "pattern": "100",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix the documented device deadlock during simultaneous first model loads.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "100-provider-swap",
+      "pattern": "100",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix background model calls still using the provider selected before a settings swap.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "100-file-evidence",
+      "pattern": "100",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix summaries losing file paths and line ranges when read outputs are capped.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        }
+      ]
+    },
+    {
+      "id": "011-source-ids",
+      "pattern": "011",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Go ahead with that change.",
+        "C": "Next we will fix source ID reuse after chat rewind.",
+        "R": "We are working on durable chat evidence identity and rewind."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "011-repo-scope",
+      "pattern": "011",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Go ahead with that change.",
+        "C": "Next we will isolate shared memory reads by repository.",
+        "R": "We are working on privacy of shared memories across repositories."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "011-device-init",
+      "pattern": "011",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Go ahead with that change.",
+        "C": "Next we will serialize simultaneous first model loads to address the device deadlock.",
+        "R": "We are working on first-time device model loading and deadlocks."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "011-provider-swap",
+      "pattern": "011",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Go ahead with that change.",
+        "C": "Next we will make background callbacks follow provider changes in settings.",
+        "R": "We are working on provider changes and background model bindings."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "011-file-evidence",
+      "pattern": "011",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Go ahead with that change.",
+        "C": "Next we will preserve file paths and delivered line ranges in capped evidence.",
+        "R": "We are working on file-read evidence headers and summaries."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        }
+      ]
+    },
+    {
+      "id": "010-source-ids",
+      "pattern": "010",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Go ahead with that change.",
+        "C": "Next we will fix source ID reuse after chat rewind.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "010-repo-scope",
+      "pattern": "010",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Go ahead with that change.",
+        "C": "Next we will isolate shared memory reads by repository.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "010-device-init",
+      "pattern": "010",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Go ahead with that change.",
+        "C": "Next we will serialize simultaneous first model loads to address the device deadlock.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "010-provider-swap",
+      "pattern": "010",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Go ahead with that change.",
+        "C": "Next we will make background callbacks follow provider changes in settings.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "010-file-evidence",
+      "pattern": "010",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Go ahead with that change.",
+        "C": "Next we will preserve file paths and delivered line ranges in capped evidence.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        }
+      ]
+    },
+    {
+      "id": "001-source-ids",
+      "pattern": "001",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Change only the static illustration caption to Hello.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "We are working on durable chat evidence identity and rewind."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "001-repo-scope",
+      "pattern": "001",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Change only the static illustration caption to Hello.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "We are working on privacy of shared memories across repositories."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "001-device-init",
+      "pattern": "001",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Change only the static illustration caption to Hello.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "We are working on first-time device model loading and deadlocks."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "001-provider-swap",
+      "pattern": "001",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Change only the static illustration caption to Hello.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "We are working on provider changes and background model bindings."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "001-file-evidence",
+      "pattern": "001",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Change only the static illustration caption to Hello.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "We are working on file-read evidence headers and summaries."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "111-source-ids",
+      "pattern": "111",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix source ID reuse after chat rewind.",
+        "C": "Next we will fix source ID reuse after chat rewind.",
+        "R": "We are working on durable chat evidence identity and rewind."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "111-repo-scope",
+      "pattern": "111",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix memory reads leaking entries between repositories.",
+        "C": "Next we will isolate shared memory reads by repository.",
+        "R": "We are working on privacy of shared memories across repositories."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "111-device-init",
+      "pattern": "111",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix the documented device deadlock during simultaneous first model loads.",
+        "C": "Next we will serialize simultaneous first model loads to address the device deadlock.",
+        "R": "We are working on first-time device model loading and deadlocks."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "111-provider-swap",
+      "pattern": "111",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix background model calls still using the provider selected before a settings swap.",
+        "C": "Next we will make background callbacks follow provider changes in settings.",
+        "R": "We are working on provider changes and background model bindings."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "111-file-evidence",
+      "pattern": "111",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix summaries losing file paths and line ranges when read outputs are capped.",
+        "C": "Next we will preserve file paths and delivered line ranges in capped evidence.",
+        "R": "We are working on file-read evidence headers and summaries."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        }
+      ]
+    },
+    {
+      "id": "110-source-ids",
+      "pattern": "110",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix source ID reuse after chat rewind.",
+        "C": "Next we will fix source ID reuse after chat rewind.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "110-repo-scope",
+      "pattern": "110",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix memory reads leaking entries between repositories.",
+        "C": "Next we will isolate shared memory reads by repository.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "110-device-init",
+      "pattern": "110",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix the documented device deadlock during simultaneous first model loads.",
+        "C": "Next we will serialize simultaneous first model loads to address the device deadlock.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "110-provider-swap",
+      "pattern": "110",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix background model calls still using the provider selected before a settings swap.",
+        "C": "Next we will make background callbacks follow provider changes in settings.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "110-file-evidence",
+      "pattern": "110",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix summaries losing file paths and line ranges when read outputs are capped.",
+        "C": "Next we will preserve file paths and delivered line ranges in capped evidence.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        }
+      ]
+    },
+    {
+      "id": "101-source-ids",
+      "pattern": "101",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix source ID reuse after chat rewind.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "We are working on durable chat evidence identity and rewind."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "101-repo-scope",
+      "pattern": "101",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix memory reads leaking entries between repositories.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "We are working on privacy of shared memories across repositories."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "101-device-init",
+      "pattern": "101",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix the documented device deadlock during simultaneous first model loads.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "We are working on first-time device model loading and deadlocks."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "101-provider-swap",
+      "pattern": "101",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix background model calls still using the provider selected before a settings swap.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "We are working on provider changes and background model bindings."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        }
+      ]
+    },
+    {
+      "id": "101-file-evidence",
+      "pattern": "101",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Fix summaries losing file paths and line ranges when read outputs are capped.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "We are working on file-read evidence headers and summaries."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmless",
+          "label_reason": "Background theme or unrelated procedure; no help for this turn."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "needed",
+          "label_reason": "Needed to execute the explicit or preceding change."
+        }
+      ]
+    },
+    {
+      "id": "000-source-ids",
+      "pattern": "000",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Change only the static illustration caption to Hello.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        }
+      ]
+    },
+    {
+      "id": "000-repo-scope",
+      "pattern": "000",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Change only the static illustration caption to Hello.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        }
+      ]
+    },
+    {
+      "id": "000-device-init",
+      "pattern": "000",
+      "split": "development",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Change only the static illustration caption to Hello.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        }
+      ]
+    },
+    {
+      "id": "000-provider-swap",
+      "pattern": "000",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Change only the static illustration caption to Hello.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        }
+      ]
+    },
+    {
+      "id": "000-file-evidence",
+      "pattern": "000",
+      "split": "held_out",
+      "origin": "Codex-authored fictional scenario; no project-session data",
+      "signals": {
+        "Q": "Change only the static illustration caption to Hello.",
+        "C": "The previous turn changed the illustration color palette.",
+        "R": "This chat designs a static illustration and its typography."
+      },
+      "candidates": [
+        {
+          "id": "source-ids",
+          "topic": "source identity",
+          "applies_when": "Rewinding fictional chat history",
+          "content": "Never reuse erased source IDs after rewinding history.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "repo-scope",
+          "topic": "repository privacy",
+          "applies_when": "Reading shared fictional memory",
+          "content": "Apply repository scope filters before retrieving shared memories.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "device-init",
+          "topic": "device loading",
+          "applies_when": "First concurrent model initialization",
+          "content": "Serialize first device model initialization to avoid the documented startup deadlock.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "provider-swap",
+          "topic": "provider binding",
+          "applies_when": "Changing the fictional model provider",
+          "content": "Update background model callbacks when the configured provider changes.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        },
+        {
+          "id": "file-evidence",
+          "topic": "file excerpts",
+          "applies_when": "Summarizing capped fictional file reads",
+          "content": "Retain file paths and delivered line ranges alongside capped file excerpts.",
+          "provenance": "agent_inferred",
+          "revision": 1,
+          "label": "harmful",
+          "label_reason": "Applying an unrelated runtime procedure violates the static-caption-only request."
+        }
+      ]
+    }
+  ]
+}

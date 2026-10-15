@@ -708,6 +708,7 @@ class ControllerOutcome:
     # Durable thinking entries (tool labels) for the turn — persisted alongside the
     # pills so the ThinkingBlock reconstructs on reload (mirrors agent.py/ToolLoop).
     thinking_log: list[str] | None = None
+    system_notice: bool = False
 
 
 class ControllerLoop:
@@ -989,6 +990,13 @@ class ControllerLoop:
                 pass
         return key
 
+    def _assistant_turn(self, response: dict[str, object]) -> dict[str, object]:
+        return assistant_turn(
+            response, capture_evidence=(
+                bool(getattr(self._memory_harness, "recall_v2", False)) and self._agent is None
+            ),
+        )
+
     async def _execute_batch(self, resp, calls, *, history, seen, iteration,
                              plan_context, on_pills_update, retrieval_delta_cb, history_update_cb):
         from uuid import uuid4
@@ -998,7 +1006,7 @@ class ControllerLoop:
 
         batch_id = "b" + uuid4().hex
         persisted = {**resp, "batch_id": batch_id}
-        history.append(assistant_turn(persisted))
+        history.append(self._assistant_turn(persisted))
         indices = {}
         slots = {}
         for call in calls:
@@ -1264,9 +1272,27 @@ class ControllerLoop:
     ) -> ControllerOutcome:
         tool_defs = [d.model_dump() for d in self._registry.definitions()]
         history = [dict(m) for m in seed_history] if seed_history else []
+        if getattr(self._memory_harness, "recall_v2", False) and self._agent is None:
+            history = self._memory_harness.sequence_history(
+                history, str(plan_context.get("run_id") or self._channel_id),
+            )
         # Expose the live list NOW (before _iterate can raise) so a cancel mid-turn still
         # leaves the caller a readable partial (Q2). _iterate mutates this same object.
         self._history = history
+        if getattr(self._memory_harness, "recall_v2", False):
+            plan_context["memory_v2"] = True
+            self._memory_harness.begin_recall(
+                str(plan_context.get("run_id") or self._channel_id),
+                str(plan_context.get("memory_turn_key") or plan_context.get("artifact_turn_id")
+                    or id(history)),
+                str(plan_context.get("goal", "")),
+                closing=str(plan_context.get("memory_closing", "")),
+                recap=str(plan_context.get("memory_recap", "")), history=history,
+                child=self._agent is not None,
+                allow_recall=not bool(plan_context.get("notice_turn")),
+                budget_key=str(plan_context.get("memory_budget_key") or
+                               plan_context.get("memory_turn_key") or id(history)),
+            )
         # Seed with the caller's carried observation (prefix-valid: seed_history is
         # last turn's history plus one appended message, and message_count only ever
         # points at a prefix of it) — see partial_observed_prompt().
@@ -1535,6 +1561,16 @@ class ControllerLoop:
                             entry["image_refs"] = item.image_refs
                             entry["source_id"] = item.source_id
                         history.append(entry)
+                        if item.kind == "user" and getattr(
+                            self._memory_harness, "recall_v2", False,
+                        ):
+                            key = str(item.source_id or id(entry))
+                            self._memory_harness.begin_recall(
+                                str(plan_context.get("run_id") or self._channel_id), key, item.text,
+                                closing=str(plan_context.get("memory_closing", "")),
+                                recap=str(plan_context.get("memory_recap", "")), history=history,
+                                budget_key=key,
+                            )
                         continue
                     author = item.author or item.source_id or "agent"
                     history.append({"role": "user", "content": "New message:\n"
@@ -1622,6 +1658,24 @@ class ControllerLoop:
                             _prep.recall_trace.model_dump_json(indent=2), encoding="utf-8")
                 except Exception:  # noqa: BLE001 — best-effort
                     logger.warning("[memory] recall-trace dump failed")
+            for trace in getattr(_prep, "recall_traces", []):
+                try:
+                    from agentd.runtime.artifacts import chat_turn_artifacts_root
+
+                    tid = str(plan_context.get("artifact_thread_id") or "")
+                    turn = str(plan_context.get("artifact_turn_id") or "")
+                    workspace = str(plan_context.get("workspace_path") or "")
+                    if tid and turn:
+                        output = chat_turn_artifacts_root(tid, turn, workspace)
+                        output.mkdir(parents=True, exist_ok=True)
+                        index = 0
+                        path = output / f"memory-recall-{index:02d}.json"
+                        while path.exists():
+                            index += 1
+                            path = output / f"memory-recall-{index:02d}.json"
+                        path.write_text(trace.model_dump_json(indent=2), encoding="utf-8")
+                except Exception:
+                    logger.warning("[memory] v2 recall-trace dump failed", exc_info=True)
             if _prep.compacted:
                 # Observability: surface the compaction so the chat UI can show it fired.
                 self._broadcaster.broadcast(self._channel_id, {
@@ -1694,7 +1748,7 @@ class ControllerLoop:
             # len(history), which carries the whole thread and so never resets per turn.
             plan_context["iteration"] = iteration
             try:
-                if _prep.compacted:
+                if _prep.compacted or getattr(self._memory_harness, "recall_v2", False):
                     projection = project_images()
                 step_fn = self._reasoning.create_controller_step
                 # New keywords only for engines that declare them — the same ask-the-callee
@@ -1807,6 +1861,23 @@ class ControllerLoop:
                 _fold_call_tokens_into_turn()
 
             atype = str(resp.get("type", ""))
+            if getattr(self._memory_harness, "recall_v2", False) and self._agent is None and (
+                atype in {"answer", "submit_changes"}
+            ):
+                from agentd.memory.recap import validate_recap
+
+                try:
+                    resp["recap"] = validate_recap(resp.get("recap"))
+                except ValueError as exc:
+                    consecutive_malformed += 1
+                    if consecutive_malformed > _MAX_MALFORMED:
+                        raise ControllerLoopExhausted("Controller repeatedly omitted a valid recap")
+                    history.append(self._assistant_turn(resp))
+                    history.append({
+                        "role": "tool_result", "tool": "", "is_error": True,
+                        "content": f"Terminal action needs a valid recap: {exc}. Rewrite it.",
+                    })
+                    continue
             logger.info("[controller] iter=%d phase=%s action=%s", iteration, self._sm.phase, atype)
             # Drain any salvage notice BEFORE dispatching: the model must see that its
             # trailing action was dropped, on the same turn it happened.
@@ -1917,7 +1988,7 @@ class ControllerLoop:
                                      and isinstance(n.get("tool"), str) for n in nodes):
                         from uuid import uuid4
                         invalid_id = "invalid_" + uuid4().hex
-                        history.append(assistant_turn({**persisted, "batch_id": invalid_id}))
+                        history.append(self._assistant_turn({**persisted, "batch_id": invalid_id}))
                         for n in nodes:
                             history.append(
                                 {
@@ -1939,7 +2010,7 @@ class ControllerLoop:
                         history.append({"role": "assistant", "content": "{}"})
                         history.append({"role": "tool_result", "tool": "", "content": correction})
                 else:
-                    history.append(assistant_turn(persisted))
+                    history.append(self._assistant_turn(persisted))
                     history.append({"role": "tool_result", "tool": "", "content": correction})
                 continue
             # Captured BEFORE the reset so the progress branch can restore it — a note
@@ -1961,7 +2032,7 @@ class ControllerLoop:
                 if self._edit_applied and self._ledger.pending():
                     still_open = self._ledger.pending()
                     titles = ", ".join(i.title for i in still_open)
-                    history.append(assistant_turn(resp))
+                    history.append(self._assistant_turn(resp))
                     history.append({
                         "role": "tool_result", "tool": "",
                         "content": (
@@ -1978,10 +2049,10 @@ class ControllerLoop:
                     redirect = terminal_guard()
                     if redirect is not None:
                         # A redirect, not malformed (same contract as the open-todo block).
-                        history.append(assistant_turn(resp))
+                        history.append(self._assistant_turn(resp))
                         history.append({"role": "tool_result", "tool": "", "content": redirect})
                         continue
-                history.append(assistant_turn(resp))
+                history.append(self._assistant_turn(resp))
                 return ControllerOutcome(
                     kind="answer", text=str(resp.get("answer", "")), history=history)
             if atype == "progress":
@@ -2015,7 +2086,7 @@ class ControllerLoop:
                 # into every subsequent iteration's prompt — the exact context bloat
                 # _PROGRESS_NOTE_MAX_CHARS exists to prevent. Same substitute-before-
                 # persisting shape the edit branch uses for patch_ops.
-                history.append(assistant_turn({**resp, "note": note}))
+                history.append(self._assistant_turn({**resp, "note": note}))
                 history.append({
                     "role": "tool_result", "tool": "",
                     "content": (
@@ -2038,7 +2109,7 @@ class ControllerLoop:
                     retrieval_delta_cb=retrieval_delta_cb, history_update_cb=history_update_cb)
                 continue
             if atype == "clarify":
-                history.append(assistant_turn(resp))
+                history.append(self._assistant_turn(resp))
                 raw_opts = resp.get("options")
                 options = [str(o) for o in raw_opts] if isinstance(raw_opts, list) else []
                 question = str(resp.get("question", ""))
@@ -2046,7 +2117,7 @@ class ControllerLoop:
                     kind="clarify", text=question, history=history,
                     payload={"question": question, "options": options})
             if atype == "propose_mode":
-                history.append(assistant_turn(resp))
+                history.append(self._assistant_turn(resp))
                 return ControllerOutcome(kind="propose_mode", payload={
                     "plan_sketch": resp.get("plan_sketch", ""),
                     "recommended": _normalized_recommended(resp),
@@ -2076,7 +2147,7 @@ class ControllerLoop:
                     # consecutive_malformed) — only max_iters bounds it.
                     logger.info(
                         "[controller] empty edit (ops=0) — redirecting (write_todos/edit/submit)")
-                    history.append(assistant_turn(
+                    history.append(self._assistant_turn(
                         {k: v for k, v in resp.items() if k != "patch_ops"}))
                     history.append({
                         "role": "tool_result", "tool": "edit",
@@ -2123,7 +2194,7 @@ class ControllerLoop:
                         "type": "edit_failed",
                         "payload": {"reason": reason_line, "ops": len(ops)}})
                     intent = {k: v for k, v in resp.items() if k != "patch_ops"}
-                    history.append(assistant_turn(intent))
+                    history.append(self._assistant_turn(intent))
                     guidance = _edit_failure_guidance(exc)
                     _allow_reread_of_stale(seen, exc, plan_context.get("workspace_path"))
                     history.append({
@@ -2171,7 +2242,7 @@ class ControllerLoop:
                 if refused is not None:
                     if edit_record_cb is not None:
                         await edit_record_cb(diff, "reject", str(refused), was_gated)
-                    history.append(assistant_turn(
+                    history.append(self._assistant_turn(
                         {k: v for k, v in resp.items() if k != "patch_ops"}))
                     history.append({
                         "role": "tool_result", "tool": "edit",
@@ -2184,7 +2255,7 @@ class ControllerLoop:
                             f"{stale.path} changed since it was read (by {stale.writer_label})",
                             was_gated)
                     _allow_reread_of_stale(seen, stale, plan_context.get("workspace_path"))
-                    history.append(assistant_turn(
+                    history.append(self._assistant_turn(
                         {k: v for k, v in resp.items() if k != "patch_ops"}))
                     history.append({
                         "role": "tool_result", "tool": "edit",
@@ -2193,7 +2264,7 @@ class ControllerLoop:
                 if edit_record_cb is not None:
                     await edit_record_cb(
                         diff, "accept" if accepted else "reject", reason, was_gated)
-                history.append(assistant_turn(resp))
+                history.append(self._assistant_turn(resp))
                 if accepted:
                     touched = [d.path for d in diff]
                     # A real edit landed → out of the active-entry window (clears active_entry).
@@ -2257,14 +2328,14 @@ class ControllerLoop:
                     blocked = report_guard()
                     if blocked is not None:
                         # A redirect, not malformed (same contract as the open-todo block).
-                        history.append(assistant_turn(resp))
+                        history.append(self._assistant_turn(resp))
                         history.append({"role": "tool_result", "tool": "", "content": blocked})
                         continue
                 if still_open and not final:
                     # Same contract as submit_changes: a redirect, NOT a malformed action,
                     # so it does not touch consecutive_malformed — only max_iters bounds it.
                     titles = ", ".join(i.title for i in still_open)
-                    history.append(assistant_turn(resp))
+                    history.append(self._assistant_turn(resp))
                     history.append({
                         "role": "tool_result", "tool": "",
                         "content": (
@@ -2286,11 +2357,11 @@ class ControllerLoop:
                             # entries dropped, so the member stays in the quorum.
                             verdict = report_check(resp, True)
                     if verdict.message is not None:
-                        history.append(assistant_turn(resp))
+                        history.append(self._assistant_turn(resp))
                         history.append({"role": "tool_result", "tool": "",
                                         "content": verdict.message})
                         continue
-                history.append(assistant_turn(resp))
+                history.append(self._assistant_turn(resp))
                 summary = str(resp.get("summary", "")).strip()
                 if still_open:
                     # Final iteration: the budget is spent, so the ledger block is bypassed
@@ -2311,7 +2382,7 @@ class ControllerLoop:
                 still_open = self._ledger.pending()
                 if still_open:
                     titles = ", ".join(i.title for i in still_open)
-                    history.append(assistant_turn(resp))
+                    history.append(self._assistant_turn(resp))
                     history.append({
                         "role": "tool_result", "tool": "",
                         "content": (
@@ -2327,11 +2398,11 @@ class ControllerLoop:
                     redirect = terminal_guard()
                     if redirect is not None:
                         # A redirect, not malformed (same contract as the open-todo block).
-                        history.append(assistant_turn(resp))
+                        history.append(self._assistant_turn(resp))
                         history.append({"role": "tool_result", "tool": "", "content": redirect})
                         continue
                 # The shadow is closed by run()'s finally on return (no double-close).
-                history.append(assistant_turn(resp))
+                history.append(self._assistant_turn(resp))
                 # Deterministic fallback for an empty summary — unlike answer/clarify we do NOT
                 # retry (the edits are already promoted; retrying-to-exhaustion would convert a
                 # done turn into a failure). A non-empty summary keeps the closing chat message

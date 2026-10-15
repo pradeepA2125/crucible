@@ -3,8 +3,19 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import cast
 
+from agentd.history_metadata import message_sequence
 from agentd.image_context import history_visual_tokens, image_tombstone
+from agentd.memory.evidence import evidence_turns, render_evidence
+from agentd.memory.folding import (
+    HARD_INPUT_TOKENS,
+    TARGET_INPUT_TOKENS,
+    EvidenceBudgetExceeded,
+    InputTokens,
+    next_fold,
+)
+from agentd.memory.history import EvidenceHistory
 from agentd.memory.models import CompactionResult, CompactionSegment, History, ObservedPrompt
 from agentd.memory.store import MemoryStore
 
@@ -116,17 +127,32 @@ def _select_hot(
     return evicted, hot, used
 
 
-def _make_segment(run_id: str, seq: int, content: str, now: datetime, ms: int) -> CompactionSegment:
+def _make_segment(
+    run_id: str, seq: int, content: str, now: datetime, ms: int,
+    message: dict[str, object] | None = None,
+) -> CompactionSegment:
+    source = message or {}
+    role, tool = source.get("role"), source.get("tool")
     return CompactionSegment(
-        id=f"{run_id}-{seq}-{ms}", run_id=run_id, seq=seq, content=content, created_at=now
+        id=f"{run_id}-{seq}-{ms}", run_id=run_id, seq=seq, content=content, created_at=now,
+        mseq=message_sequence(source),
+        role=role if isinstance(role, str) else None,
+        tool=tool if isinstance(tool, str) else None,
+        metadata={key: source[key] for key in (
+            "_evidence", "is_error", "status", "delivered_read", "batch_id",
+            "id", "call_id", "tool_call_id", "provider_call_id", "image_refs", "exit_code",
+        ) if key in source},
     )
 
 
-def _anchor_message(text: str) -> dict[str, object]:
-    return {
+def _anchor_message(text: str, *, evidence: bool = False) -> dict[str, object]:
+    message: dict[str, object] = {
         "role": "user",
         "content": f"[MEMORY] Summary of earlier conversation that was compacted:\n{text}",
     }
+    if evidence:
+        message["_evidence"] = {"kind": "compaction_summary"}
+    return message
 
 
 class Compactor:
@@ -140,6 +166,8 @@ class Compactor:
         hot_token_frac: float = 0.4,
         hot_turns: int = 10,
         reserve_tokens: int = 28_000,
+        compact_evidence: bool = False,
+        summary_input_tokens: InputTokens | None = None,
     ) -> None:
         self._store = store
         self._summarize = summarize
@@ -148,12 +176,73 @@ class Compactor:
         self._reserve_tokens = reserve_tokens
         self._hot_token_frac = hot_token_frac
         self._hot_turns = hot_turns
+        self._compact_evidence = compact_evidence
+        self._summary_input_tokens = summary_input_tokens or (
+            lambda old, text: estimate_tokens(old + text) + 4096
+        )
+
+    async def _fold_evidence(
+        self, run_id: str, old_text: str, evicted: History, notices: list[str],
+    ) -> tuple[str, int, bool, History]:
+        rows = render_evidence(evicted, include_thoughts=True)
+        turns = evidence_turns(rows)
+        # Source offsets, rather than mseq, also work for retained legacy data.
+        starts = [row.source_index for i, row in enumerate(rows) if row.starts_turn or i == 0]
+        completed = 0
+        current = self._store.get_anchor(run_id)
+        version = current.version if current else 0
+        # The response reserve also covers provider reasoning/output. Small windows use
+        # the existing fractional floor; never permit a call larger than the window.
+        anchor = old_text
+        try:
+            while turns:
+                # A settings change or overflow-reported limit can arrive while a fold awaits.
+                capacity = min(HARD_INPUT_TOKENS, self.trigger_tokens(), self._window_tokens)
+                target = min(TARGET_INPUT_TOKENS, capacity)
+                text, consumed = next_fold(
+                    turns, anchor, self._summary_input_tokens, target=target, hard=capacity,
+                )
+                candidate = await self._summarize(anchor, text)
+                if not candidate.strip():
+                    raise ValueError("Summarizer returned an empty anchor")
+                if notices:
+                    missing = [
+                        notice for notice in notices if notice not in candidate.splitlines()
+                    ]
+                    if missing:
+                        candidate += "\n" + "\n".join(missing)
+                # Do not accept an anchor that would prevent even an empty next input.
+                if self._summary_input_tokens(candidate, "") > capacity:
+                    raise EvidenceBudgetExceeded(
+                        "Summary output exceeds the next call's input budget",
+                    )
+                committed = self._store.upsert_anchor(run_id, candidate)
+                anchor, version = committed.summary_md, committed.version
+                completed += consumed
+                turns = turns[consumed:]
+            if not version and not anchor:
+                return "", 0, False, []
+            # A round containing only excluded bodies can still add image tombstones.
+            if current is not None and version == current.version and anchor != current.summary_md:
+                committed = self._store.upsert_anchor(run_id, anchor)
+                version = committed.version
+            return anchor, version, False, []
+        except Exception:
+            logger.warning(
+                "[memory] evidence fold failed for run=%s at anchor=v%d; raw segments retained",
+                run_id, version, exc_info=True,
+            )
+            # Persisting raw evidence is insufficient if no tool can restore it
+            # into the next model call. Retain the unsummarized suffix so a retry
+            # starts after the last committed fold, without losing or double-folding it.
+            pending = evicted[starts[completed]:] if completed < len(starts) else []
+            return anchor, version, True, pending
 
     def set_window_tokens(self, window_tokens: int) -> None:
         """Re-point the trigger at a new context window mid-process.
 
-        Only two places read it — the trigger comparison and the eviction floor —
-        and both read it per call, so there is no derived state to invalidate and
+        Trigger, eviction floor and fold budgets read it per call, so there is no
+        derived state to invalidate and
         the change lands on the next loop iteration. This exists so the settings
         panel's context-window field can hot-apply the same way the provider
         hot-swap does, instead of requiring a backend restart.
@@ -222,8 +311,10 @@ class Compactor:
         evicted_view, hot_view, hot_used = _select_hot(accounting, hot_budget, self._hot_turns)
         boundary = len(evicted_view)
         evicted, hot = history[:boundary], history[boundary:]
-        retained_ids = {r.get("asset_id") for m in hot for r in m.get("image_refs", [])}
-        lost = {r.get("asset_id"): r for m in evicted for r in m.get("image_refs", [])
+        retained_ids = {r.get("asset_id") for m in hot
+                        for r in cast(list[dict[str, object]], m.get("image_refs", []))}
+        lost = {r.get("asset_id"): r for m in evicted
+                for r in cast(list[dict[str, object]], m.get("image_refs", []))
                 if r.get("asset_id") not in retained_ids}
         tombstones = "\n".join(image_tombstone(r, "history compaction") for r in lost.values())
         base = self._store.next_seq(run_id)  # run-monotonic seq across compaction rounds
@@ -233,11 +324,11 @@ class Compactor:
         # in-window, else compaction cannot get us back under the window.
         if hot_used > hot_budget and len(hot) == 1:
             full = str(hot[0].get("content", ""))
-            extra.append(_make_segment(run_id, base + len(evicted), full, now, ms))
+            extra.append(_make_segment(run_id, base + len(evicted), full, now, ms, hot[0]))
             hot = [{**hot[0], "content": _truncate_to_tokens(full, hot_budget)}]
             degraded = True
         segments = [
-            _make_segment(run_id, base + i, str(m.get("content", "")), now, ms)
+            _make_segment(run_id, base + i, str(m.get("content", "")), now, ms, m)
             for i, m in enumerate(evicted)
         ]
         if segments or extra:
@@ -252,10 +343,26 @@ class Compactor:
         seq_lo = base if evicted_count else None
         seq_hi = base + evicted_count - 1 if evicted_count else None
         if not evicted:
-            keep = [_anchor_message(old_text)] if old_text else []
+            keep = [_anchor_message(old_text, evidence=isinstance(history, EvidenceHistory))
+                    ] if old_text else []
             return CompactionResult(
                 compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=degraded,
                 evicted_count=evicted_count, anchor_version=old_version,
+                evicted_seq_lo=seq_lo, evicted_seq_hi=seq_hi,
+            )
+        if self._compact_evidence:
+            notices = list(dict.fromkeys(
+                line for line in (old_text + "\n" + _render(evicted)).splitlines()
+                if line.startswith("[Image ") and "unavailable:" in line
+            ))
+            anchor, version, failed, pending = await self._fold_evidence(
+                run_id, old_text, evicted, notices,
+            )
+            keep = [_anchor_message(anchor, evidence=isinstance(history, EvidenceHistory))
+                    ] if anchor else []
+            return CompactionResult(
+                compacted=True, history=[*keep, *pending, *hot], anchor=anchor or None,
+                degraded=degraded or failed, evicted_count=evicted_count, anchor_version=version,
                 evicted_seq_lo=seq_lo, evicted_seq_hi=seq_hi,
             )
         try:
@@ -265,7 +372,8 @@ class Compactor:
                 "[memory] anchor summarize failed for run=%s; degrading", run_id, exc_info=True
             )
             keep = (
-                [_anchor_message(f"(earlier context summary unavailable)\n{old_text}")]
+                [_anchor_message(f"(earlier context summary unavailable)\n{old_text}",
+                                 evidence=isinstance(history, EvidenceHistory))]
                 if old_text
                 else []
             )
@@ -287,7 +395,8 @@ class Compactor:
         )
         return CompactionResult(
             compacted=True,
-            history=[_anchor_message(new_anchor), *hot],
+            history=[_anchor_message(new_anchor, evidence=isinstance(history, EvidenceHistory)),
+                     *hot],
             anchor=new_anchor,
             evicted_count=evicted_count,
             anchor_version=summary.version,

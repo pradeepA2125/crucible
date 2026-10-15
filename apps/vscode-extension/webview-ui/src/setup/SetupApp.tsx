@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CardShell } from "../components/shared/CardShell";
 import { BtnPrimary } from "../components/shared/buttons";
 import { Icon } from "../components/Icon";
@@ -73,6 +73,8 @@ const NO_PROVIDER_STATE: SettingsState = {
 
 export default function SetupApp() {
   const [step, setStep] = useState<Step>("welcome");
+  const [localModels, setLocalModels] = useState(true);
+  const localModelsChosen = useRef(false);
   const [progress, setProgress] = useState<Record<string, ProgressRow>>({});
   const [installOk, setInstallOk] = useState<boolean | null>(null);
   const [backend, setBackend] = useState(KEY_PROVIDERS[0].id);
@@ -137,6 +139,9 @@ export default function SetupApp() {
           // A returning user picks a saved account rather than registering a new client.
           if (!msg.hasAccounts) vscode.postMessage({ type: "settings/chatgptSignIn" });
           break;
+        case "setup/preferences":
+          if (!localModelsChosen.current) setLocalModels(msg.localModels);
+          break;
         case "setup/ready":
           setBusy(false);
           setError(null);
@@ -153,16 +158,18 @@ export default function SetupApp() {
       }
     };
     window.addEventListener("message", onMessage);
+    vscode.postMessage({ type: "setup/preferences" });
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
   const startInstall = () => {
+    localModelsChosen.current = true;
     setStep("install");
     setInstallOk(null);
     setProgress({});
     setBusy(true);
     setError(null);
-    vscode.postMessage({ type: "setup/install" });
+    vscode.postMessage({ type: "setup/install", localModels });
   };
 
   const continueWithChatGPT = () => {
@@ -228,12 +235,33 @@ export default function SetupApp() {
               Everything lands in <code>~/.crucible/runtime</code> — nothing touches your system Python or PATH.
             </p>
           </CardShell>
+          <BtnPrimary className="self-start" icon="chev-r" onClick={() => setStep("models")}>
+            Continue
+          </BtnPrimary>
+        </div>
+      )}
+
+      {step === "models" && (
+        <div className="anim-section flex flex-col gap-4">
+          <CardShell icon="chip" title="Local models">
+            <label className="flex items-center gap-3 px-3 py-3 text-sm">
+              <input type="checkbox" checked={localModels}
+                onChange={event => {
+                  localModelsChosen.current = true;
+                  setLocalModels(event.target.checked);
+                }} />
+              Better code and memory search (recommended)
+            </label>
+            <p className="px-3 pb-3 text-xs text-text-3">
+              About 1 GB download. Runs on this machine. With this off, searches use keywords.
+              You can change the choice later in Settings.
+            </p>
+          </CardShell>
           <BtnPrimary className="self-start" icon="bolt" onClick={startInstall}>
             Install runtime
           </BtnPrimary>
         </div>
       )}
-
       {step === "install" && (
         <div className="anim-section">
           <CardShell icon="chip" title="Installing components">

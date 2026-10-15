@@ -56,6 +56,9 @@ export interface McpServerRow {
 }
 
 export interface SettingsState {
+  localModels?: Record<"embedder" | "reranker", {
+    state: "disabled" | "loading" | "ready" | "unavailable"; error?: string | null | undefined;
+  }> | undefined;
   // contextWindow is the window compaction is using right now, read back from
   // GET /v1/config so the field shows what the process actually has, not what the
   // panel last sent.
@@ -225,5 +228,5 @@ export const ENV_FLAG_OPTIONS: { key: string; label: string; options: string[] }
   { key: "crucible.policy.shell", label: "Shell command policy", options: ["ask", "allow_all"] },
   { key: "crucible.policy.scope", label: "Scope-extension policy", options: ["ask", "strict", "auto"] },
   { key: "crucible.memory.enabled", label: "Memory harness", options: ["false", "true"] },
-  { key: "crucible.memory.reranker", label: "Memory reranker", options: ["false", "true"] },
+  { key: "crucible.localModels", label: "Local models", options: ["true", "false"] },
 ];

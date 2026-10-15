@@ -1,6 +1,8 @@
 """Prompts and schema for the Phase 4 ReAct tool-use loop."""
 from __future__ import annotations
 
+from agentd.history_metadata import project_history
+
 # Flat schema compatible with Gemini's constrained JSON decoding.
 # Gemini does not support oneOf/anyOf discriminated unions — it deadlocks on them.
 # All fields are optional except "type" and "thought"; the system prompt instructs
@@ -260,7 +262,7 @@ def build_tool_step_payload(
         payload["plan_markdown"] = plan_markdown
 
     if history:
-        payload["conversation_history"] = history
+        payload["conversation_history"] = project_history(history)
         if state_description:
             # SM-driven path: the state description IS the instruction. It tells the
             # model which state it's in, what's available, and what to do next.

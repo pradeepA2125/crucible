@@ -69,6 +69,12 @@ class ChatThreadStore:
         # active_task_id was added after the table shipped; ALTER existing DBs.
         # IF NOT EXISTS on the table create above won't add a column to pre-existing rows.
         existing = {row["name"] for row in self._conn.execute("PRAGMA table_info(chat_threads)")}
+        if "last_activity_at" not in existing:
+            self._conn.execute("ALTER TABLE chat_threads ADD COLUMN last_activity_at TEXT")
+        if "recap" not in existing:
+            self._conn.execute("ALTER TABLE chat_threads ADD COLUMN recap TEXT NOT NULL DEFAULT ''")
+        if "memory_state_json" not in existing:
+            self._conn.execute("ALTER TABLE chat_threads ADD COLUMN memory_state_json TEXT")
         if "active_task_id" not in existing:
             self._conn.execute("ALTER TABLE chat_threads ADD COLUMN active_task_id TEXT")
         # Controller-turn gate (mode/edit), added after the table shipped.
@@ -107,9 +113,20 @@ class ChatThreadStore:
                 controller_todo_json          TEXT,
                 controller_active_skill_json  TEXT,
                 memory_anchor_md              TEXT,
+                recap                         TEXT NOT NULL DEFAULT '',
+                memory_state_json             TEXT,
                 PRIMARY KEY (thread_id, seq)
             );
         """)
+        checkpoint_columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(chat_checkpoints)")
+        }
+        if "recap" not in checkpoint_columns:
+            self._conn.execute(
+                "ALTER TABLE chat_checkpoints ADD COLUMN recap TEXT NOT NULL DEFAULT ''",
+            )
+        if "memory_state_json" not in checkpoint_columns:
+            self._conn.execute("ALTER TABLE chat_checkpoints ADD COLUMN memory_state_json TEXT")
         # Sub-agents (spec §11.3): one row per dispatched agent, its transcript inline.
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS chat_agents (
@@ -274,6 +291,10 @@ class ChatThreadStore:
                 thread_id=row["thread_id"],
                 workspace_path=row["workspace_path"],
                 title=row["title"],
+                recap=row["recap"] or "",
+                last_activity_at=(datetime.fromisoformat(row["last_activity_at"])
+                                  if row["last_activity_at"] else None),
+                memory_state=json.loads(row["memory_state_json"] or "{}"),
                 created_at=datetime.fromisoformat(row["created_at"]),
                 messages=[ChatMessage.model_validate(m) for m in json.loads(row["messages_json"])],
                 touched_files=json.loads(row["touched_files_json"]),
@@ -297,6 +318,10 @@ class ChatThreadStore:
             thread_id=row["thread_id"],
             workspace_path=row["workspace_path"],
             title=row["title"],
+            recap=row["recap"] or "",
+            last_activity_at=(datetime.fromisoformat(row["last_activity_at"])
+                              if row["last_activity_at"] else None),
+            memory_state=json.loads(row["memory_state_json"] or "{}"),
             created_at=datetime.fromisoformat(row["created_at"]),
             messages=[ChatMessage.model_validate(m) for m in json.loads(row["messages_json"])],
             touched_files=json.loads(row["touched_files_json"]),
@@ -318,6 +343,27 @@ class ChatThreadStore:
         )
         self._conn.commit()
 
+    def set_recap(self, thread_id: str, recap: str) -> None:
+        from agentd.memory.recap import validate_recap
+
+        self._conn.execute(
+            "UPDATE chat_threads SET recap=? WHERE thread_id=?", (validate_recap(recap), thread_id),
+        )
+        self._conn.commit()
+
+    def get_memory_state(self, thread_id: str) -> dict:
+        row = self._conn.execute(
+            "SELECT memory_state_json FROM chat_threads WHERE thread_id=?", (thread_id,),
+        ).fetchone()
+        return json.loads(row[0] or "{}") if row else {}
+
+    def set_memory_state(self, thread_id: str, state: dict) -> None:
+        self._conn.execute(
+            "UPDATE chat_threads SET memory_state_json=? WHERE thread_id=?",
+            (json.dumps(state), thread_id),
+        )
+        self._conn.commit()
+
     def set_controller_history(
         self, thread_id: str, history: list[dict] | None
     ) -> None:
@@ -326,8 +372,9 @@ class ChatThreadStore:
         seed_history from (parity with TaskRecord.planning_conversation_history)."""
         raw = json.dumps(history) if history else None
         self._conn.execute(
-            "UPDATE chat_threads SET controller_history_json = ? WHERE thread_id = ?",
-            (raw, thread_id),
+            "UPDATE chat_threads SET controller_history_json = ?, last_activity_at = ? "
+            "WHERE thread_id = ?",
+            (raw, datetime.now(UTC).isoformat(), thread_id),
         )
         self._conn.commit()
 
@@ -426,8 +473,8 @@ class ChatThreadStore:
         messages = json.loads(row["messages_json"])
         messages.append(message.model_dump(mode="json"))
         self._conn.execute(
-            "UPDATE chat_threads SET messages_json = ? WHERE thread_id = ?",
-            (json.dumps(messages), thread_id),
+            "UPDATE chat_threads SET messages_json = ?, last_activity_at = ? WHERE thread_id = ?",
+            (json.dumps(messages), datetime.now(UTC).isoformat(), thread_id),
         )
         self._conn.commit()
         return message.id
@@ -480,6 +527,8 @@ class ChatThreadStore:
         content: str,
         tool_events: list[dict],
         thinking_log: list[str] | None = None,
+        *,
+        system_notice: bool = False,
     ) -> bool:
         """Finalize the in-flight pills message at turn end: set the final content +
         pills and DROP the ``inflight_turn_id`` marker so it becomes a normal message.
@@ -499,6 +548,8 @@ class ChatThreadStore:
         if existing is None:
             return False
         metadata: dict = {}
+        if system_notice:
+            metadata["system_notice"] = True
         if tool_events:
             metadata["tool_events"] = tool_events
         if thinking_log:
@@ -670,6 +721,8 @@ class ChatThreadStore:
     def restore_controller_state(
         self, thread_id: str, *, history_json: str | None, seed_json: str | None,
         todo_json: str | None, active_skill_json: str | None,
+        recap: str = "",
+        memory_state_json: str | None = None,
     ) -> None:
         """Overwrite the four controller blobs with a checkpoint's verbatim copies and
         clear any pending gate (a gate from a turn that no longer exists is
@@ -677,8 +730,10 @@ class ChatThreadStore:
         self._conn.execute(
             "UPDATE chat_threads SET controller_history_json = ?, controller_seed_json = ?, "
             "controller_todo_json = ?, controller_active_skill_json = ?, "
-            "controller_gate_json = NULL WHERE thread_id = ?",
-            (history_json, seed_json, todo_json, active_skill_json, thread_id),
+            "controller_gate_json = NULL, recap = ?, memory_state_json = ?, last_activity_at = ? "
+            "WHERE thread_id = ?",
+            (history_json, seed_json, todo_json, active_skill_json, recap, memory_state_json,
+             datetime.now(UTC).isoformat(), thread_id),
         )
         self._conn.commit()
 
@@ -694,6 +749,8 @@ class ChatThreadStore:
             controller_todo_json=row["controller_todo_json"],
             controller_active_skill_json=row["controller_active_skill_json"],
             memory_anchor_md=row["memory_anchor_md"],
+            recap=row["recap"] or "",
+            memory_state_json=row["memory_state_json"],
         )
 
     def next_checkpoint_seq(self, thread_id: str) -> int:
@@ -702,17 +759,24 @@ class ChatThreadStore:
         ).fetchone()
         return 0 if row["m"] is None else row["m"] + 1
 
+    def turn_message_id(self, thread_id: str, turn_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT anchor_message_id FROM chat_checkpoints WHERE thread_id=? AND turn_id=? "
+            "ORDER BY seq DESC LIMIT 1", (thread_id, turn_id),
+        ).fetchone()
+        return str(row[0]) if row else None
+
     def insert_checkpoint(self, cp: Checkpoint) -> None:
         self._conn.execute(
             "INSERT INTO chat_checkpoints (thread_id, seq, anchor_message_id, turn_id, "
             "created_at, files_json, controller_history_json, controller_seed_json, "
-            "controller_todo_json, controller_active_skill_json, memory_anchor_md) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "controller_todo_json, controller_active_skill_json, memory_anchor_md, recap, "
+            "memory_state_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (cp.thread_id, cp.seq, cp.anchor_message_id, cp.turn_id,
              cp.created_at.isoformat(),
              json.dumps([f.model_dump(mode="json") for f in cp.files]),
              cp.controller_history_json, cp.controller_seed_json, cp.controller_todo_json,
-             cp.controller_active_skill_json, cp.memory_anchor_md),
+             cp.controller_active_skill_json, cp.memory_anchor_md, cp.recap, cp.memory_state_json),
         )
         self._conn.commit()
 

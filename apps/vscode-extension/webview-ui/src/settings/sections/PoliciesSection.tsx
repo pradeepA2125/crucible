@@ -34,6 +34,20 @@ export function PoliciesSection({ state, send }: SectionProps) {
           ))}
         </div>
       </CardShell>
+      <CardShell icon="chip" title="Local models">
+        <div className="px-3 py-3 text-xs text-text-3">
+          <p>About 1 GB download, runs on this machine. Restarting applies package changes.</p>
+          {state.localModels && Object.entries(state.localModels).map(([name, model]) => (
+            <p key={name} className="mt-2">
+              {name === "embedder" ? "Code and memory search" : "Memory ranking"}: {model.state}
+              {model.error ? ` — ${model.error}` : ""}
+            </p>
+          ))}
+          <button className="mt-3 text-accent" onClick={() => send({ type: "settings/load" })}>
+            Refresh status
+          </button>
+        </div>
+      </CardShell>
     </div>
   );
 }

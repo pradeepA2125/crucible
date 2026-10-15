@@ -17,7 +17,7 @@ const ENV_FLAG_KEYS = [
   "crucible.webSearch.enabled",
   "crucible.webFetch.enabled",
   "crucible.memory.enabled",
-  "crucible.memory.reranker",
+  "crucible.localModels",
 ];
 
 export interface SettingsDepsOptions {
@@ -88,9 +88,14 @@ export function buildSettingsDeps(opts: SettingsDepsOptions): SettingsDeps {
         const value = cfg.get<string | boolean>(key);
         if (value !== undefined) out[key] = String(value);
       }
+      out["crucible.localModels"] = String(runtimeManager.localModels());
       return out;
     },
     updateSetting: async (key, value) => {
+      if (key === "crucible.localModels") {
+        await runtimeManager.setLocalModels(value === true || value === "true");
+        return;
+      }
       await vscode.workspace
         .getConfiguration()
         .update(key, value, vscode.ConfigurationTarget.Global);

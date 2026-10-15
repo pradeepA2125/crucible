@@ -4,24 +4,37 @@ import copy
 from collections.abc import Callable, Mapping
 from typing import Protocol
 
+from agentd.history_metadata import PRIVATE_HISTORY_KEYS
+
 
 def payload_without_image_attachments(payload: dict[str, object]) -> dict[str, object]:
-    """Copy a model payload without transport-only image attachment fields.
+    """Copy a model payload without transport images or private history evidence.
 
     Images are provider content parts, not prompt JSON. Keeping this boundary explicit
     prevents a data URL from being rendered as ordinary text if a caller places the
     transport option in the payload as well as the dedicated argument.
     """
+    public_payload = dict(payload)
+    history = public_payload.get("conversation_history")
+    if isinstance(history, (list, tuple)):
+        public_payload["conversation_history"] = [
+            {key: value for key, value in entry.items() if key not in PRIVATE_HISTORY_KEYS}
+            if isinstance(entry, Mapping) else entry for entry in history
+        ]
+
     def clean(value: object) -> object:
         if isinstance(value, Mapping):
-            return {key: clean(item) for key, item in value.items()
-                    if key not in {
-                        "image_attachments", "imageAttachments", "image_refs", "image_assets"}}
+            result = {}
+            for key, item in value.items():
+                if key in {"image_attachments", "imageAttachments", "image_refs", "image_assets"}:
+                    continue
+                result[key] = clean(item)
+            return result
         if isinstance(value, (list, tuple)):
             return [clean(item) for item in value]
         return value
 
-    return clean(payload)  # type: ignore[return-value]
+    return clean(public_payload)  # type: ignore[return-value]
 
 
 def normalize_image_attachments(attachments: object) -> list[tuple[str, str, str]]:

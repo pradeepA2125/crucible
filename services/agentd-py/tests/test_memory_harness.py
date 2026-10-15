@@ -148,6 +148,25 @@ async def test_summarizer_raises_after_two_echoes():
     summ = make_engine_summarizer(t, "m1")
     with pytest.raises(SummarizerEchoError):
         await summ("prior", "evicted")
+
+
+@pytest.mark.asyncio
+async def test_gated_summarizer_rejects_answer_to_historical_question_then_retries():
+    t = _SeqTransport([
+        "<summary>Yes, all actions have descriptions.</summary>",
+        "<summary>## Goal\nExplain action descriptions.\n## Next step\nAnswer the user.</summary>",
+    ])
+    summary = await make_engine_summarizer(t, "m1", require_note=True)(
+        "", "[user mseq=1]\nDo all actions have descriptions?",
+    )
+    assert summary.startswith("## Goal") and len(t.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_gated_summarizer_fails_closed_on_unstructured_answers():
+    t = _SeqTransport(["Yes, use all eight actions."] * 2)
+    with pytest.raises(SummarizerEchoError):
+        await make_engine_summarizer(t, "m1", require_note=True)("", "historic question")
     assert len(t.calls) == 2  # one try + one retry, then give up
 
 

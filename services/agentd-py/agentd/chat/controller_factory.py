@@ -112,6 +112,7 @@ def select_chat_handler(
     retrieval_client: Any | None = None,
     shell_policy: Any = None,
     command_decision_timeout_sec: float = 0.0,
+    local_models: Any = None,
 ) -> Any:
     """Return the flag-selected chat handler. The controller wraps transport+model
     in a ReasoningEngineImpl (it drives the loop through the engine seam, scriptable);
@@ -131,7 +132,9 @@ def select_chat_handler(
         # Within-run compaction + cross-session memory for controller turns (no-op unless
         # CRUCIBLE_MEMORY_ENABLED). workspace_path enables consolidation (workspace scope).
         memory_harness = build_memory_harness(
-            MemoryConfig.from_env(os.environ), transport, model, workspace_path=workspace_path)
+            MemoryConfig.from_env(os.environ), transport, model, workspace_path=workspace_path,
+            local_models=local_models,
+        )
         # Auto-inject the workspace AGENTS.md into the controller system prompt (default on;
         # mtime-cached so an edit self-updates without a restart). Frozen workspace_path.
         project_instructions_loader = (

@@ -14,7 +14,9 @@ from functools import lru_cache
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 
 
-def assistant_turn(response: dict[str, object]) -> dict[str, object]:
+def assistant_turn(
+    response: dict[str, object], *, capture_evidence: bool = False,
+) -> dict[str, object]:
     """Append-only assistant history entry with 'thought' stripped.
 
     Persisting the model's verbatim 'thought' lets a weak model copy-continue its
@@ -22,7 +24,12 @@ def assistant_turn(response: dict[str, object]) -> dict[str, object]:
     Mirrors planning/loop.py::_assistant_turn.
     """
     persisted = {k: v for k, v in response.items() if k != "thought"}
-    return {"role": "assistant", "content": json.dumps(persisted, default=str)}
+    message: dict[str, object] = {
+        "role": "assistant", "content": json.dumps(persisted, default=str),
+    }
+    if capture_evidence:
+        message["_evidence"] = {"thought": str(response.get("thought", ""))}
+    return message
 
 
 def dedup_key(tool: str, args: dict[str, object]) -> str:

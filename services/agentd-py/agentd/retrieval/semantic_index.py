@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agentd.local_models import LocalModels
 from agentd.model_loading import MODEL_LOCK, shared_sentence_transformer
 from agentd.retrieval.chunker import CodeChunk, CodeChunker, ScoredChunk
 
@@ -68,6 +69,7 @@ class SemanticIndex:
         model_name: str = "BAAI/bge-small-en-v1.5",
         embed_batch_size: int = 64,
         max_chunk_lines: int = 120,
+        local_models: LocalModels | None = None,
     ) -> None:
         self._index_path = Path(index_path)
         self._model_name = model_name
@@ -76,9 +78,12 @@ class SemanticIndex:
         self._model: Any = None     # lazy-loaded SentenceTransformer
         self._table: Any = None     # lazy-loaded LanceDB table
         self._embed_dim = _KNOWN_DIMS.get(model_name, 768)
+        self.local_models = local_models
 
     @classmethod
-    def from_env(cls, workspace_path: str | Path | None = None) -> "SemanticIndex":
+    def from_env(
+        cls, workspace_path: str | Path | None = None, *, local_models: LocalModels | None = None,
+    ) -> SemanticIndex:
         import os
         raw_path = os.getenv("CRUCIBLE_VECTOR_INDEX_PATH", ".crucible/vector-index")
         index_path: Path
@@ -92,6 +97,7 @@ class SemanticIndex:
             index_path=index_path,
             model_name=os.getenv("CRUCIBLE_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
             embed_batch_size=int(os.getenv("CRUCIBLE_EMBED_BATCH_SIZE", "64")),
+            local_models=local_models,
         )
 
     # ── Public API ─────────────────────────────────────────────────────────
@@ -195,7 +201,9 @@ class SemanticIndex:
         Returns up to top_k chunks ordered by cosine similarity to text.
         Filters are applied post-ANN (cheap for the sizes involved here).
         """
-        if self._table is None or not text.strip():
+        if self._table is None or not text.strip() or (
+            self.local_models is not None and not self.local_models.ready("embedder")
+        ):
             return []
 
         try:
@@ -237,9 +245,17 @@ class SemanticIndex:
     def warmup(self) -> None:
         """Load the model and run one encode (device first-init) so the first chat's
         retrieval seed does not. Best-effort: a missing model is reported on first use."""
+        if self.local_models is not None and self.local_models.state("embedder").state in {
+            "disabled", "unavailable",
+        }:
+            return
         try:
             self._embed_single("warmup")
-        except Exception:  # noqa: BLE001 — warmup must never take the backend down
+            if self.local_models is not None:
+                self.local_models.mark_ready("embedder")
+        except Exception as exc:  # warmup must never take the backend down
+            if self.local_models is not None:
+                self.local_models.fail("embedder", exc)
             logger.warning("Semantic index model warmup failed for model=%s", self._model_name,
                            exc_info=True)
 
@@ -278,9 +294,18 @@ class SemanticIndex:
     def _encode_batch(self, texts: list[str]) -> list[list[float]]:
         """One encode call under the process-wide model lock (see model_loading), held per
         batch so a long index build never starves the memory models."""
-        model = self._get_model()
-        with MODEL_LOCK:
-            vecs = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+        if self.local_models is not None and self.local_models.state("embedder").state in {
+            "disabled", "unavailable",
+        }:
+            raise RuntimeError("Local embedder is not available; use keyword search")
+        try:
+            model = self._get_model()
+            with MODEL_LOCK:
+                vecs = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+        except Exception as exc:
+            if self.local_models is not None:
+                self.local_models.fail("embedder", exc)
+            raise
         return [v.tolist() if hasattr(v, "tolist") else list(v) for v in vecs]
 
     def _get_or_create_table(self, index_path: Path) -> Any:

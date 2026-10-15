@@ -1,8 +1,7 @@
 """Mutable current-provider holder. main.py constructs one per process with every
 live DefaultReasoningEngine (orchestrator's + the chat controller's); the hot-swap
 route calls swap(), which validates first and only then mutates — a failed swap
-leaves everything untouched. Known v1 limitation: the memory-harness summarizer
-keeps its construction-time transport until restart."""
+leaves everything untouched. Memory sinks receive the same validated binding."""
 from __future__ import annotations
 
 import asyncio
@@ -280,6 +279,10 @@ class ProviderRuntime:
                 setter(None)
         for engine in self._engines:
             engine.set_provider(model=resolved, transport=transport)  # type: ignore[attr-defined]
+        for sink in self._window_sinks:
+            bind = getattr(sink, "set_provider", None)
+            if bind is not None:
+                bind(model=resolved, transport=transport)
         self.backend, self.model = backend, resolved
         # A real transport now exists, so whatever failed at startup no longer
         # describes this process.

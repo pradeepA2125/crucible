@@ -701,6 +701,16 @@ export type EffortSupport = z.infer<typeof EffortSupportSchema>;
 
 // Backend feature-flag capabilities (GET /v1/config) — drives task-path UI gating.
 export const BackendConfigSchema = z.object({
+  localModels: z.object({
+    embedder: z.object({
+      state: z.enum(["disabled", "loading", "ready", "unavailable"]),
+      error: z.string().nullable().optional(),
+    }),
+    reranker: z.object({
+      state: z.enum(["disabled", "loading", "ready", "unavailable"]),
+      error: z.string().nullable().optional(),
+    }),
+  }).optional(),
   approval: ApprovalStateSchema.optional(),
   shellPolicy: z.enum(["ask", "allow_all"]).optional(),
   taskSubsystemEnabled: z.boolean(),
@@ -837,7 +847,7 @@ export const RecallTraceEntrySchema = z.object({
 });
 export type RecallTraceEntry = z.infer<typeof RecallTraceEntrySchema>;
 
-export const RecallTraceSchema = z.object({
+export const LegacyRecallTraceSchema = z.object({
   query: z.string(),
   scopeKind: z.string(),
   scopeId: z.string(),
@@ -846,6 +856,34 @@ export const RecallTraceSchema = z.object({
   reranked: z.boolean(),
   entries: z.array(RecallTraceEntrySchema),
 });
+export const RecallTraceV2Schema = z.object({
+  version: z.literal(2),
+  trigger: z.enum(["turn_start", "working_set", "compaction"]),
+  signals: z.object({ Q: z.string(), C: z.string(), R: z.string() }),
+  candidates: z.array(z.object({
+    id: z.string(), catalog: z.string(), sources: z.array(z.string()),
+  })),
+  scores: z.record(z.record(z.number())),
+  reasons: z.record(z.string()),
+  verdicts: z.record(z.boolean()),
+  delivered: z.array(z.string()),
+  judge: z.string(),
+  status: z.enum(["injected", "empty", "no_candidates", "judge_failed", "search_failed", "disabled"]),
+  selectionMethod: z.string().optional(),
+  invalidIds: z.array(z.string()).default([]),
+  invalidatedIds: z.array(z.string()).default([]),
+  error: z.string().nullable().optional(),
+  rule: z.string().optional(),
+  rerankInput: z.object({
+    query: z.string(),
+    truncatedSignals: z.array(z.string()),
+    truncatedMemoryIds: z.array(z.string()),
+    maxPairTokens: z.number(),
+  }).optional(),
+  activation: z.string().optional(),
+  truncation: z.number().optional(),
+});
+export const RecallTraceSchema = z.union([RecallTraceV2Schema, LegacyRecallTraceSchema]);
 export type RecallTrace = z.infer<typeof RecallTraceSchema>;
 
 export const MemoryViewSchema = z.object({
@@ -866,6 +904,26 @@ export const MemoryViewSchema = z.object({
   createdAt: z.string(),
 });
 export type MemoryView = z.infer<typeof MemoryViewSchema>;
+
+export const MemorySnapshotSchema = z.object({
+  pipeline: z.enum(["durable", "legacy", "disabled", "unavailable"]),
+  status: z.enum(["ready", "disabled", "unavailable"]),
+  memories: z.array(z.object({
+    id: z.string(), scope_kind: z.string(), scope_id: z.string(), kind: z.string(),
+    content: z.string(), topic: z.string(), applies_when: z.string(), detail: z.string(),
+    entities: z.array(z.string()), provenance: z.string(), source_thread_id: z.string(),
+    source_message_id: z.number(), revision: z.number(), valid_from: z.string(),
+    valid_to: z.string().nullable(), superseded_by: z.string().nullable(), created_at: z.string(),
+  })),
+});
+export type MemorySnapshot = z.infer<typeof MemorySnapshotSchema>;
+
+export const CurationStatusSchema = z.object({
+  enabled: z.boolean(), status: z.string(), lastMseq: z.number(),
+  failures: z.number(), saved: z.number(), dropped: z.number(), chunks: z.number(),
+  retryAt: z.string().nullable(), error: z.string().nullable(), updatedAt: z.string().nullable(),
+});
+export type CurationStatus = z.infer<typeof CurationStatusSchema>;
 
 export interface BackendTaskClient {
   submitTask(input: TaskSubmission): Promise<{ taskId: string }>;
@@ -902,6 +960,8 @@ export interface BackendTaskClient {
   getSessionTranscript(threadId: string, sessionId: string): Promise<SessionTranscript>;
   getConfig(): Promise<BackendConfig>;
   getMemoryInspect(threadId: string): Promise<RecallTrace | null>;
+  getMemoryCuration?(threadId: string): Promise<CurationStatus>;
+  getMemorySnapshot?(threadId: string): Promise<MemorySnapshot>;
   listMemories(filter: {
     scopeKind: string;
     scopeId: string;

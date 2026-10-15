@@ -1,5 +1,14 @@
 import { describe, expect, test, vi } from "vitest";
 import { HttpBackendClient } from "../src/client/http-backend-client.js";
+
+test("curation inspector maps failure/backoff and source watermark", async () => {
+  const client = new HttpBackendClient({ baseUrl: "http://localhost",
+    fetchFn: async () => new Response(JSON.stringify({ enabled: true, status: "failed",
+      last_mseq: 18, failures: 2, retry_at: "later", error: "provider unavailable", saved: 3 })) });
+  const status = await client.getMemoryCuration("t");
+  expect(status).toMatchObject({ lastMseq: 18, failures: 2, retryAt: "later",
+    error: "provider unavailable", saved: 3, dropped: 0, chunks: 0 });
+});
 import type { SendChatResult, StreamEvent } from "../src/contracts/task-contracts.js";
 
 // A ReadableStream that never enqueues and never closes — simulates a stalled SSE
@@ -14,6 +23,59 @@ function neverRespondingSseBody(): ReadableStream<Uint8Array> {
 }
 
 describe("HttpBackendClient skills", () => {
+  test("memory catalog traces preserve selection method without relevance verdicts", async () => {
+    const client = new HttpBackendClient({ baseUrl: "http://localhost",
+      fetchFn: async () => new Response(JSON.stringify({
+        version: 2, trigger: "turn_start", signals: { Q: "preview", C: "", R: "" },
+        candidates: [{ id: "a", catalog: "[m:a@1] preview", sources: ["keyword:Q"] }],
+        scores: { a: { combined: 0.001 } }, reasons: {}, verdicts: {}, delivered: ["a"],
+        judge: "main_model", status: "injected", rule: "candidate_catalog_v1",
+        selection_method: "keyword + BGE ordering",
+      })) });
+    expect(await client.getMemoryInspect("thread")).toMatchObject({
+      rule: "candidate_catalog_v1", selectionMethod: "keyword + BGE ordering",
+      delivered: ["a"], verdicts: {}, scores: { a: { combined: 0.001 } },
+    });
+  });
+  test("getMemoryInspect maps combined reranker diagnostics", async () => {
+    const client = new HttpBackendClient({ baseUrl: "http://localhost",
+      fetchFn: async () => new Response(JSON.stringify({
+        version: 2, trigger: "turn_start", signals: { Q: "request", C: "", R: "" },
+        candidates: [], scores: {}, reasons: {}, verdicts: {}, delivered: [],
+        judge: "reranker", status: "empty", rule: "combined_rcq_body_v1",
+        rerank_input: { query: "Current request:\nrequest", truncated_signals: ["Q"],
+          truncated_memory_ids: ["a"], max_pair_tokens: 511 },
+      })) });
+    expect(await client.getMemoryInspect("thread")).toMatchObject({
+      rule: "combined_rcq_body_v1", rerankInput: { query: "Current request:\nrequest",
+        truncatedSignals: ["Q"], truncatedMemoryIds: ["a"], maxPairTokens: 511 },
+    });
+  });
+  test("getMemoryInspect retains v2 empty and delivered statuses", async () => {
+    const wire = {
+      version: 2, trigger: "turn_start", signals: { Q: "request", C: "", R: "" },
+      candidates: [], scores: {}, reasons: {}, verdicts: {}, delivered: [], judge: "none",
+      status: "no_candidates", invalid_ids: [], invalidated_ids: [],
+    };
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () => new Response(JSON.stringify(wire)),
+    });
+    expect(await client.getMemoryInspect("thread")).toMatchObject({
+      version: 2, status: "no_candidates", invalidIds: [], invalidatedIds: [],
+    });
+  });
+  test("getConfig preserves local-model state and failure detail", async () => {
+    const localModels = {
+      embedder: { state: "unavailable", error: "load failed" },
+      reranker: { state: "disabled", error: null },
+    };
+    const client = new HttpBackendClient({
+      baseUrl: "http://localhost:8000",
+      fetchFn: async () => new Response(JSON.stringify({ local_models: localModels })),
+    });
+    expect((await client.getConfig()).localModels).toEqual(localModels);
+  });
   test("sendChatMessage includes forced_skills in the body", async () => {
     let sentBody = "";
     const client = new HttpBackendClient({

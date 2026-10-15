@@ -1,11 +1,12 @@
 import { Fragment } from "react";
 import { Icon } from "../components/Icon";
 
-export type Step = "welcome" | "install" | "provider" | "done";
+export type Step = "welcome" | "models" | "install" | "provider" | "done";
 
-const STEP_ORDER: Step[] = ["welcome", "install", "provider", "done"];
+const STEP_ORDER: Step[] = ["welcome", "models", "install", "provider", "done"];
 const STEP_LABELS: Record<Step, string> = {
   welcome: "Welcome",
+  models: "Models",
   install: "Install",
   provider: "Provider",
   done: "Ready",
@@ -19,7 +20,7 @@ const STEP_LABELS: Record<Step, string> = {
 export function StepRail({ current }: { current: Step }) {
   const idx = STEP_ORDER.indexOf(current);
   return (
-    <div className="mb-6 flex items-center" aria-label={`Step ${idx + 1} of 4`}>
+    <div className="mb-6 flex items-center" aria-label={`Step ${idx + 1} of 5`}>
       {STEP_ORDER.map((s, i) => {
         const isDone = i < idx;
         const isActive = i === idx;

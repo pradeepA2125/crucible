@@ -9,6 +9,20 @@ def test_from_env_defaults_enabled():
     assert cfg.hot_token_frac == 0.4
     assert cfg.hot_turns == 10
     assert cfg.window_tokens == 128000
+    assert cfg.recall_v2 is False
+    assert cfg.curator_v2 is False
+    assert cfg.curator_model == ""
+    assert cfg.durable_store_path.endswith(".crucible/memory/memory.sqlite3")
+
+
+def test_v2_store_path_and_gate_are_independent_of_compaction(tmp_path):
+    cfg = MemoryConfig.from_env({
+        "CRUCIBLE_MEMORY_RECALL_V2": "1", "CRUCIBLE_MEMORY_STORE_PATH": str(tmp_path / "global.db"),
+        "CRUCIBLE_MEMORY_DB_PATH": str(tmp_path / "workspace.db"),
+    })
+    assert cfg.recall_v2 is True
+    assert cfg.durable_store_path == str(tmp_path / "global.db")
+    assert cfg.db_path == str(tmp_path / "workspace.db")
 
 
 def test_from_env_explicit_disable_still_works():

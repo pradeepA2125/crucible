@@ -43,6 +43,20 @@ function deps(overrides: Partial<SetupDeps> = {}): SetupDeps {
 }
 
 describe("setup with the ChatGPT plan", () => {
+  it("returns the saved local-model preference without installing", async () => {
+    const install = vi.fn(async () => ({ ok: true }));
+    const posted: unknown[] = [];
+    const handle = createSetupHandler(deps({ install, localModels: () => false }), m => posted.push(m));
+    await handle({ type: "setup/preferences" });
+    expect(posted).toEqual([{ type: "setup/preferences", localModels: false }]);
+    expect(install).not.toHaveBeenCalled();
+  });
+  it("passes the explicit local-model choice to the installer", async () => {
+    const install = vi.fn(async () => ({ ok: true }));
+    const handle = createSetupHandler(deps({ install }), () => {});
+    await handle({ type: "setup/install", localModels: false });
+    expect(install).toHaveBeenCalledWith(expect.any(Function), false);
+  });
   it("starts the backend for sign-in, then finishes setup when an account is put to use", async () => {
     const posted: unknown[] = [];
     const handle = createSetupHandler(deps(), (m) => posted.push(m));

@@ -3,7 +3,8 @@ import type { SettingsInMsg } from "../settings/types";
 // imports the extension's src/ (separate Vite bundle).
 
 export type SetupInMsg =
-  | { type: "setup/install" }
+  | { type: "setup/preferences" }
+  | { type: "setup/install"; localModels?: boolean }
   | { type: "setup/validate"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "setup/save"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "setup/openChat" }
@@ -14,6 +15,7 @@ export type SetupInMsg =
   | SettingsInMsg;
 
 export type SetupOutMsg =
+  | { type: "setup/preferences"; localModels: boolean }
   | { type: "setup/claudeReady" }
   | { type: "setup/progress"; component: string; status: string; detail?: string }
   | { type: "setup/installDone"; ok: boolean }

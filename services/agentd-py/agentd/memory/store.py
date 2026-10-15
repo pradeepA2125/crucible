@@ -30,6 +30,18 @@ CREATE TABLE IF NOT EXISTS compaction_segments (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_segments_run ON compaction_segments(run_id, seq);
+CREATE TABLE IF NOT EXISTS history_sequences (
+    run_id TEXT PRIMARY KEY, next_mseq INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS curation_progress (
+    run_id TEXT PRIMARY KEY, last_mseq INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS curation_status (
+    run_id TEXT PRIMARY KEY, generation INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending', failures INTEGER NOT NULL DEFAULT 0,
+    retry_at TEXT, error TEXT, updated_at TEXT, saved INTEGER NOT NULL DEFAULT 0,
+    dropped INTEGER NOT NULL DEFAULT 0, chunks INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS anchored_summaries (
     run_id TEXT PRIMARY KEY,
     summary_md TEXT NOT NULL,
@@ -71,6 +83,11 @@ class MemoryStore:
         self._conn.row_factory = sqlite3.Row
         self._vec_enabled = self._try_load_vec()
         self._conn.executescript(_SCHEMA)  # base tables + FTS5 (always)
+        columns = {r[1] for r in self._conn.execute("PRAGMA table_info(compaction_segments)")}
+        for name, sql_type in (("mseq", "INTEGER"), ("role", "TEXT"), ("tool", "TEXT"),
+                               ("metadata", "TEXT")):
+            if name not in columns:
+                self._conn.execute(f"ALTER TABLE compaction_segments ADD COLUMN {name} {sql_type}")
         if self._vec_enabled:
             self._conn.execute(
                 "CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories "
@@ -92,8 +109,10 @@ class MemoryStore:
     def add_segments(self, segments: list[CompactionSegment]) -> None:
         self._conn.executemany(
             "INSERT OR REPLACE INTO compaction_segments "
-            "(id, run_id, seq, content, created_at) VALUES (?,?,?,?,?)",
-            [(s.id, s.run_id, s.seq, s.content, s.created_at.isoformat()) for s in segments],
+            "(id, run_id, seq, content, created_at,mseq,role,tool,metadata) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            [(s.id, s.run_id, s.seq, s.content, s.created_at.isoformat(), s.mseq, s.role,
+              s.tool, json.dumps(s.metadata, default=str)) for s in segments],
         )
         self._conn.commit()
 
@@ -108,6 +127,8 @@ class MemoryStore:
                 seq=r["seq"],
                 content=r["content"],
                 created_at=datetime.fromisoformat(r["created_at"]),
+                mseq=r["mseq"], role=r["role"], tool=r["tool"],
+                metadata=json.loads(r["metadata"] or "{}"),
             )
             for r in rows
         ]
@@ -118,6 +139,82 @@ class MemoryStore:
             "SELECT MAX(seq) AS m FROM compaction_segments WHERE run_id=?", (run_id,)
         ).fetchone()
         return 0 if r["m"] is None else r["m"] + 1
+
+    def reserve_mseq(self, run_id: str, count: int, floor: int = 1) -> int:
+        """Reserve source IDs durably, including gaps when a turn crashes or is rewound."""
+        if count < 0 or floor < 1:
+            raise ValueError("Invalid message sequence reservation")
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO history_sequences(run_id,next_mseq) VALUES(?,?)",
+                (run_id, floor),
+            )
+            row = self._conn.execute(
+                "UPDATE history_sequences SET next_mseq=max(next_mseq,?)+? "
+                "WHERE run_id=? RETURNING next_mseq-?", (floor, count, run_id, count),
+            ).fetchone()
+            assert row is not None
+            self._conn.commit()
+            return int(row[0])
+        except BaseException:
+            self._conn.rollback()
+            raise
+
+    def curation_watermark(self, run_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT last_mseq FROM curation_progress WHERE run_id=?", (run_id,),
+        ).fetchone()
+        return int(row[0]) if row else 0
+
+    def advance_curation(self, run_id: str, last_mseq: int) -> None:
+        if last_mseq < 0:
+            raise ValueError("Invalid curation watermark")
+        self._conn.execute(
+            "INSERT INTO curation_progress(run_id,last_mseq) VALUES(?,?) "
+            "ON CONFLICT(run_id) DO UPDATE SET last_mseq=max(last_mseq,excluded.last_mseq)",
+            (run_id, last_mseq),
+        )
+        self._conn.commit()
+
+    def curation_state(self, run_id: str) -> dict[str, object]:
+        row = self._conn.execute(
+            "SELECT * FROM curation_status WHERE run_id=?", (run_id,),
+        ).fetchone()
+        state = dict(row) if row else {"generation": 0, "status": "pending", "failures": 0}
+        state["last_mseq"] = self.curation_watermark(run_id)
+        return state
+
+    def set_curation_state(self, run_id: str, **values: object) -> None:
+        allowed = {"status", "failures", "retry_at", "error", "saved", "dropped", "chunks"}
+        if set(values) - allowed:
+            raise ValueError("Invalid curation state field")
+        values["updated_at"] = datetime.now(UTC).isoformat()
+        with self._conn:
+            self._conn.execute("INSERT OR IGNORE INTO curation_status(run_id) VALUES(?)", (run_id,))
+            self._conn.execute(
+                "UPDATE curation_status SET " + ",".join(f"{key}=?" for key in values)
+                + " WHERE run_id=?", (*values.values(), run_id),
+            )
+
+    def rewind_evidence(self, run_id: str, cutoff_iso: str, retained_mseq: int) -> None:
+        if retained_mseq < 0:
+            raise ValueError("Invalid retained message sequence")
+        cutoff_iso = datetime.fromisoformat(cutoff_iso).astimezone(UTC).isoformat()
+        with self._conn:
+            self._conn.execute("INSERT OR IGNORE INTO curation_status(run_id) VALUES(?)", (run_id,))
+            self._conn.execute(
+                "UPDATE curation_status SET generation=generation+1,status='pending',"
+                "failures=0,retry_at=NULL,error=NULL WHERE run_id=?", (run_id,),
+            )
+            self._conn.execute(
+                "DELETE FROM compaction_segments WHERE run_id=? AND created_at>=?",
+                (run_id, cutoff_iso),
+            )
+            self._conn.execute(
+                "UPDATE curation_progress SET last_mseq=min(last_mseq,?) WHERE run_id=?",
+                (retained_mseq, run_id),
+            )
 
     def upsert_anchor(self, run_id: str, summary_md: str) -> AnchoredSummary:
         now = datetime.now(UTC)

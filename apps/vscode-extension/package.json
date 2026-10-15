@@ -209,10 +209,35 @@
           "default": true,
           "description": "Enable the cross-session memory harness (compaction, recall, consolidation). Requires a managed restart to take effect."
         },
-        "crucible.memory.reranker": {
+        "crucible.localModels": {
           "type": "boolean",
           "default": true,
-          "description": "Enable the cross-encoder reranker for memory recall (requires crucible.memory.enabled). Requires a managed restart to take effect."
+          "scope": "application",
+          "description": "Install local models for better code and memory search (about 1 GB download). Turning this off removes the optional packages. Restart the managed backend to apply."
+        },
+        "crucible.memory.experimental.recall": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "description": "Enable experimental scoped memory recall and tools for local testing. Requires a backend restart."
+        },
+        "crucible.memory.experimental.curator": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "description": "Enable experimental background memory curation for local testing. Requires experimental recall and a backend restart."
+        },
+        "crucible.memory.experimental.compaction": {
+          "type": "boolean",
+          "default": false,
+          "scope": "window",
+          "description": "Enable experimental capped evidence and sequential compaction folds for local testing. Requires a backend restart."
+        },
+        "crucible.memory.experimental.storePath": {
+          "type": "string",
+          "default": "",
+          "scope": "window",
+          "description": "Optional absolute path to a separate SQLite store for experimental durable memories. Empty uses the standard scoped store. Requires a backend restart."
         },
         "crucible.appearance": {
           "type": "string",
