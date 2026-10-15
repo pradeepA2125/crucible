@@ -29,6 +29,8 @@ from agentd.memory.provider import MemoryProvider
 from agentd.memory.recall_v2 import CandidateSearch, Signals, catalog
 from agentd.memory.scope import ScopeContext, ScopeKind
 from agentd.memory.store import MemoryStore
+from agentd.providers.plan_access import find_access_stop
+from agentd.providers.usage import METER, USAGE_OWNER
 
 logger = logging.getLogger(__name__)
 MAX_INPUT_TOKENS = 24_000
@@ -150,6 +152,12 @@ class Curator:
         self.on_publish = on_publish
         self.jobs: dict[str, asyncio.Task[None]] = {}
         self.runner: asyncio.Task[None] | None = None
+        self.access_blocked = False
+        self._provider_epoch = 0
+
+    def resume_provider(self) -> None:
+        self._provider_epoch += 1
+        self.access_blocked = False
 
     async def start(self) -> None:
         if self.runner is None:
@@ -183,7 +191,7 @@ class Curator:
         return assemble_chunks(sources)
 
     async def sweep(self) -> None:
-        if len(self.jobs) >= 2:
+        if self.access_blocked or len(self.jobs) >= 2:
             return
         for thread in self.threads.list_threads(self.workspace_path):
             thread_id = thread.thread_id
@@ -219,7 +227,12 @@ class Curator:
                 and self.evidence.curation_state(thread.thread_id)["generation"] == generation)
 
     async def curate(self, thread: ChatThread, chunks: list[CurationChunk] | None = None) -> None:
+        if self.access_blocked:
+            return
         thread_id = thread.thread_id
+        owner = f"curator:{thread_id}"
+        owner_token = USAGE_OWNER.set(owner)
+        provider_epoch = self._provider_epoch
         state = self.evidence.curation_state(thread_id)
         generation = state["generation"]
         context = ScopeContext(self.repo_id, thread_id)
@@ -227,6 +240,9 @@ class Curator:
         try:
             self.evidence.set_curation_state(thread_id, status="running", error=None)
             for chunk in chunks if chunks is not None else self._snapshot(thread):
+                if self.access_blocked:
+                    self.evidence.set_curation_state(thread_id, status="blocked")
+                    return
                 if not self._current(thread, generation):
                     self.evidence.set_curation_state(thread_id, status="stale")
                     return
@@ -284,6 +300,10 @@ class Curator:
                 return
             previous = state.get("failures", 0)
             failures = (previous if isinstance(previous, int) else 0) + 1
+            # Account refusals are not transient jobs. Stop idle inference until
+            # a validated provider/account switch resumes the curator.
+            if find_access_stop(exc) is not None and provider_epoch == self._provider_epoch:
+                self.access_blocked = True
             retry = self.clock() + timedelta(seconds=BACKOFF_SECONDS[min(failures - 1, 2)])
             self.evidence.set_curation_state(
                 thread_id, status="failed", failures=failures, retry_at=retry.isoformat(),
@@ -291,6 +311,9 @@ class Curator:
                 saved=saved, dropped=dropped, chunks=done,
             )
             logger.warning("[memory] curator failed thread=%s", thread_id, exc_info=True)
+        finally:
+            USAGE_OWNER.reset(owner_token)
+            self.threads.add_thread_usage(thread_id, METER.take(owner))
 
     async def _prepare(
         self, items: list[object], chunk: CurationChunk, existing: list[DurableMemory],

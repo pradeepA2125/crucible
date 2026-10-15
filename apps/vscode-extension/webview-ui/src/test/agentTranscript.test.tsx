@@ -72,6 +72,22 @@ describe("AgentTranscript", () => {
     expect(screen.getByText("Loading…")).toBeInTheDocument();
   });
 
+  it("shows output while a running child generates its report without an active tool", () => {
+    const ui = withView(detail("running", []));
+    const view = { ...ui.views["agent-a"], tokenProgress: {
+      thinking: 0, output: 3200, input: 12000, exact: false,
+    } };
+    const { rerender } = render(<AgentsContext.Provider value={{ ...ui, views: { "agent-a": view } }}>
+      <AgentTranscript agentId="agent-a" />
+    </AgentsContext.Provider>);
+    expect(screen.getByTestId("generation-progress")).toHaveTextContent("Output ~3,200 tokens");
+    rerender(<AgentsContext.Provider value={{ ...ui, views: { "agent-a": {
+      ...view, detail: { ...view.detail, status: "completed" },
+    } } }}><AgentTranscript agentId="agent-a" /></AgentsContext.Provider>);
+    expect(screen.queryByTestId("generation-progress")).toBeNull();
+    expect(screen.queryByTestId("transient-activity")).toBeNull();
+  });
+
   it("folds completed child work into one summary and keeps failed outputs accessible", () => {
     const tools = [
       { id: 1, tool: "read_file", args: { path: "a.py" }, source: "execution" as const, done: true },
@@ -107,7 +123,7 @@ describe("AgentTranscript", () => {
     expect(screen.getAllByTestId("activity-group")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Read a file, ran a command" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("button", { name: "Ran pytest" })).toBeInTheDocument();
-    expect(screen.queryByTestId("transient-activity")).toBeNull();
+    expect(screen.getByTestId("transient-text")).toHaveTextContent("Working…");
   });
 
   it("keeps narration and activation boundaries between summaries", () => {

@@ -18,6 +18,47 @@ from agentd.providers.openai_strict_schema import encode_strict_schema, strict_v
 from agentd.subagents.framing import frame
 
 
+@pytest.mark.asyncio
+async def test_usage_limit_suspends_idle_jobs_until_provider_switch(setup):
+    from agentd.memory.harness import MemoryHarness
+    from agentd.providers.plan_access import PlanUsageLimitReached
+    from agentd.providers.usage import METER, USAGE_OWNER
+
+    curator, thread, calls, _, now = setup
+    async def denied(payload):
+        calls.append(payload)
+        assert USAGE_OWNER.get() == f"curator:{thread.thread_id}"
+        METER.record(USAGE_OWNER.get(), requests=1)
+        raise PlanUsageLimitReached("quota exhausted")
+
+    curator.distill = denied
+    await curator.curate(thread)
+    assert curator.access_blocked
+    assert curator.threads.thread_usage(thread.thread_id).requests == 1
+    now[0] += timedelta(days=1)
+    await curator.sweep()
+    await curator.curate(thread)
+    assert len(calls) == 1
+    harness = MemoryHarness(enabled=True, compactor=None)
+    harness._curator = curator
+    harness.set_provider(transport=object(), model="new")
+    assert not curator.access_blocked
+
+
+@pytest.mark.asyncio
+async def test_old_account_failure_cannot_suspend_new_provider(setup):
+    from agentd.providers.plan_access import PlanUsageLimitReached
+
+    curator, thread, _, _, _ = setup
+    async def switched_in_flight(payload):
+        curator.resume_provider()
+        raise PlanUsageLimitReached("old account quota")
+
+    curator.distill = switched_in_flight
+    await curator.curate(thread)
+    assert not curator.access_blocked
+
+
 def proposal(**changes):
     return {"kind": "procedural", "content": "Serialize first model initialization.",
             "topic": "model loading", "applies_when": "Initializing concurrent models",

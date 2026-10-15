@@ -230,6 +230,8 @@ export interface AgentViewState {
   live: ToolEventView[];
   callIds: Record<number, number>;  // call_index → live pill id
   nextId: number;
+  /** Ephemeral stream activity, never a persisted transcript message. */
+  tokenProgress?: TokenProgressView | null;
 }
 
 // ── Agent teams (mirrors editor-client TeamPost/TeamSummary/TeamLive — camelCase) ─────

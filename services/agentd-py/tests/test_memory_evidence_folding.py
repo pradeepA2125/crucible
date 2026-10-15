@@ -57,6 +57,30 @@ def compactor(store, summarize):
 
 
 @pytest.mark.asyncio
+async def test_access_stop_after_committed_fold_preserves_progress_in_live_history(tmp_path):
+    from agentd.memory.harness import MemoryHarness
+    from agentd.providers.plan_access import PlanUsageLimitReached
+
+    store = MemoryStore(tmp_path / "m.db")
+    calls = []
+    async def summarize(old, text):
+        calls.append(text)
+        if len(calls) == 2:
+            raise PlanUsageLimitReached("quota exhausted")
+        return "last good"
+
+    harness = MemoryHarness(enabled=True, compactor=compactor(store, summarize))
+    history = histories()
+    with pytest.raises(PlanUsageLimitReached):
+        await harness.prepare_turn(history, "r", force=True)
+    assert len(calls) == 2 and "last good" in history[0]["content"]
+    retained = "\n".join(str(row["content"]) for row in history)
+    assert "RESULT 0" not in retained
+    assert all(f"RESULT {i}" in retained for i in range(1, 5))
+    assert len(store.get_segments("r")) == 10
+
+
+@pytest.mark.asyncio
 async def test_fold_commits_in_order_and_preserves_raw_sources(tmp_path):
     store = MemoryStore(tmp_path / "m.db")
     calls = []
@@ -242,9 +266,11 @@ async def test_factory_summarizer_receives_capped_evidence_and_full_prompt_budge
     captured = []
 
     class Transport:
-        async def generate_text(self, *, model, system_instructions, user_payload):
+        async def generate_json(
+            self, *, model, schema_name, schema, system_instructions, user_payload,
+        ):
             captured.append((system_instructions, user_payload))
-            return "<summary>## Goal\nGood anchor</summary>"
+            return {"summary_markdown": "## Goal\nGood anchor"}
 
     cfg = MemoryConfig.from_env({
         "CRUCIBLE_MEMORY_COMPACT_EVIDENCE": "1",

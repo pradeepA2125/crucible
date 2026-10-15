@@ -12,6 +12,28 @@ from agentd.tools.loop import ToolLoop, VerifyResult
 from agentd.tools.registry import ToolRegistry
 
 
+@pytest.mark.asyncio
+async def test_failed_compaction_stops_task_before_inference(tmp_path):
+    from agentd.memory.models import TurnPreparation
+
+    class FailedHarness:
+        async def prepare_turn(self, history, run_id):
+            return TurnPreparation(history=history, compaction_failed=True)
+
+    class NoInference:
+        async def create_tool_step(self, *args, **kwargs):
+            pytest.fail("compaction failure must stop before inference")
+
+    loop = ToolLoop(
+        NoInference(), ToolRegistry(shadow_root=tmp_path, real_workspace_path=tmp_path),
+        EventBroadcaster(), "task", patch_engine=PatchEngine(), shadow_path=tmp_path,
+        skip_verify=True, memory_harness=FailedHarness(),
+    )
+    step = PlanStep(id="S1", goal="continue", targets=[], risk="low")
+    with pytest.raises(RuntimeError, match="compaction failed"):
+        await loop.run(step, {}, TaskBudget(), TaskUsage())
+
+
 class _EmitPatchEngine:
     async def create_tool_step(
         self, step_context, history, tool_definitions, on_thinking=None,

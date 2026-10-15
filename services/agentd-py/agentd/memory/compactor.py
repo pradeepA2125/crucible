@@ -183,7 +183,7 @@ class Compactor:
 
     async def _fold_evidence(
         self, run_id: str, old_text: str, evicted: History, notices: list[str],
-    ) -> tuple[str, int, bool, History]:
+    ) -> tuple[str, int, bool, History, Exception | None]:
         rows = render_evidence(evicted, include_thoughts=True)
         turns = evidence_turns(rows)
         # Source offsets, rather than mseq, also work for retained legacy data.
@@ -221,13 +221,13 @@ class Compactor:
                 completed += consumed
                 turns = turns[consumed:]
             if not version and not anchor:
-                return "", 0, False, []
+                return "", 0, False, [], None
             # A round containing only excluded bodies can still add image tombstones.
             if current is not None and version == current.version and anchor != current.summary_md:
                 committed = self._store.upsert_anchor(run_id, anchor)
                 version = committed.version
-            return anchor, version, False, []
-        except Exception:
+            return anchor, version, False, [], None
+        except Exception as exc:
             logger.warning(
                 "[memory] evidence fold failed for run=%s at anchor=v%d; raw segments retained",
                 run_id, version, exc_info=True,
@@ -236,7 +236,7 @@ class Compactor:
             # into the next model call. Retain the unsummarized suffix so a retry
             # starts after the last committed fold, without losing or double-folding it.
             pending = evicted[starts[completed]:] if completed < len(starts) else []
-            return anchor, version, True, pending
+            return anchor, version, True, pending, exc
 
     def set_window_tokens(self, window_tokens: int) -> None:
         """Re-point the trigger at a new context window mid-process.
@@ -355,7 +355,7 @@ class Compactor:
                 line for line in (old_text + "\n" + _render(evicted)).splitlines()
                 if line.startswith("[Image ") and "unavailable:" in line
             ))
-            anchor, version, failed, pending = await self._fold_evidence(
+            anchor, version, failed, pending, error = await self._fold_evidence(
                 run_id, old_text, evicted, notices,
             )
             keep = [_anchor_message(anchor, evidence=isinstance(history, EvidenceHistory))
@@ -363,22 +363,18 @@ class Compactor:
             return CompactionResult(
                 compacted=True, history=[*keep, *pending, *hot], anchor=anchor or None,
                 degraded=degraded or failed, evicted_count=evicted_count, anchor_version=version,
+                failed=failed, error=error,
                 evicted_seq_lo=seq_lo, evicted_seq_hi=seq_hi,
             )
         try:
             new_anchor = await self._summarize(old_text, _render(evicted))
-        except Exception:  # best-effort: never fail a loop iteration
+        except Exception as exc:
             logger.warning(
                 "[memory] anchor summarize failed for run=%s; degrading", run_id, exc_info=True
             )
-            keep = (
-                [_anchor_message(f"(earlier context summary unavailable)\n{old_text}",
-                                 evidence=isinstance(history, EvidenceHistory))]
-                if old_text
-                else []
-            )
             return CompactionResult(
-                compacted=True, history=[*keep, *hot], anchor=old_text or None, degraded=True,
+                compacted=False, history=history, anchor=old_text or None, degraded=True,
+                failed=True, error=exc,
                 evicted_count=evicted_count, anchor_version=old_version,
                 evicted_seq_lo=seq_lo, evicted_seq_hi=seq_hi,
             )

@@ -19,9 +19,9 @@ class _FakeTransport:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
 
-    async def generate_text(self, *, model, system_instructions, user_payload, on_thinking=None):
+    async def generate_json(self, *, model, schema_name, schema, system_instructions, user_payload):
         self.calls.append((model, system_instructions, user_payload))
-        return "<summary>SUMMARY</summary>"
+        return {"summary_markdown": "SUMMARY"}
 
 
 class _SeqTransport:
@@ -31,9 +31,10 @@ class _SeqTransport:
         self._responses = list(responses)
         self.calls: list[tuple] = []
 
-    async def generate_text(self, *, model, system_instructions, user_payload, on_thinking=None):
+    async def generate_json(self, *, model, schema_name, schema, system_instructions, user_payload):
         self.calls.append((model, system_instructions, user_payload))
-        return self._responses.pop(0)
+        assert schema_name == "compaction_summary"
+        return {"summary_markdown": self._responses.pop(0)}
 
 
 @pytest.mark.asyncio
@@ -133,33 +134,57 @@ async def test_summarizer_sends_single_key_payload_and_extracts_summary():
 
 
 @pytest.mark.asyncio
-async def test_summarizer_retries_once_on_echo_then_succeeds():
+async def test_summarizer_does_not_resend_large_prompt_on_invalid_output():
     t = _SeqTransport(['{"transcript": "...echoed..."}', "<summary>real summary</summary>"])
     summ = make_engine_summarizer(t, "m1")
-    out = await summ("prior", "evicted")
-    assert out == "real summary"
-    assert len(t.calls) == 2  # retried exactly once
+    with pytest.raises(SummarizerEchoError, match="empty_or_json_summary"):
+        await summ("prior", "evicted")
+    assert len(t.calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_summarizer_raises_after_two_echoes():
+async def test_summarizer_raises_on_echo_without_retry():
     echo = '{"transcript": "echoed both times"}'
     t = _SeqTransport([echo, echo])
     summ = make_engine_summarizer(t, "m1")
     with pytest.raises(SummarizerEchoError):
         await summ("prior", "evicted")
+    assert len(t.calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_gated_summarizer_rejects_answer_to_historical_question_then_retries():
+async def test_structured_summary_accepts_markdown_headings_without_xml():
+    t = _SeqTransport(["## **Goal**\nKeep the work moving."])
+    summary = await make_engine_summarizer(t, "m1", require_note=True)("", "history")
+    assert "Keep the work moving" in summary and len(t.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_compaction_access_stop_propagates_to_controller(tmp_path):
+    from agentd.providers.plan_access import PlanUsageLimitReached
+
+    async def denied(old, text):
+        raise PlanUsageLimitReached("quota exhausted")
+
+    comp = Compactor(MemoryStore(tmp_path / "m.db"), denied, window_tokens=10000,
+                     reserve_tokens=1000, hot_turns=1, compact_evidence=True)
+    harness = MemoryHarness(enabled=True, compactor=comp)
+    history = [{"role": "user", "content": "x" * 100} for _ in range(8)]
+    with pytest.raises(PlanUsageLimitReached):
+        await harness.prepare_turn(history, "r", force=True)
+
+
+@pytest.mark.asyncio
+async def test_gated_summarizer_rejects_answer_to_historical_question_without_retry():
     t = _SeqTransport([
         "<summary>Yes, all actions have descriptions.</summary>",
         "<summary>## Goal\nExplain action descriptions.\n## Next step\nAnswer the user.</summary>",
     ])
-    summary = await make_engine_summarizer(t, "m1", require_note=True)(
-        "", "[user mseq=1]\nDo all actions have descriptions?",
-    )
-    assert summary.startswith("## Goal") and len(t.calls) == 2
+    with pytest.raises(SummarizerEchoError, match="missing_note_heading"):
+        await make_engine_summarizer(t, "m1", require_note=True)(
+            "", "[user mseq=1]\nDo all actions have descriptions?",
+        )
+    assert len(t.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -167,7 +192,7 @@ async def test_gated_summarizer_fails_closed_on_unstructured_answers():
     t = _SeqTransport(["Yes, use all eight actions."] * 2)
     with pytest.raises(SummarizerEchoError):
         await make_engine_summarizer(t, "m1", require_note=True)("", "historic question")
-    assert len(t.calls) == 2  # one try + one retry, then give up
+    assert len(t.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -188,10 +213,11 @@ async def test_persistent_echo_degrades_and_keeps_prior_anchor(tmp_path):
     )
     history = [{"role": "user", "content": "q" * 80} for _ in range(6)]
     result = await comp.maybe_compact(history, "r1")
-    assert result.compacted is True
+    assert result.compacted is False and result.failed
+    assert result.history is history
     assert result.degraded is True
     assert store.get_anchor("r1").summary_md == "PRIOR ANCHOR"  # garbage never persisted
-    assert len(always_echo.calls) == 2  # one try + one retry, then gave up
+    assert len(always_echo.calls) == 1
 
 
 def test_build_memory_harness_disabled_returns_noop():
@@ -216,7 +242,7 @@ async def test_build_memory_harness_enabled_end_to_end(tmp_path):
     prep = await harness.prepare_turn(history, "r1")
     assert prep.compacted is True
     assert "SUMMARY" in prep.history[0]["content"]  # real summarizer path exercised
-    assert transport.calls  # transport.generate_text was actually invoked
+    assert transport.calls  # schema-constrained summarizer was actually invoked
 
 
 @pytest.mark.asyncio

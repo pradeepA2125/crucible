@@ -47,9 +47,20 @@ describe("applyAgentEvent", () => {
     expect(v.messages.filter((m) => m.type === "agent_dispatch")).toHaveLength(1);
   });
 
+  it("keeps stream counts out of the durable transcript", () => {
+    const v = viewFromDetail(detail());
+    const next = applyAgentEvent(v, { type: "token_progress", payload: {
+      thinking: 9, output: 1200, input: 3000, exact: false,
+    } }, AT);
+    expect(next.tokenProgress).toEqual({ thinking: 9, output: 1200, input: 3000, exact: false });
+    expect(next.messages).toBe(v.messages);
+    expect(next.live).toBe(v.live);
+    expect(viewFromDetail(detail()).tokenProgress).toBeUndefined();
+  });
+
   it("ignores events the view does not render", () => {
     const v = viewFromDetail(detail());
-    expect(applyAgentEvent(v, { type: "token_progress", payload: { thinking: 9 } }, AT)).toBe(v);
+    expect(applyAgentEvent(v, { type: "unknown", payload: {} }, AT)).toBe(v);
   });
 });
 

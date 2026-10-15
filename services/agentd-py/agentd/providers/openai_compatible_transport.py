@@ -13,6 +13,7 @@ from openai import APIConnectionError, AsyncOpenAI
 from agentd.providers.context_observation import (
     ContextInputObserver,
     begin_context,
+    estimate_request_input,
     finish_context,
     report_context,
 )
@@ -1351,9 +1352,8 @@ class OpenAICompatibleTransport(ModelJsonTransport):
                 # indistinguishable from a wedged one. Estimated from the request we are
                 # about to send; the provider's exact prompt_tokens replaces it on the
                 # closing tick when reported.
-                input_n: int | None = _approx_tokens(
-                    sum(len(str(m.get("content", ""))) for m in kwargs.get("messages", []))
-                ) or None
+                input_n: int | None = estimate_request_input(
+                    str(kwargs.get("model", "")), kwargs) or None
                 if on_progress is not None and input_n:
                     on_progress(0, 0, input_n=input_n, exact=False)
                 # Characters, not deltas — see _approx_tokens.

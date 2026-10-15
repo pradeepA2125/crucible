@@ -1,0 +1,59 @@
+/* A brief travels through the work. Scroll time is continuous; content stays mounted. */
+.scroll-brief{fill:#C3B0F5;stroke:#080719;stroke-width:1.5;offset-path:path('M0 55C110 55 100 10 220 10s100 90 220 90 100-45 260-45');offset-distance:100%;opacity:0}
+.office-scroll-frame{position:relative;margin-top:60px}
+.office-sticky-stage{position:relative}
+.office-scroll-frame .office-world{margin-top:0;transform-origin:50% 65%}
+.office-team-lines{pointer-events:none}
+.office-connection{stroke-dasharray:1;stroke-dashoffset:0;opacity:.65}
+.office-proposal{transform-origin:0 0}
+.office-handoff{display:flex;align-items:center;gap:15px;width:max-content;max-width:100%;margin:24px 0 0 auto;padding:16px 20px;background:#E7DDF4;color:#513B6C;border-radius:10px;box-shadow:0 13px 25px #0002;position:relative;z-index:2}
+.office-handoff>svg:first-child{width:34px;height:34px;flex:none}
+.office-handoff>span{font-size:10px;line-height:1.8}
+.office-handoff strong{font-size:13px;font-weight:500;display:block}
+.office-handoff>.arrow{margin-left:20px;width:18px}
+.office-handoff:hover{background:#F0E8FA}
+.office-handoff:focus-visible{opacity:1!important;transform:none!important}
+.feature-toolkit{overflow-x:clip}
+.checkpoint-traveller{position:absolute;right:6%;top:-22px;display:block;width:30%;height:22px;color:#79517E;pointer-events:none;z-index:3}
+.checkpoint-traveller>svg{width:22px;height:22px;margin:auto;background:#FBF6F3;border-radius:4px}
+/* The short office runway holds one actual scene, never fake replacement slides. */
+@media(min-width:801px) and (min-height:760px){
+ :root[data-motion=cinematic] .office-scroll-frame{height:170svh}
+ :root[data-motion=cinematic] .office-sticky-stage{position:sticky;top:24px;padding-top:12px}
+ :root[data-motion=cinematic] .office-scroll-frame .office-art{max-height:min(52svh,560px)}
+ :root[data-motion=cinematic] .office-scroll-frame .office-world{padding-top:28px}
+ :root[data-motion=cinematic] .office-scroll-frame .office-board-caption{bottom:18px}
+ :root[data-motion=cinematic] .office-handoff{margin-top:18px}
+}
+:root[data-motion] .hero-space{transform-origin:67% 53%}
+:root[data-motion] .dispatch-brief{transform-origin:35% 80%}
+:root[data-motion] .agent-character{transform-origin:50% 90%}
+:root[data-motion] .office-person{transition:opacity .25s;transform-box:view-box}
+:root[data-motion] .context-papers span{transform-origin:15% 50%}
+:root[data-motion] .rewind-paper{transform-origin:30% 70%}
+/* Frame-end accents signal completion, not simulated product results. */
+.office-scroll-frame[data-scroll-beat=resolve] .office-plaque .plaque-dot{background:#4B7D6C}
+.office-scroll-frame[data-scroll-beat=resolve] .office-board-caption{background:#F9F3FF}
+:root[data-motion=still] .scroll-brief{opacity:0}
+:root[data-motion=still] .office-scroll-frame{height:auto}
+:root[data-motion=still] .office-sticky-stage{position:relative;top:auto}
+:root[data-motion=still] .moving-brief{animation:none!important;opacity:0!important}
+:root[data-motion=still] .agent-character svg,:root[data-motion=still] .office-person,:root[data-motion=still] .file-sheet,:root[data-motion=still] .brief-image,:root[data-motion=still] .brief-web,:root[data-motion=still] .brief-terminal{transition:none!important}
+@media(max-width:800px){
+ .office-scroll-frame{margin-top:35px;height:auto!important}
+ .office-sticky-stage{position:relative!important;top:auto!important;padding-top:0!important}
+ .office-scroll-frame .office-world{margin-top:0}
+ .office-handoff{margin:20px 0 0 auto;padding:13px 15px;gap:10px}
+ .office-handoff>span{font-size:9px}.office-handoff strong{font-size:11px}
+ .office-handoff>.arrow{margin-left:5px;width:16px}
+ .office-handoff>svg:first-child{width:29px;height:29px}
+ .checkpoint-traveller{top:-20px}
+ .toolkit-pencil{right:5%}
+ .office-handoff{box-shadow:0 8px 18px #0002}
+}
+@media(prefers-reduced-motion:reduce){
+ .office-scroll-frame{height:auto!important}
+ .office-sticky-stage{position:relative!important;top:auto!important}
+ .scroll-brief{display:none}.checkpoint-traveller{display:none}
+ .office-connection{stroke-dashoffset:0;opacity:.65}
+}

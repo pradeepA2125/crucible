@@ -50,4 +50,25 @@ describe("TransientActivity", () => {
     fireEvent.click(screen.getByRole("button", { name: /Show current step/ }));
     expect(screen.getByTestId("transient-detail")).toBeInTheDocument();
   });
+
+  it("shows growing output before a generated edit or report is ready", () => {
+    const { rerender } = render(<TransientActivity startedAt={Date.now()} bubble={bubble()}
+      tokenProgress={{ thinking: 0, output: 1200, input: 10000, exact: false }} />);
+    expect(screen.getByTestId("generation-progress")).toHaveTextContent("Output ~1,200 tokens");
+    rerender(<TransientActivity startedAt={Date.now()} bubble={bubble()}
+      tokenProgress={{ thinking: 0, output: 4800, input: 10000, exact: false }} />);
+    expect(screen.getByTestId("generation-progress")).toHaveTextContent("Output ~4,800 tokens");
+  });
+
+  it("does not imply generation while waiting for approval or running a tool", () => {
+    const tokenProgress = { thinking: 0, output: 1200, input: 10000, exact: false };
+    const { rerender } = render(<TransientActivity startedAt={Date.now()} bubble={bubble()}
+      waiting tokenProgress={tokenProgress} />);
+    expect(screen.queryByTestId("generation-progress")).toBeNull();
+    rerender(<TransientActivity startedAt={Date.now()} tokenProgress={tokenProgress} bubble={bubble({
+      toolEvents: [{ id: 1, tool: "run_command", args: { command: "pytest" }, source: "execution", done: false }],
+    })} />);
+    expect(screen.queryByTestId("generation-progress")).toBeNull();
+    expect(screen.getByTestId("transient-text")).toHaveTextContent("Running pytest");
+  });
 });

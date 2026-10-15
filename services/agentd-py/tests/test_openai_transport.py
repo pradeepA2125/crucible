@@ -610,6 +610,39 @@ async def test_the_plan_route_asks_for_one_native_function_call() -> None:
 
 
 @pytest.mark.asyncio
+async def test_native_arguments_report_progress_before_the_action_completes(monkeypatch) -> None:
+    from agentd.providers.token_progress import ProgressTicker
+
+    # Remove only throttling so both synthetic deltas are observable without sleeps.
+    monkeypatch.setattr(
+        "agentd.providers.openai_transport.ProgressTicker",
+        lambda callback, **kwargs: ProgressTicker(callback, interval_sec=0, **kwargs),
+    )
+    arguments = {"thought": "report ready", "answer": "x" * 4000}
+    encoded = json.dumps(arguments)
+    half = len(encoded) // 2
+    progress: list[tuple[int, bool]] = []
+    thinking: list[str] = []
+    fake = FakeResponses([
+        SimpleNamespace(type="response.function_call_arguments.delta", delta=encoded[:half]),
+        SimpleNamespace(type="response.function_call_arguments.delta", delta=encoded[half:]),
+        _call_done("answer", arguments), _completed(output_tokens=1200),
+    ])
+    result = await _transport(fake, plan_route=True).generate_json(
+        model="m", schema_name="controller_step_response", schema=CONTROLLER_UNION,
+        system_instructions="sys", user_payload={"goal": "report"},
+        on_thinking=thinking.append,
+        on_progress=lambda _t, o, **kw: progress.append((o, kw.get("exact", False))),
+    )
+
+    assert [(n, exact) for n, exact in progress if n > 0] == [
+        (half // 4, False), (len(encoded) // 4, False), (1200, True),
+    ]
+    assert result["answer"] == arguments["answer"]
+    assert thinking == []  # Never expose raw tool arguments as reasoning/prose.
+
+
+@pytest.mark.asyncio
 async def test_plan_native_request_keeps_a_real_png_image_part() -> None:
     png_data_url = (
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
@@ -802,7 +835,7 @@ async def test_a_session_id_header_names_the_owner_and_stays_stable() -> None:
                           system_instructions="s", user_payload={})   # no owner
     first, second, unowned = (c.get("extra_headers") for c in fake.calls)
     assert first == second and set(first) == {"session_id"}
-    assert unowned is None
+    assert set(unowned) == {"session_id"} and unowned != first
     assert all("prompt_cache_key" not in c for c in fake.calls)
 
 

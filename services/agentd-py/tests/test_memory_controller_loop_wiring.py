@@ -13,6 +13,28 @@ from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 
 
 @pytest.mark.asyncio
+async def test_failed_compaction_stops_before_foreground_model_call(tmp_path):
+    from agentd.memory.models import TurnPreparation
+
+    class FailedHarness:
+        async def prepare_turn(self, history, run_id, **kwargs):
+            return TurnPreparation(history=history, compaction_failed=True)
+
+    class NoInference:
+        async def create_controller_step(self, *args, **kwargs):
+            pytest.fail("failed compaction must not send another large model request")
+
+    loop = ControllerLoop(
+        NoInference(), AggregatingToolRegistry([
+            BuiltinToolSource(shadow_root=tmp_path, real_workspace_path=tmp_path),
+        ]), EventBroadcaster(), channel_id="c1", phase_sm=ControllerPhaseSM(),
+        memory_harness=FailedHarness(),
+    )
+    outcome = await loop.run({"goal": "continue", "workspace_path": str(tmp_path)}, max_iters=3)
+    assert outcome.system_notice and "compaction failed" in outcome.text
+
+
+@pytest.mark.asyncio
 async def test_controller_loop_invokes_memory_harness_with_run_id(tmp_path: Path):
     calls: list[str] = []
     store = MemoryStore(tmp_path / "m.sqlite3")

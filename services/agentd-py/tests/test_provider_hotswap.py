@@ -46,6 +46,8 @@ async def test_validated_swap_updates_memory_callbacks(monkeypatch):
 
         async def generate_json(self, **kwargs):
             calls.append(kwargs["model"])
+            if kwargs.get("schema_name") == "compaction_summary":
+                return {"summary_markdown": "memory anchor"}
             return {"memories": []}
 
     binding = MemoryProvider(Transport(), "old")

@@ -6,18 +6,17 @@
 
 ### Every edit is born in *shadow*.
 
-**An AI code editor that explores your repo, proposes before it acts, and edits an isolated shadow workspace — your code only changes when you hit accept.**
+**An agentic coding assistant for VS Code: explore your repository, work with agents and teams, review changes, and choose how much authority to grant.**
 
-Bring your own model — cloud or entirely local. Nothing leaves your machine that you didn't configure.
+Bring your own provider — cloud or local — or connect your ChatGPT plan or Claude subscription (experimental).
 
-[![Release](https://img.shields.io/badge/release-v0.5.4-a78bfa)](https://github.com/pradeepA2125/crucible/releases)
+[![Releases](https://img.shields.io/badge/download-GitHub_Releases-a78bfa)](https://github.com/pradeepA2125/crucible/releases)
 [![Python](https://img.shields.io/badge/python-3.11%2B-8b5cf6)](services/agentd-py)
 [![TypeScript](https://img.shields.io/badge/typescript-5.x-a78bfa)](apps)
 [![Rust](https://img.shields.io/badge/rust-indexer-c4b5fd)](services/indexer-rs)
-[![Tests](https://img.shields.io/badge/tests-2430%20passing-6ee7b7)](#testing)
 [![License](https://img.shields.io/badge/license-Apache--2.0-D22128)](LICENSE)
 
-[Install](#install) · [How it works](#how-it-works) · [Providers](#providers) · [Code intelligence](#code-intelligence) · [Memory](#memory) · [Extend it](#extend-it) · [Architecture](#architecture) · [What's actually verified](#whats-actually-verified)
+[Install](#install) · [How it works](#how-it-works) · [Agents and teams](#agents-and-teams) · [Providers](#providers) · [Memory](#memory) · [Trust and approvals](#trust-and-approvals) · [Architecture](#architecture)
 
 </div>
 
@@ -25,64 +24,24 @@ Bring your own model — cloud or entirely local. Nothing leaves your machine th
 
 ## The idea
 
-Most coding assistants either edit your files directly and ask forgiveness, or they can only suggest. Crucible does neither.
+Crucible combines a tool-using chat loop, repository search and symbol graphs, checked file edits, and explicit approval controls inside VS Code. The managed extension provisions and supervises its backend; you choose the model and permissions.
 
-Every task gets a **shadow copy** of your repository. The agent explores, edits, runs your tests, and repairs its own mistakes in that copy. Your real working tree is untouched until you accept — and accepting is a single atomic promote. Reject, and there is nothing to clean up.
+Inline chat is the primary editing path. Patches are applied in a lightweight shadow workspace, then touched files are promoted to the working tree when that edit is accepted. With automatic edit acceptance enabled, this happens without a review card. **The shadow is patch staging, not a sandbox for arbitrary commands, and the working tree can change during a turn.**
 
 ```mermaid
 flowchart LR
-    U([You]) -->|"a request"| C
-
-    subgraph EXT["VS Code extension"]
-        C["Chat + gates<br/><i>approve · reject · steer</i>"]
-    end
-
-    subgraph BE["agentd · Python"]
-        L["ReAct loop<br/><i>think → tool → observe</i>"]
-        S[("Shadow<br/>workspace")]
-        M[("Memory<br/>sqlite-vec + FTS5")]
-    end
-
-    subgraph IDX["indexer · Rust"]
-        G[("Symbol graph<br/><i>tree-sitter + LSP</i>")]
-    end
-
-    C <--> L
-    L -->|"edits, tests, commands"| S
-    L <-->|"who calls this?"| G
-    L <-->|"what did we learn?"| M
-    S ==>|"atomic promote<br/><b>only on accept</b>"| W([Your repo])
-
-    style S fill:#2a2139,stroke:#6E56CF,color:#e6e6e6
-    style G fill:#2a2139,stroke:#DEA584,color:#e6e6e6
-    style M fill:#2a2139,stroke:#2EA043,color:#e6e6e6
-    style W fill:#1c2a1c,stroke:#2EA043,color:#e6e6e6
+    U([You]) <--> C["VS Code chat + approval controls"]
+    C <--> L["agentd: model + tool loop"]
+    L <--> G["Rust indexer: symbol graph"]
+    L <--> M["Memory + context compaction"]
+    L --> S["Shadow patch staging"]
+    S -->|"accepted edit"| W["Working tree"]
+    L -->|"approved / policy-allowed commands"| W
 ```
-
----
-
-## What makes it different
-
-**🛡️ Your working tree is not the agent's scratchpad.**
-Edits land in a shadow copy. The real repo is written exactly once, on accept. A rejected run leaves zero residue — no half-applied patches, no orphaned files.
-
-**🕸️ It knows what calls what.**
-A Rust indexer parses your code with tree-sitter and then resolves the ambiguous edges through a real language server. `query_graph` answers *"who calls this function"* and *"what implements this interface"* with file:line precision — not by grepping for the name.
-
-**🔒 Local models are a first-class path, not a footnote.**
-Ollama and a llama.cpp fork are wired the same way as Anthropic and OpenAI. Point it at a model on your own machine and nothing leaves it.
-
-**✋ Side effects ask first.**
-Shell commands, out-of-scope file writes, and external MCP tool calls each raise an approval card with the exact command or diff. `Accept once` / `remember for this workspace` / `reject` — and the agent adapts to a rejection rather than stalling.
-
-**📦 One install, no prerequisites.**
-The extension provisions its own runtime: a Python environment, the indexer binary, ripgrep, and five language servers. You do not install Python, uv, or rust-analyzer yourself.
-
----
 
 ## Install
 
-No Marketplace listing yet — install the `.vsix` from the latest [GitHub Release](https://github.com/pradeepA2125/crucible/releases).
+Use a `.vsix` from [GitHub Releases](https://github.com/pradeepA2125/crucible/releases), or the repository's release-download scripts:
 
 **macOS / Linux**
 ```bash
@@ -94,210 +53,221 @@ curl -fsSL https://raw.githubusercontent.com/pradeepA2125/crucible/main/install.
 iwr https://raw.githubusercontent.com/pradeepA2125/crucible/main/install.ps1 -useb | iex
 ```
 
-Both scripts download the release `.vsix` and run `code --install-extension` (also detecting `code-insiders` and `cursor`). They need the `code` CLI on your `PATH` — in VS Code: <kbd>Cmd/Ctrl+Shift+P</kbd> → *Shell Command: Install 'code' command in PATH*.
-
-<details>
-<summary><b>Rather read the script first?</b></summary>
-
-Reasonable. Download it, read it, then run it — or skip the script entirely and grab the `.vsix` from the [Releases page](https://github.com/pradeepA2125/crucible/releases):
+Prefer to inspect a script first? Download and read it before running, or install the downloaded VSIX directly:
 
 ```bash
 code --install-extension path/to/crucible-vscode-extension-*.vsix
 ```
 
-Note that the release tag and the extension version are not the same number — release `v0.5.4` ships `crucible-vscode-extension-0.5.3.vsix`, because the tag versions the whole runtime bundle (indexer, ripgrep, language servers, agentd wheel) and the extension carries its own.
-</details>
+The shell installer selects the latest release's VSIX and looks for `code`, `code-insiders`, or `cursor` on `PATH`. Release assets determine what you install; this README describes the current checkout, not a promise that every feature is in a published release. Extension and runtime-bundle versions can differ.
 
-Open any folder afterwards and a setup wizard walks you through picking a provider. It provisions nine components on first run:
+Open a folder and follow the setup wizard, or run **Crucible: Run Setup**. The managed runtime installs its Python environment/backend, Rust indexer, ripgrep and language-server components. Components have separate installation status; missing prerequisites can leave language-server support degraded rather than providing full resolution for every language.
 
-| | | |
-|---|---|---|
-| `uv` — Python package manager | `agentd` — the backend, in its own venv | `indexer` — the Rust symbol-graph binary |
-| `ripgrep` — code search | `rust-analyzer` — Rust LSP | `gopls` — Go LSP |
-| `jdtls` + `jre` — Java LSP (bundled Temurin 21) | `lsps` — `pyright@1.1.400` | …and `typescript-language-server@4.3.3` |
+### Local-model setup
 
-A component that fails to install marks its dependents as failed without aborting the rest — a missing Node.js degrades the JS/TS language servers to `skipped` (code-graph edges get less precise) rather than breaking the install.
+Two different choices are involved:
 
----
+- **A local coding model:** select Ollama, TurboQuant, or an appropriate OpenAI-compatible endpoint. The inference server and model must be available at the configured endpoint; selecting a provider is not the same as downloading a coding model.
+- **Local search models:** setup offers optional local-model dependencies for code and memory retrieval. `crucible.localModels` defaults to `true`; disabling it installs the backend without the `local-models` extra. Changing the choice reconciles the managed Python environment and requires a managed backend restart. This is separate from the coding-model provider.
+
+Local inference does not make the entire product offline: installation/model downloads, configured remote endpoints, native web tools, MCP servers and shell commands can still use the network. Choose those integrations and permissions accordingly.
 
 ## How it works
 
-Each turn runs a **ReAct loop**: the model thinks, calls a tool, observes the result, and repeats until it can act. It is not a single prompt-and-patch.
+Each turn runs a tool loop: the model reasons, calls tools, observes results, and continues until it answers or completes edits. Multi-part work can use a todo ledger. Plan Mode is a separate planning workflow, not a mandatory prelude to every edit.
 
-<details open>
-<summary><b>The tools the agent actually has</b></summary>
-
-| Tool | What it does |
+| Capability | Tools / surface |
 |---|---|
-| `search_code` | ripgrep across the workspace |
-| `search_semantic` | embedding search over an incrementally-built index |
-| `query_graph` | walk the symbol graph — callers, implementors, importers, with line numbers |
-| `read_file` | read with line ranges; path-traversal is rejected |
-| `list_directory` | structure without reading contents |
-| `run_command` | shell, behind the approval gate |
-| `write_todos` | a ledger for multi-part work; the agent cannot declare done with items open |
-| `remember` / `recall` | write and retrieve durable cross-session memory |
-| `read_skill` | load a `SKILL.md` on demand |
+| Repository exploration | `search_code`, `search_semantic`, `query_graph`, `read_file`, `list_directory` |
+| Checked changes | Structured patch operations, shadow staging, stale-write checks and review controls |
+| Verification and execution | Approval-controlled commands; background process sessions for servers and interactive work |
+| Delegation | Sub-agent dispatch, reports and live agent views; team boards and member views |
+| Memory | Compaction and recall; experimental scoped memory tools described below |
+| Extensions | Skills, prompt files, project instructions and MCP tools |
 
-</details>
+The composer accepts image attachments through **Add context → Attach images** or paste, with previews and removal before sending. Its input limits are eight images, 8 MiB per image and 24 MiB total; supported input types include PNG, JPEG, GIF, WebP, BMP and TIFF. Image understanding still depends on the selected provider/model.
 
-<div align="center">
-  <img src="docs/media/chat.png" alt="A chat turn: the agent reads files, runs commands, and lands a three-file change in the shadow workspace" width="900">
-  <br>
-  <sub><i>One turn: thinking, tool calls, and a three-file change applied out of the shadow workspace.</i></sub>
-</div>
-
-**Five kinds of gate** can pause a turn and wait for you: a proposed plan (`mode`), a diff (`edit`), a question with model-authored options (`clarify`), a shell command (`command`), and an external MCP tool call (`mcp_tool`). Each renders as a card, survives a window reload, and leaves a durable breadcrumb in the transcript once resolved.
+The transcript groups activity and changes alongside the conversation. Appearance follows VS Code by default, with dark/light palettes and accent choices in Settings.
 
 <div align="center">
-  <img src="docs/media/gates.png" alt="A shell command awaiting approval, with exact / prefix / any-command scoping" width="820">
+  <img src="docs/media/chat.png" alt="Earlier Crucible chat capture showing tool activity and an applied change" width="900">
   <br>
-  <sub><i>Approving a command also decides <b>how much</b> you are approving — this once, this prefix, or anything starting with <code>pytest</code>.</i></sub>
+  <sub><i>Earlier chat capture. Current transcript layout and approval controls have evolved; existing captures below illustrate workflows, not an exact current UI reference.</i></sub>
 </div>
 
+### Agents and teams
 
----
+The controller supports background sub-agents for investigation and implementation, with reports returned to the parent and dedicated views for their work. Agent definitions can constrain tools and editing permissions; read-only and planning permissions propagate to children. Concurrent edits are checked for stale reads/writes, so an agent may need to reread a file another worker changed.
+
+Teams add a shared board, a lead-authored proposal and member deliberation/implementation. Team controls expose status, reports and follow-up posts; work can continue in the background. An optional approval gate lets the user review an adopted plan before implementation. Neither delegation nor a team plan grants blanket permission for commands or external tools.
+
+Sub-agents and teams are enabled by default in the controller configuration; teams depend on sub-agents. They have depth, concurrency and request-budget limits. These are not unlimited independent workers, and stopped work should not be treated as completed work.
+
+### Rewind
+
+Rewind returns a conversation to an earlier user-turn checkpoint and restores captured pre-edit file states, including removing files recorded as newly created. It also restores associated controller/history state and handles memories from the rewound span.
+
+Preview the rewind before confirming. **It is not a full repository snapshot or command undo:** shell commands, network requests and other external side effects are not reversed. Files that could not be captured or restored are reported. Rewind is refused while the thread has an active turn, live agents, unfinished teams, or a live task in the affected span; old checkpoints may no longer be available.
 
 ## Providers
 
-Ten transports, one interface. Swap models from the composer without restarting the backend.
+Setup and Settings offer these provider paths:
 
-| Provider | Notes |
+| Provider | Setup path |
 |---|---|
-| **Anthropic** | Claude |
-| **OpenAI** | Responses API |
-| **Google Gemini** | thinking levels / budgets |
-| **Groq** | |
-| **OpenRouter** | live model-capability registry drives feature detection |
-| **NVIDIA NIM, vLLM, LM Studio, Together, …** | via the generic `openai_compatible` backend — any OpenAI `/chat/completions` endpoint |
-| **Ollama** | 🖥️ fully local |
-| **TurboQuant** | 🖥️ fully local (llama.cpp fork, strict GBNF grammar) |
-| **IBM watsonx** | |
-| **Hugging Face** | |
+| Anthropic, OpenAI, Google Gemini, Groq | Provider credentials and model selection |
+| OpenRouter, IBM watsonx, Hugging Face | Provider credentials; additional fields where required |
+| OpenAI-compatible | Base URL, model and optional API key for a compatible endpoint |
+| Ollama, TurboQuant | Local inference endpoint/model |
+| ChatGPT plan | Browser sign-in and account-provided model catalog |
+| Claude subscription | Account sign-in; explicitly labeled **experimental** |
 
-**Reasoning-effort dial.** Models that think before answering get an `Off · Low · Medium · High · Max` control next to the model picker. Because providers express this completely differently — an enum here, a token budget there, a boolean elsewhere — Crucible declares per-`(provider, model)` what each rung *actually* maps to, clamps a rung the provider can't express **downward** (never silently spending more than you asked), and tells you when it substituted. Rungs it cannot verify are shown as unverified rather than claimed as supported.
+Provider setup validates before switching. The ChatGPT flow is separate from supplying an OpenAI API key: choose **ChatGPT plan**, complete sign-in in the system browser, then select an account/model and put it to use. Settings supports account listing, reconsent, sign-out and a **Manage usage** link. Available models and access depend on the account and provider response; sign-in is not a guarantee of entitlement or unlimited usage. OAuth is handled by the backend rather than exposing tokens to the webview.
 
-<details>
-<summary><b>Why that matters more than it sounds</b></summary>
+### Claude subscription setup (experimental)
 
-One measured chat turn spent **169,490 reasoning tokens against 9,551 tokens of output** — a 17× ratio — because the generic OpenAI-compatible transport enabled reasoning with no effort control at all. The dial exists to make that visible and adjustable rather than a silent cost.
+Choose **Claude subscription (experimental)** in setup or Settings, then **Continue with Claude**. Finish browser sign-in and return to Crucible. Select a saved connection and a model from Claude's account-scoped catalog, then choose **Use this connection** (or **Save & validate Claude** for the active connection). Saving checks model access; catalog visibility alone does not establish entitlement. The context window comes from catalog metadata, and the panel disables models without that capacity information.
 
-</details>
+You can connect another account, refresh models, or disconnect a connection. **Disconnect is local to this computer:** the implementation clears the saved access/refresh tokens and catalog cache; it does not cancel your subscription or claim remote revocation. **Manage usage** and **Manage plan** open Claude's account pages. The panel warns that agents share the Claude allowance; Crucible does not automatically switch this connection to API-key billing.
+
+This path is distinct from the Anthropic API-key provider. Its browser PKCE flow uses a loopback callback and backend-managed tokens, and the source identifies it as a Pi-compatible public-client/profile integration rather than a Crucible-issued OAuth client. It remains explicitly experimental; this README does not certify provider approval, future compatibility or plan access.
+
+### Model controls
+
+Reasoning controls are provider/model-specific. Do not assume every model has the same effort levels or that an unsupported level is honored. A configured context window is also not proof that an endpoint will accept that many tokens.
 
 <div align="center">
-  <img src="docs/media/settings.png" alt="The Provider section of Settings: provider, model, declared context window, and a Test button" width="640">
+  <img src="docs/media/settings.png" alt="Earlier Provider settings capture with model and context-window controls" width="640">
   <br>
-  <sub><i>Saving validates the credentials and hot-swaps the running backend — no restart. The context window is <b>declared</b>, not detected, and <b>Test</b> proves it by passphrase recall rather than by trusting an HTTP 200.</i></sub>
+  <sub><i>Earlier provider-settings capture; account sign-in and current provider-native controls are not shown.</i></sub>
 </div>
 
----
+### Usage and context
+
+The composer's context meter describes **main-model request input**, not remaining account-plan quota. Its details distinguish estimated from provider-reported input, configured/catalog capacity from unknown capacity, and current from last-request or stale measurements. Before a request is measured, the UI does not invent a zero-token reading. It is not a prediction of the next message.
+
+The same details surface separates cumulative thread usage and main/agent/team breakdowns from per-request context occupancy. Use the provider's account usage page for plan limits and billing; Crucible's token telemetry is not an account balance or invoice.
+
+## Trust and approvals
+
+Approval modes make the trade-off explicit:
+
+| Mode | File edits | Shell commands |
+|---|---|---|
+| **Ask** | Review requested | Ask, subject to remembered approvals/policy |
+| **Accept edits** | Automatically accepted | Ask, subject to remembered approvals/policy |
+| **Full access** | Automatically accepted | `allow_all` skips command gates |
+
+Full access requires a trusted VS Code workspace; in an untrusted workspace it is downgraded to Accept edits. That is **not** a claim that all editing or command execution is forbidden in untrusted folders. Older backend compatibility can expose narrower approval-mode support.
+
+Command approvals can be remembered with broader scope, so not every later command necessarily raises a new card. External MCP tools have their own approval flow. Out-of-plan task writes have a separate scope policy (`ask`, `strict`, or `auto`). Review the scope of what you approve rather than treating every card as one-shot consent.
+
+Checked edits include protected-path and stale-write checks, including a recheck after waiting for review. Those protections do not make shell commands a filesystem or network sandbox. Repository-defined agent trust is tied to file content, so changing a definition invalidates its previous trust match.
+
+Native web fetch and prototype Exa search are enabled by default in the extension settings. Web requests require approval; fetch sends the URL to its destination, and search sends queries externally to Exa with a model-training disclosure. Never put credentials or confidential code into a search query. Remote coding providers and configured MCP servers are additional data boundaries.
+
+<div align="center">
+  <img src="docs/media/gates.png" alt="Earlier command-approval capture showing approval scoping" width="820">
+  <br>
+  <sub><i>Earlier command gate: approval scope matters. Current modes can also permit actions without individual cards.</i></sub>
+</div>
 
 ## Code intelligence
 
-The Rust indexer parses six language families and builds a symbol graph, then resolves the edges tree-sitter can only guess at by querying a real language server.
+The Rust indexer builds a symbol graph from TypeScript/JavaScript (including TSX/JSX), Python, Rust, Go and Java. Parsing and language-server resolution contribute `Calls`, `Imports`, `References`, `Inherits` and `Implements` edges. `query_graph` lets the agent explore those relationships alongside text and semantic search.
 
-| Languages | Parser | Graph edges |
-|---|---|---|
-| TypeScript, TSX, JavaScript, JSX, `.mjs`, `.cjs` | tree-sitter | `Calls` · `Imports` · `References` · `Inherits` · `Implements` |
-| Python | `rustpython-parser` | ↑ |
-| Rust · Go · Java | tree-sitter | ↑ |
-
-The parse gives you `external:call:foo` placeholders; the resolver turns them into real edges to real symbols via `textDocument/definition` and `implementation`. That is the difference between "something named `build` exists" and "*this* `build`, at `service.rs:214`, is the one being called."
-
-<details>
-<summary><b>Known limits — stated plainly</b></summary>
-
-- **Python `Implements` is empty.** Open-source pyright does not implement `textDocument/implementation` (that is Pylance). Use `Inherits` for Python subclass discovery.
-- **Only nominal subclassing is tracked.** A class that structurally satisfies a Protocol without declaring it is not an edge.
-- **Go struct embedding** is not modeled as `Inherits` — only explicit `extends`/`implements`-style heritage and nominal base classes are.
-- **`Implements` fan-out for Go and Java** is wired and the servers advertise support, but it has not been separately exercised end to end; `Calls` and `Inherits` have.
-
-</details>
+Resolution depends on language-server availability and language support. A graph is navigation evidence, not a substitute for reading the implementation. In particular, nominal inheritance does not imply discovery of every structurally compatible implementation.
 
 ### Axon
 
-The graph is also navigable as a 3D scene rather than a list — orbit the dependency space, focus a symbol, and see its edges light up against everything else.
-
-Files carry mass by coupling, entry points beacon, packages cluster as nebulae, and edges glow by dependency — with `Imports` / `Calls` / `Inherits` as separately toggleable layers.
+The dependency-space panel presents the graph as a navigable 3D scene, with focus and dependency layers.
 
 <div align="center">
-  <img src="docs/media/axon.gif" alt="Axon — orbiting the dependency graph with a file lit up and its dependents fanning out" width="820">
+  <img src="docs/media/axon.gif" alt="Axon capture orbiting a repository dependency graph with a focused file" width="820">
   <br>
-  <sub><i>The in-editor panel, orbiting this repository's own graph — 76,296 nodes and 225,003 edges. The lit file is <code>editor-client/src/index.ts</code>; the beams are its 34 dependents.</i></sub>
+  <sub><i>Existing Axon recording of this repository; graph size and layout are capture-specific, not current benchmarks.</i></sub>
 </div>
 
 <div align="center">
-  <img src="docs/media/landing-axon.png" alt="The Crucible project site, rendered in the same dependency-space visual language as Axon" width="760">
+  <img src="docs/media/landing-axon.png" alt="Earlier Crucible project-site capture using the Axon visual language" width="760">
   <br>
-  <sub><i>The project site — the same visual language, rendered in the browser.</i></sub>
+  <sub><i>Existing project-site capture. The landing page is separate from the VS Code product.</i></sub>
 </div>
-
----
 
 ## Memory
 
-Long sessions do not simply truncate.
+Memory is enabled by default in the managed extension, but **default memory and experimental scoped durable memory are different paths**.
 
-- **Compaction** evicts the oldest *whole turns* once history crosses a fraction of the context window, folding them into a running anchor summary. The evicted text is persisted before it is summarized, so nothing is lost to a bad summary.
-- **Cross-session recall** fuses four signals — semantic (sqlite-vec ANN over bge-small embeddings), lexical (FTS5 BM25), structural (entity overlap), and recency — then optionally re-ranks with a local `bge-reranker-base` cross-encoder. All of it degrades to a cheaper path rather than failing if a model or extension is unavailable.
-- **A write path that doesn't trust the model.** An LLM *proposes* candidate memories; deterministic Python disposes — embedding, deduplicating by cosine similarity, and superseding contradicted facts.
-- **An inspector panel** shows the per-signal scores behind every recalled memory, so you can see why something surfaced.
+- **Context compaction** reduces older conversation history into an anchor summary while retaining recent context. Summarization is best-effort: failures can degrade the working context, so this is not a lossless-context guarantee.
+- **Default recall/consolidation** uses the legacy memory path. Optional local embedding/reranking dependencies affect retrieval; unavailable models can leave a cheaper retrieval path rather than the full semantic pipeline.
+- **Experimental scoped recall** offers candidate catalogs with short content, scope/application conditions and provenance. A catalog can contain false positives. `read_memory` retrieves the full entry/status before reliance; `search_memory` finds additional candidates. Automatic lookup is limited to user-turn start, not every model/tool iteration.
+- **Publication and retirement:** experimental `remember` publishes immediately rather than entering a human review queue. Memories can be facts, procedures or episodes, with provenance and replacement history. `forget` retires an entry; it does not promise physical erasure of evidence or audit history. User-scope publication requires a user request; write tools are not given to read-only children.
 
-Memories are typed — **semantic** (facts), **procedural** (how things are done here), **episodic** (what happened) — and a superseded memory keeps a chain back to what replaced it, so you can see how an understanding changed rather than just its current state.
+### Memory Inspector
+
+**Crucible: Open Memory Inspector** provides Saved memories, Recall decisions and Curation views. The UI is read-only: it inspects entries, retired/replacement chains, available recall decisions and curation state rather than editing the store directly. Availability varies with enabled memory mode and backend state.
+
+For candidate catalogs, **offered does not mean read or used**. Optional BGE ranking orders candidates; it is not a separate relevance-acceptance judge. The inspector distinguishes catalog offers from other delivery traces, and should not be interpreted as proof that a model relied on an entry. Scoped durable visibility is bound to user/current repository/current thread context, not a global browser of every project's memories.
 
 <div align="center">
-  <img src="docs/media/memory-browser.png" alt="Memory browser showing typed entries, a retired memory, and its supersede chain" width="440">
-  <img src="docs/media/memory-recall.png" alt="Recall trace with per-signal score bars and injection badges" width="440">
+  <img src="docs/media/memory-browser.png" alt="Earlier memory browser showing typed entries and replacement history" width="440">
+  <img src="docs/media/memory-recall.png" alt="Earlier recall trace showing scores and delivery labels" width="440">
   <br>
-  <sub><i>Left: a retired memory and the chain to what replaced it. Right: why each memory surfaced — per-signal scores, the rerank, and what fell below the floor.</i></sub>
+  <sub><i>Earlier memory captures. Current inspector labels distinguish catalog offers from delivery; neither is proof of use.</i></sub>
 </div>
 
+### Defaults and experimental switches
 
----
+These defaults describe the managed VS Code experience; saved settings and explicit backend configuration can change them.
+
+| Feature | Default / control |
+|---|---|
+| Managed runtime, memory, local search-model dependencies | Enabled; `crucible.managedRuntime.enabled`, `crucible.memory.enabled`, `crucible.localModels` |
+| Controller, skills and MCP | Enabled by managed-runtime environment wiring; a directly launched backend has different defaults |
+| Sub-agents / teams | Enabled in controller config; `CRUCIBLE_SUBAGENTS_ENABLED`, `CRUCIBLE_TEAMS_ENABLED`; teams require sub-agents |
+| Native web fetch / prototype search | Enabled; `crucible.webFetch.enabled`, `crucible.webSearch.enabled` |
+| Scoped durable recall | **Off**; `crucible.memory.experimental.recall` / `CRUCIBLE_MEMORY_RECALL_V2` |
+| Background memory curator | **Off**; `crucible.memory.experimental.curator` / `CRUCIBLE_MEMORY_CURATOR_V2`; requires experimental recall |
+| Capped evidence/sequential compaction | **Off**; `crucible.memory.experimental.compaction` / `CRUCIBLE_MEMORY_COMPACT_EVIDENCE` |
+| Tool batching, adaptive reads, compact context | **Off**; `crucible.performance.toolBatching`, `.adaptiveReads`, `.compactContext` |
+| Separate task subsystem | **Off**; `CRUCIBLE_TASK_SUBSYSTEM`; inline chat is the primary editing path |
+
+Memory/performance/web setting changes require a backend restart as described in Settings. The experimental memory store-path option can select a separate store; enabling experiments is not a migration or quality guarantee.
 
 ## Extend it
 
-| | |
+| Integration | Purpose |
 |---|---|
-| **`AGENTS.md`** | Project instructions injected into the agent's system prompt. Edit it and the change applies on the next turn — no restart. |
-| **Agent Skills** | Drop a `SKILL.md` into `.crucible/skills/<name>/`. The catalog is always visible to the model; the body loads only when relevant, or on an explicit `/skill`. |
-| **Prompt files** | `.crucible/prompts/<name>.md`, expanded inline in the composer with `/name arg`, with `$ARGUMENTS` and `$1..$N` substitution. |
-| **MCP servers** | Standard `.crucible/mcp.json` (stdio and HTTP/SSE). Tools appear as `mcp__<server>__<tool>` behind an approval gate, with a remember-this-tool option. |
-| **`@`-mentions** | Reference files directly in the composer. Content is folded into that one turn only — it never bloats the persisted transcript. |
+| **`AGENTS.md`** | Repository instructions for the agent |
+| **Agent Skills** | Discover `SKILL.md` instructions; load skill bodies on demand |
+| **Prompt files** | `.crucible/prompts/<name>.md`, expanded from `/name arg`, with argument substitution |
+| **MCP servers** | `.crucible/mcp.json`; external tools behind approval controls |
+| **`@`-mentions** | Reference files in the composer |
+| **Agent definitions** | Discoverable specialist roles with tool/permission constraints and trust handling |
 
 <div align="center">
-  <img src="docs/media/skills.png" alt="The / autocomplete listing prompt files and skills, each badged by kind" width="470">
-  <img src="docs/media/mcp.png" alt="The MCP section of Settings with three connected servers and their tool counts" width="350">
+  <img src="docs/media/skills.png" alt="Earlier slash-menu capture listing prompts and skills" width="470">
+  <img src="docs/media/mcp.png" alt="Earlier MCP settings capture showing connected servers" width="350">
   <br>
-  <sub><i>Left: one <code>/</code> menu over both prompt files and skills. Right: MCP servers from <code>.crucible/mcp.json</code>, connected, with live tool counts.</i></sub>
+  <sub><i>Existing captures of prompt/skill discovery and configured MCP servers.</i></sub>
 </div>
-
-
----
 
 ## Architecture
 
-Four packages, three runtimes, chosen per job rather than per preference.
-
-```
-apps/editor-client      TypeScript   Zod contracts + HTTP client — the source of truth for API shapes
-apps/vscode-extension   TypeScript   UI, webviews, runtime supervision      (~22k LOC src)
-services/agentd-py      Python       orchestration, agent loops, providers  (~37k LOC)
-services/indexer-rs     Rust         incremental indexing + symbol graph    (~5.6k LOC)
+```text
+apps/editor-client      TypeScript   Contracts and HTTP client
+apps/vscode-extension   TypeScript   Extension host, webviews, runtime supervision
+services/agentd-py      Python       Chat, tools, providers, memory, agents and teams
+services/indexer-rs     Rust         Repository indexing and symbol graph
 ```
 
-TypeScript for the editor surface and shared schemas; Python because every model SDK and ML library lives there; Rust because incremental re-indexing on every keystroke-adjacent save is a throughput problem.
-
-The backend exposes **48 `/v1` routes**. The extension contributes **14 commands**, **9 settings**, and **5 webview surfaces** (chat, settings, first-run wizard, memory inspector, Axon).
-
-<details>
-<summary><b>Developing on it</b></summary>
+### Developing on it
 
 ```bash
 npm install
-npm run build          # all TS packages
-npm run test           # vitest across editor-client + extension
-npm run typecheck      # tsc --noEmit across workspaces
+npm run build
+npm run test
+npm run typecheck
 ```
 
 ```bash
@@ -305,11 +275,11 @@ cd services/agentd-py
 python -m venv .venv && source .venv/bin/activate
 pip install -e '.[dev]'
 python -m agentd.serve --port 8000 --reload
-# every request needs the token it wrote (GET /health does not):
-#   curl -H "Authorization: Bearer $(cat ~/.crucible/run/agentd-8000.token)" http://127.0.0.1:8000/v1/config
-pytest                 # note: pyproject already sets -q; do not add another
+pytest
 ruff check . && mypy agentd
 ```
+
+The backend uses bearer-token authentication; `/health` is the unauthenticated health check. Use the documented development authentication flow rather than putting tokens in source files.
 
 ```bash
 cd services/indexer-rs
@@ -317,53 +287,32 @@ cargo build
 cargo run -- index --workspace /path/to/repo --snapshot-path /path/to/.crucible/index-snapshot.json
 ```
 
-**Build order matters:** `vscode-extension` types against `editor-client`'s compiled `dist/`, not its source. After changing contracts, run `npm run -w @crucible/editor-client build` before typechecking the extension.
-
-`CLAUDE.md` in the repo root is the detailed engineering guide — subsystem-by-subsystem, including the gotchas that cost someone a day.
-
-</details>
-
----
+Build the editor-client contracts before typechecking consumers after contract changes. [CLAUDE.md](CLAUDE.md) contains subsystem-level engineering guidance.
 
 ## Testing
 
-**2,430 tests pass** across the stack — 1,695 Python, 449 webview, 211 extension host, 75 client contracts, spread over 344 test files.
-
-The Python suite favours integration over mocking: real temp-directory shadow workspaces, the real patch engine, and scripted reasoning engines that replay fixed model responses, so the orchestration logic is exercised rather than stubbed.
-
----
+The repository has Python backend tests, TypeScript client/extension tests, webview tests and Rust indexer tests. Test totals are deliberately not pinned here: counts and passing status depend on the checkout, environment and command run. The development commands above are instructions, not a claim that those suites were run for this documentation update.
 
 ## What's actually verified
 
-Software READMEs tend to describe intent. This section separates what has been confirmed against something real from what has only been confirmed against a test.
+This overview is based on current source and Git history, not a new live-provider or editor end-to-end certification. The audit baseline is the actual **`v0.5.4` tag**, which points to `dfd083a` (August 5, 2026). Its README was the earlier roadmap/service-layout document—not the later page carrying a v0.5.4 badge. The broad rewrite `331029e` followed on August 13; `d84bd5a` (October 5) only updated launch/authentication instructions.
 
-**Verified against live providers or a running editor**
-- The reasoning-effort mapping on NVIDIA NIM — measured, with `reasoning_effort: "none"` collapsing a completion from 25 tokens to 4.
-- Symbol-graph resolution through gopls and jdtls, including a live LSP handshake against a real Java language server.
-- The managed runtime installer, run end to end against real downloaded artifacts before any release was tagged.
-- The chat loop building a complete single-file application through the approval gates on a local model.
+Material developments in `v0.5.4..HEAD`, reflected above, include:
 
-**Unit-tested only — not yet exercised against the live service**
-- The reasoning-effort wire mappings for Gemini, Groq, and Ollama. The shape is verified against provider documentation and pinned by tests; no live call has confirmed the provider honours it. One such gap was already caught this way: a rung that reported as working while omitting the field entirely.
-- `Implements` edge fan-out for Go and Java.
-- The semantic-retrieval half of the pipeline for Go and Java (the graph half is verified).
+- Request/token accounting, declared-context probing and reasoning-effort controls, followed by provider-native controls and main-request context telemetry.
+- Rewind checkpoints; background agents and editable/trusted agent definitions; team boards, proposals, implementation and review workflows.
+- Authenticated managed-backend startup and supervision; ChatGPT-plan sign-in and the separate experimental Claude-subscription connection.
+- Per-thread/agent/team usage, optional local retrieval-model setup, native web search/fetch, image attachments and background command sessions.
+- Revised transcript/composer layout, appearance settings and authoritative approval modes with workspace-trust handling.
+- Scoped memory candidate catalogs, curation and evidence compaction behind experimental switches.
 
-**Not done**
-- No LICENSE file yet — see below.
-- No Marketplace listing; installation is via GitHub Releases.
-- The task subsystem (multi-step plan execution with per-step review) is feature-complete but **off by default** behind `CRUCIBLE_TASK_SUBSYSTEM`; inline editing is the primary path.
+These are source capabilities in this checkout, not an assertion that all changes have been published in a release.
 
-If you find a claim here that doesn't hold, that's a bug in this file and worth an issue.
-
----
+Published release availability, provider entitlements, live model behavior and performance are not established by a manifest version or a unit test. Existing media predates parts of the current UI; see [media notes](docs/media/README.md). Report mismatches as documentation bugs.
 
 ## License
 
-[Apache License 2.0](LICENSE) — permissive, with an explicit patent grant from contributors.
-
-Crucible doesn't vendor third-party runtimes, but its GitHub Release artifacts re-host several of them so that installing is a single fetch. [`NOTICE`](NOTICE) records each one and its license, including the two with real attribution obligations: the **Eclipse JDT Language Server** (EPL-2.0) and the bundled **Eclipse Temurin JRE 21** (GPL-2.0 with Classpath Exception — the exception is precisely what allows shipping it beside Apache-2.0 code without extending GPL terms to that code).
-
-Model weights, Python packages, and npm packages are fetched from their publishers on the user's machine and are not redistributed here.
+[Apache License 2.0](LICENSE). [NOTICE](NOTICE) records third-party runtime attribution, including the Eclipse JDT Language Server and bundled Eclipse Temurin JRE. Downloaded runtimes, packages and model weights have their own terms.
 
 ---
 

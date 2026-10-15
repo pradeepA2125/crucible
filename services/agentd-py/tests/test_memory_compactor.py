@@ -223,7 +223,8 @@ async def test_summarizer_failure_falls_back(tmp_path):
     )
     history = [{"role": "user", "content": "y" * 80} for _ in range(6)]
     result = await comp.maybe_compact(history, "r1")
-    assert result.degraded is True and result.compacted is True
+    assert result.degraded is True and result.compacted is False and result.failed
+    assert result.history is history
     assert result.history[-2:] == history[-2:]  # hot preserved (2 messages of ~26 tok each)
     assert len(store.get_segments("r1")) == 4  # evicted still persisted (lossless)
     assert store.get_anchor("r1") is None  # no anchor written on failure

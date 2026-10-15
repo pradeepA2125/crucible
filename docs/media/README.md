@@ -1,6 +1,6 @@
 # Capture spec for README media
 
-**Status:** every asset below is captured and live in the README.
+**Status:** the README retains existing historical captures, not a pixel-accurate reference for the current UI. Chat, approval modes, provider setup and Memory Inspector have since changed. The specifications below include capture ideas as well as existing assets; `chat.gif`, `memory.png` and `instructions.png` are not current README assets. No new captures were made for this documentation update.
 
 Two deviations from the original spec, both deliberate:
 
@@ -87,7 +87,8 @@ real recall to show. Then open the Memory inspector.
 - `memory-recall.png` — the recall-trace tab, showing the per-signal score bars
   (semantic / lexical / structural / importance / recency) and which entries
   were actually injected. This is the one that proves recall is scored rather
-  than vibes.
+  than vibes. In the current candidate-catalog inspector, an entry being offered
+  does not mean it was read or used; BGE ordering is not a separate relevance judge.
 
 ---
 

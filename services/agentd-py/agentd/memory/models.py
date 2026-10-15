@@ -57,10 +57,12 @@ class CompactionResult:
     history: History
     anchor: str | None = None
     degraded: bool = False
+    failed: bool = False
     evicted_count: int = 0  # messages evicted this round (for the observability event)
     anchor_version: int = 0  # anchored-summary version after this round
     evicted_seq_lo: int | None = None  # segment seq span evicted this round (consolidation input)
     evicted_seq_hi: int | None = None
+    error: Exception | None = None  # retained so access refusals can reach the caller
 
 
 @dataclass
@@ -68,6 +70,7 @@ class TurnPreparation:
     history: History
     recalled_memories: list[str] = field(default_factory=list)  # rendered memory lines (tail)
     compacted: bool = False
+    compaction_failed: bool = False
     evicted_count: int = 0  # surfaced from CompactionResult so the loops can broadcast it
     anchor_version: int = 0
     evicted_seq_lo: int | None = None  # surfaced so the harness can consolidate the evicted slice

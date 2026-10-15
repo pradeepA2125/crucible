@@ -55,6 +55,17 @@ function renderView() {
   );
 }
 
+it("shows main-turn output once in the pinned footer", () => {
+  render(<ThreadView state={{ ...base, activeThreadId: "t", turnActive: true, inputEnabled: false,
+    messages: [{ role: "user", type: "text", content: "Update the page", timestamp: "", metadata: {} }],
+    tokenProgress: { thinking: 0, output: 4155, input: 35400, exact: false },
+  }} onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+  const footer = screen.getByTestId("workbar-column");
+  expect(within(footer).getByText(/~4,155/)).toBeInTheDocument();
+  expect(screen.getAllByText(/~4,155/)).toHaveLength(1);
+  expect(screen.queryByTestId("generation-progress")).toBeNull();
+});
+
 describe("ThreadView context integration", () => {
   it("forwards the authoritative snapshot and stale flag without replacing Manage usage", () => {
     render(<ThreadView state={{ ...base, contextUsage, contextUsageStale: true }}

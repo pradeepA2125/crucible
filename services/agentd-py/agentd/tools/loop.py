@@ -372,6 +372,11 @@ class ToolLoop:
             # anchored summary never leaks into another step's context.
             _prep = await self._memory_harness.prepare_turn(history, f"{self._task_id}:{step.id}")
             history[:] = _prep.history
+            if _prep.compaction_failed:
+                raise RuntimeError(
+                    "Conversation compaction failed; stopped before another large model request. "
+                    "History and edits are preserved. Review compaction before retrying."
+                )
             if _prep.compacted:
                 # Observability: surface the compaction on the task stream.
                 self._broadcaster.broadcast(self._broadcast_key, {

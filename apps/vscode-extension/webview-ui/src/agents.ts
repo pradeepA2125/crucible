@@ -54,12 +54,20 @@ function text(at: string, content: string, flag: "progress" | "breadcrumb"): Cha
   return { role: "agent", content, type: "text", timestamp: at, metadata: { [flag]: true } };
 }
 
-/** Folds one child-channel event into an open view (spec §10). Events the wireframe
- * does not show (thinking, token counts) are ignored; the final backfill is
- * authoritative anyway. */
+/** Folds one child-channel event into an open view. Stream counts remain ephemeral;
+ * the persisted transcript is authoritative for completed work. */
 export function applyAgentEvent(view: AgentViewState, event: AgentEventView, at: string): AgentViewState {
   const p = event.payload;
   switch (event.type) {
+    case "token_progress": {
+      const count = (value: unknown) => typeof value === "number" && Number.isFinite(value)
+        ? Math.max(0, value) : 0;
+      return { ...view, tokenProgress: {
+        thinking: count(p.thinking), output: count(p.output),
+        input: typeof p.input === "number" && Number.isFinite(p.input) ? Math.max(0, p.input) : null,
+        exact: p.exact === true,
+      } };
+    }
     case "tool_call": {
       const id = view.nextId;
       const pill: ToolEventView = {

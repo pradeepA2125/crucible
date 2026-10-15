@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { StreamingBubble } from "../../types";
+import type { StreamingBubble, TokenProgressView } from "../../types";
 import { describeTool, toolLine } from "../../transcript/summarizeActivity";
 import { ActivityLine } from "./ActivityLine";
 
@@ -8,10 +8,11 @@ function elapsed(ms: number): string {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-export function TransientActivity({ bubble, startedAt, fallback, waiting = false }: {
+export function TransientActivity({ bubble, startedAt, fallback, waiting = false, tokenProgress }: {
   bubble: StreamingBubble; startedAt: number; fallback?: string | null;
   /** A main-agent gate is pending: nothing is running, the user is the one being waited on. */
   waiting?: boolean;
+  tokenProgress?: TokenProgressView | null;
 }) {
   const [now, setNow] = useState(Date.now());
   const [open, setOpen] = useState(false);
@@ -30,7 +31,7 @@ export function TransientActivity({ bubble, startedAt, fallback, waiting = false
     : thinking || fallback || "Working…";
   return (
     <div data-testid="transient-activity" className="grid min-w-0 gap-1.5">
-      <div className="flex min-w-0 items-center gap-2 text-meta text-text-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 text-meta text-text-2">
         <span className="h-1.5 w-1.5 shrink-0 rounded-full" aria-hidden="true"
           style={{ background: "var(--color-accent)" }} />
         <span data-testid="transient-text" className="min-w-0 truncate">
@@ -39,6 +40,12 @@ export function TransientActivity({ bubble, startedAt, fallback, waiting = false
               {text.slice(toolLine(unfinished[0]).verb.length)}</>
           )}
         </span>
+        {!waiting && !unfinished.length && tokenProgress && tokenProgress.output > 0 && (
+          <span data-testid="generation-progress" className="max-w-full truncate font-mono tabular-nums text-text-2"
+            title="Output received this turn, including edits and reports. Live token counts are estimates, not percent complete.">
+            Output {tokenProgress.exact ? "" : "~"}{tokenProgress.output.toLocaleString("en-US")} tokens
+          </span>
+        )}
         {!waiting && <span className="shrink-0 text-text-3">{elapsed(now - startedAt)}</span>}
         {unfinished.length > 0 && (
           <button type="button" aria-label="Show current step" aria-expanded={open} onClick={() => setOpen(!open)}

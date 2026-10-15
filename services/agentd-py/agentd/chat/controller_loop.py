@@ -1636,6 +1636,21 @@ class ControllerLoop:
                 **({"force": True} if force_compact else {}))
             force_compact = False
             history[:] = _prep.history
+            if _prep.compaction_failed:
+                self._observed_prompt = None
+                if self._context_invalidate is not None:
+                    self._context_invalidate()
+                message = (
+                    "Conversation compaction failed. Your history and edits are preserved. "
+                    "The turn stopped before sending another large model request. "
+                    "Review the compaction failure or change the model before continuing."
+                )
+                if self._agent is not None:
+                    # A child must report failure, never appear to have completed
+                    # its assignment with the foreground stop notice as its answer.
+                    raise RuntimeError(message)
+                return ControllerOutcome(kind="answer", history=history,
+                                         system_notice=True, text=f"⚠️ {message}")
             if _prep.compacted:
                 seen.clear()  # evidence was removed; allow the exact necessary reread
                 # The pinned message_count no longer refers to this history.

@@ -20,6 +20,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol
+from uuid import uuid4
 
 import openai
 from openai import AsyncOpenAI
@@ -28,6 +29,7 @@ from agentd.performance import mark, profile_async, span
 from agentd.providers.context_observation import (
     ContextInputObserver,
     begin_context,
+    estimate_request_input,
     finish_context,
     report_context,
 )
@@ -61,7 +63,7 @@ from agentd.providers.plan_access import (
     classify_plan_error,
 )
 from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
-from agentd.providers.token_progress import ProgressTicker, approx_prompt_tokens, int_or_none
+from agentd.providers.token_progress import ProgressTicker, int_or_none
 from agentd.providers.usage import METER, USAGE_OWNER
 from agentd.runtime.artifacts import provider_debug_root
 
@@ -182,6 +184,9 @@ class OpenAIJsonTransport(ModelJsonTransport):
         self._client_token: str | None = None
         self._client_responses: Any = None
         self._sessions = SessionInputs()
+        # Unowned calls (validation/background work) still need a stable cache
+        # stream, isolated from other transport instances/accounts.
+        self._cache_owner = f"transport:{uuid4()}"
         if bearer is not None:
             self._bearer: BearerSource = bearer
         else:
@@ -419,6 +424,19 @@ class OpenAIJsonTransport(ModelJsonTransport):
             if extra:
                 msg = f"plan route request carries unsupported fields: {sorted(extra)}"
                 raise ValueError(msg)
+            if not headers or "session_id" not in headers:
+                # Apply to ALL entry points, including plain text and strict JSON.
+                # Resolve before the retry loop: refresh/transient retries must
+                # retain the same stream. Dynamic input must not name the stream.
+                shape = {k: body[k] for k in (
+                    "model", "tools", "tool_choice", "parallel_tool_calls", "text", "reasoning",
+                ) if k in body}
+                session = session_id_for(
+                    USAGE_OWNER.get() or self._cache_owner,
+                    body.get("instructions", ""), shape,
+                )
+                assert session is not None
+                headers = {**(headers or {}), "session_id": session}
         # A 401 gets exactly one refresh-and-retry, outside the transient retry budget.
         refreshed = False
         attempt = 0
@@ -492,8 +510,8 @@ class OpenAIJsonTransport(ModelJsonTransport):
         headers: dict[str, str] | None = None,
         on_context_input: ContextInputObserver | None = None,
     ) -> _Reply:
-        ticker = ProgressTicker(on_progress, input_n=approx_prompt_tokens(
-            body["instructions"], json.dumps(body["input"])))
+        ticker = ProgressTicker(on_progress, input_n=estimate_request_input(
+            str(body.get("model", "")), body))
         ticker.start()
         try:
             extra = {"extra_headers": headers} if headers else {}
@@ -523,6 +541,11 @@ class OpenAIJsonTransport(ModelJsonTransport):
                     first_content = False
                 if kind == "response.output_text.delta":
                     texts.setdefault(getattr(event, "item_id", None), []).append(event.delta)
+                    ticker.output(event.delta)
+                elif kind == "response.function_call_arguments.delta":
+                    # Native actions carry edits/reports in argument deltas rather
+                    # than output_text. Count them while they arrive; execution
+                    # still uses only the completed, validated action below.
                     ticker.output(event.delta)
                 elif kind == "response.output_item.done":
                     item = getattr(event, "item", None)
@@ -606,6 +629,11 @@ class OpenAIJsonTransport(ModelJsonTransport):
             # Per agent/thread/team, next to the prompt tokens the loop records: the
             # share of input the provider served from cache (what a plan can discount).
             METER.record(USAGE_OWNER.get(), cached=cached)
+        if on_usage is None:
+            # Auxiliary memory calls have no engine usage callback. Their input
+            # and output must still be visible in the owner's quota accounting.
+            METER.record(USAGE_OWNER.get(), prompt=input_tokens or 0,
+                         completion=output_tokens or 0)
         if self._plan_route and input_tokens:
             # One line per call, so a miss shows up with its owner instead of only in totals.
             logger.info("[cache] owner=%s session=%s input=%d cached=%d (%d%%)",

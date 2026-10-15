@@ -51,6 +51,7 @@ export function AgentTranscript({ agentId }: { agentId: string }) {
         </div>
       </div>
       <AgentWorkTranscript key={agentId} messages={view.messages} live={view.live} running={!isTerminalAgent(status)}
+        tokenProgress={view.tokenProgress}
         waiting={status === "waiting"} startedAt={agents[agentId]?.activationStartedAt ?? detail.activationStartedAt ?? detail.startedAt}
         renderMessage={m => m.metadata?.report === true
           ? <ReportBlock text={m.content} status={String(m.metadata?.status ?? status)} label={detail.label} />
