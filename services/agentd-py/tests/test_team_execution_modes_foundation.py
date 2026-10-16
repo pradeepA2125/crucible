@@ -105,6 +105,27 @@ async def test_deliberation_with_assignments_finalizes_lead_and_stops(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["actionable", "no_change", "needs_decision"])
+async def test_directory_scope_is_analysis_not_execution_authority(tmp_path, outcome):
+    store, svc, host, coord, plan = setup(tmp_path, "deliberate_and_implement")
+    (tmp_path / "a.py").mkdir()
+    adopt(store, svc, coord)
+    coord.on_report("alice", "completed", None, report="Recommendation",
+                    team_fields=final_fields(outcome))
+    team = store.get_team("t")
+    if outcome == "actionable":
+        assert team.phase == "PAUSED"
+        assert "must be a file" in team.paused_reason
+        assert team.result_seq is None
+    else:
+        assert team.phase == "DONE"
+        assert store.get_post("t", team.result_seq).payload["directory_scopes"] == ["a.py"]
+    assert all(m.assignment is None for m in store.members("t"))
+    assert host.started == ["alice", "bob", "alice"]
+    coord.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("gate", [False, True])
 async def test_combined_final_result_starts_only_authorized_continuation(tmp_path, gate):
     store, svc, host, coord, _ = setup(tmp_path, "deliberate_and_implement", gate=gate)

@@ -15,6 +15,7 @@ from agentd.teams.config import team_review_cycles
 from agentd.teams.finalization import (
     finalization_input,
     fingerprint_files,
+    recommendation_fingerprints,
     validate_execution,
     validate_final_result,
 )
@@ -219,7 +220,11 @@ class TeamCoordinator:
                  for f in a.get("files", [])]
         if proposal is not None:
             paths += [str(f) for f in proposal.payload.get("shared_files", [])]
-        snapshot = fingerprint_files(self._svc.workspace, paths)
+        if team.mode == "deliberate_and_implement" and result["outcome"] == "actionable":
+            snapshot = fingerprint_files(self._svc.workspace, paths)
+            directory_scopes: list[str] = []
+        else:
+            snapshot, directory_scopes = recommendation_fingerprints(self._svc.workspace, paths)
         event = sm.FinalizationReported(label, result["outcome"],
                                         self._assignees(team.adopted_proposal_id or ""))
         next_state, _ = sm.apply(self._state, event)
@@ -235,7 +240,8 @@ class TeamCoordinator:
                     payload={**result, "run_id": team.run_id, "mode": team.mode,
                              "deliverable_kind": team.deliverable_kind,
                              "deliverable_description": team.deliverable_description,
-                             "selected_by": self._selected_by(), "file_fingerprints": snapshot})
+                             "selected_by": self._selected_by(), "file_fingerprints": snapshot,
+                             "directory_scopes": directory_scopes})
                 self._store.update_team(
                     self._team_id, result_seq=post.seq, result_notice_pending=True)
             completed = next_state.phase == "DONE"

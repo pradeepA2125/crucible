@@ -3059,9 +3059,14 @@ class ChatController:
         coordinator = self._coordinators.get(team_id)
         if team is None or team.thread_id != thread_id:
             raise TeamInputError(f"no team {team_id!r} in this thread")
-        if coordinator is None or coordinator.phase != "PAUSED":
-            raise TeamInputError(f"resume_team is only for a PAUSED team; this team is "
+        recovering = team.phase == "FAILED"
+        if not recovering and (coordinator is None or coordinator.phase != "PAUSED"):
+            raise TeamInputError(f"resume_team is only for a PAUSED or FAILED team; this team is "
                                  f"{team.phase}")
+        workflows = TeamWorkflowOps(self)
+        workflows.quiet(team)
+        if recovering:
+            workflows.capacity(team)
         cap = team_max_budget()
         members = len(self._store.teams.members(team_id))
         amount = extra if extra is not None else min(team_budget_per_member() * members, cap)
@@ -3073,8 +3078,18 @@ class ChatController:
             raise TeamInputError(
                 f"the team has used {used} requests and its budget cannot rise above {cap} "
                 "(CRUCIBLE_TEAM_MAX_BUDGET): disband it, or ask the user to raise that limit")
-        TeamWorkflowOps(self).checkpoint(team)
-        coordinator.resume(amount)
+        workflows.checkpoint(team)
+        if recovering:
+            from_phase = self._failed_from(team_id)
+            coordinator = workflows.coordinator(team)
+            self._store.teams.update_team(
+                team_id, budget=team.budget + amount, end_reason=None, ended_at=None,
+                paused_reason=None,
+            )
+            coordinator.revive(from_phase, team.adopted_proposal_id)
+        else:
+            assert coordinator is not None
+            coordinator.resume(amount)
         after = self._store.teams.get_team(team_id)
         assert after is not None
         return {"team_id": team_id, "phase": after.phase, "budget": after.budget}

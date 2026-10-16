@@ -143,6 +143,11 @@ class TeamWorkflowOps:
             raise TeamInputError(
                 "the result requires a decision or recommends no change; deliberate first"
             )
+        if result.payload.get("directory_scopes"):
+            raise TeamInputError(
+                "the recommendation has directory scopes; revise it with concrete file "
+                "assignments before implementation"
+            )
         from agentd.teams.finalization import changed_fingerprints, fingerprint_files
 
         snapshot = result.payload.get("file_fingerprints", {})

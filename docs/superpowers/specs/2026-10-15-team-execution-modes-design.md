@@ -294,6 +294,11 @@ Proposed `outcome` values: `actionable`, `no_change`, `needs_decision`. An actio
 diagnosis can recommend further work without itself supplying an execution plan. Continuing
 automatically additionally requires a valid executable assignment set.
 
+Analysis scopes may name directories. Publishing a deliberate recommendation, or a
+`no_change`/`needs_decision` result, fingerprints concrete files and records directory
+scopes separately. Directory scopes require a revised concrete file map before later
+implementation; they must not fail result publication or become broad editing authority.
+
 `final_result` is accepted only from the lead in a finalization activation of the expected
 run. Its Markdown comes from the existing report's `summary`, not a duplicated text field.
 The concise summary is at most 1,000 characters; full result text at most 20,000. Oversized
@@ -479,6 +484,10 @@ run; conflicting mappings or stale references fail clearly.
 authorize execution. Preserve `adopt_proposal`, `resume_team`, `disband_team`, `team_status`,
 `team_report`, and `post_board`, updating their hints and structured results with mode/run.
 Resume retains mode and the paused phase; it never turns a planning request into execution.
+It also recovers FAILED teams at their saved phase after restart, without requiring a new
+board post. Resuming FINALIZING activates only the lead and preserves the selected plan;
+it does not reopen deliberation or activate peers. Recovery retains the user-started-turn,
+capacity and quiet-team guards.
 
 New tools participate in main-tool-name correction, tool-pill linking, delegation tracking,
 notice-action tracking, and repeat-action protection. Dedup keys include team id, tool,

@@ -333,7 +333,9 @@ class MainTeamToolSource:
                 parameters={"type": _OBJ, "properties": {**team, "proposal_id": _STR},
                             "required": ["team", "proposal_id"]}),
             ToolDefinition(name="resume_team", description=(
-                "Resume a PAUSED team, optionally raising its request budget."),
+                "Resume a PAUSED or FAILED team at its saved phase, optionally raising "
+                "its request budget. FINALIZING activates only the lead; it does not "
+                "restart the discussion or wake peers."),
                 parameters={"type": _OBJ, "properties": {**team,
                                                          "extra_budget": {"type": "integer"}},
                             "required": ["team"]}),
@@ -443,9 +445,11 @@ class MainTeamToolSource:
                                          f"team is {status.get('phase')}")
                 return _ok(self._ops.adopt(team_id, str(args.get("proposal_id", ""))))
             if tool == "resume_team":
-                if status.get("phase") != "PAUSED":
-                    raise TeamInputError(f"resume_team is only for a PAUSED team; this team is "
-                                         f"{status.get('phase')}")
+                if status.get("phase") not in ("PAUSED", "FAILED"):
+                    raise TeamInputError(
+                        "resume_team is only for a PAUSED or FAILED team; this team is "
+                        f"{status.get('phase')}"
+                    )
                 extra = args.get("extra_budget")
                 return _ok(self._ops.resume(team_id, extra if isinstance(extra, int) else None))
             if tool == "disband_team":

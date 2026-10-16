@@ -64,6 +64,24 @@ def changed_fingerprints(workspace: Path, snapshot: dict[str, str | None]) -> li
     ]
 
 
+def recommendation_fingerprints(
+    workspace: Path, paths: list[str]
+) -> tuple[dict[str, str | None], list[str]]:
+    """Planning may name directory scopes without promising executable file ownership."""
+    root = workspace.resolve()
+    files: list[str] = []
+    directories: list[str] = []
+    for raw in paths:
+        path = (root / raw).resolve()
+        if root not in path.parents:
+            raise TeamInputError(f"planning path {raw!r} is outside the workspace")
+        if path.is_dir():
+            directories.append(path.relative_to(root).as_posix())
+        else:
+            files.append(raw)
+    return fingerprint_files(root, files), sorted(set(directories))
+
+
 def validate_execution(service: TeamService, team: TeamRecord, proposal: TeamPost | None) -> None:
     if team.mode == "deliberate":
         raise TeamInputError("Deliberate mode cannot start implementation")

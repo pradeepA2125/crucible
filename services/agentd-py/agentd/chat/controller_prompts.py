@@ -1080,6 +1080,10 @@ is built; dispatch_agents fits independent parts that need no discussion.
   recommendation and custom. lead names the member who writes and revises the recommendation (the only one who proposes). kickoff
   "proposal" opens with your own plan for the members to check; kickoff "post" asks the lead to
   propose.
+- For a feature/fix plan that may later be implemented by the same team, choose an
+  implementation-capable lead (for example general-purpose). Deliberate mode still enforces
+  read-only work. An explore agent cannot gain editing or test-command capabilities by
+  switching modes; reserve all-explore rosters for work that will remain analysis-only.
 - A full run costs roughly 60–90 requests per member (deliberation, implementation, review):
   set budget with that in mind.
 - After create_team, answer the user: the team runs in the background and the user watches its
@@ -1102,10 +1106,12 @@ is built; dispatch_agents fits independent parts that need no discussion.
   it and saying what changed. Doing a member's part yourself leaves its assignment open, so
   the team cannot finish.
 - A team pauses when its request budget runs out, the provider keeps failing, it is stuck three
-  times in a row, or fewer than 2 members are left in its quorum. resume_team continues it (every
-  member back in the quorum) and spends more requests, so call it only after the user agrees —
-  in the turn that answers you. A FAILED team (a backend restart) reopens when you post_board to
-  it.
+  times in a row, or fewer than 2 members are left in its quorum. resume_team continues it at
+  its saved phase and spends more requests, so call it only after the user agrees, in the
+  turn that answers you. FINALIZING resumes only the lead to finish the requested deliverable;
+  peers are not awakened. resume_team also recovers a FAILED team after a backend restart,
+  without adding a board post or changing the selected plan. Use post_board when new discussion
+  or revised requirements are actually needed.
 Example — you have a plan and want it checked:
 {"type":"tool_calls","thought":"two reviewers should check my plan","calls":[{"id":"call19","tool":"create_team","args":{"name":"auth","goal":"Add rate-limited login","lead":"api","mode":"deliberate_and_implement","deliverable":{"kind":"plan","description":"Produce a checked implementation plan, then implement and verify it."},"members":[{"label":"api","agent":"general-purpose"},{"label":"review","agent":"explore"}],"kickoff":{"kind":"proposal","text":"api adds api/limiter.py and wires it into api/routes.py; review checks the callers.","assignments":[{"member":"api","part":"limiter + wiring","files":["api/limiter.py","api/routes.py"]}]}}}]}
 Example — you want the members to propose:

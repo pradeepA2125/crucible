@@ -65,6 +65,83 @@ async def test_deliberate_assigned_plan_delivers_lead_result_without_edits(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_directory_scoped_recommendation_publishes_but_requires_refinement_to_execute(
+    tmp_path, monkeypatch
+):
+    ctrl, store, tid, _ = _make(
+        tmp_path, monkeypatch, {"alice": [AGREE, final()], "bob": [AGREE]}
+    )
+    quiet(ctrl, monkeypatch)
+    directory = tmp_path / "ws" / "services"
+    directory.mkdir()
+    source = directory / "existing.py"
+    source.write_text("unchanged\n")
+    created = await ctrl._create_team(
+        tid, "u1", request(kickoff_assignments=[
+            {"member": "bob", "part": "Backend scope for a future MVP", "files": ["services"]}
+        ])
+    )
+    await _settle(ctrl)
+    team_id = created["team_id"]
+    team = store.teams.get_team(team_id)
+    assert (team.phase, team.end_reason) == ("DONE", "deliberation_complete")
+    result = store.teams.get_post(team_id, team.result_seq)
+    assert result.text == final()["summary"]
+    assert result.payload["directory_scopes"] == ["services"]
+    assert result.payload["file_fingerprints"] == {}
+    before = {m.label: store.get_agent(m.agent_id).activation_count
+              for m in store.teams.members(team_id)}
+    monkeypatch.setattr(ctrl, "turn_kind", lambda _: "user")
+    with pytest.raises(TeamInputError, match="revise it with concrete file"):
+        await TeamWorkflowOps(ctrl).start_implementation(tid, team_id, {
+            "expected_run_id": 1, "result_seq": team.result_seq,
+            "assignments": [{"member": "bob", "part": "fix", "files": ["services/existing.py"]}],
+        })
+    assert store.teams.get_team(team_id).phase == "DONE"
+    assert all(store.get_agent(m.agent_id).activation_count == before[m.label]
+               for m in store.teams.members(team_id))
+    assert source.read_text() == "unchanged\n"
+    assert [n.kind for n in store.unclaimed_notices(tid)] == ["recommendation_ready"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("restart", [False, True])
+async def test_resume_finalization_recovers_only_lead_without_board_feedback(
+    tmp_path, monkeypatch, restart
+):
+    ctrl, store, tid, _ = _make(tmp_path, monkeypatch, {
+        "alice": [AGREE, {**REPORT, "status": "partial", "summary": "Interrupted"}, final()],
+        "bob": [AGREE],
+    })
+    quiet(ctrl, monkeypatch)
+    team_id = (await ctrl._create_team(tid, "u1", request()))["team_id"]
+    await _settle(ctrl)
+    team = store.teams.get_team(team_id)
+    assert (team.phase, team.resume_phase) == ("PAUSED", "FINALIZING")
+    if restart:
+        ctrl._coordinators.pop(team_id).close()
+        store.teams.fail_live_teams("backend_restart")
+    before = {m.label: store.get_agent(m.agent_id).activation_count
+              for m in store.teams.members(team_id)}
+    posts = store.teams.posts(team_id)
+    with pytest.raises(TeamInputError, match="runs only in a turn the user started"):
+        ctrl._resume_team(tid, team_id, 1)
+    monkeypatch.setattr(ctrl, "turn_kind", lambda _: "user")
+    resumed = ctrl._resume_team(tid, team_id, 1)
+    assert resumed["phase"] == "FINALIZING"
+    await _settle(ctrl)
+    completed = store.teams.get_team(team_id)
+    assert (completed.phase, completed.run_id, completed.round) == ("DONE", team.run_id, team.round)
+    assert completed.budget == team.budget + 1
+    after = {m.label: store.get_agent(m.agent_id).activation_count
+             for m in store.teams.members(team_id)}
+    assert after == {"alice": before["alice"] + 1, "bob": before["bob"]}
+    assert not any(p.author == "main" for p in store.teams.posts(team_id) if p.seq > posts[-1].seq)
+    assert completed.adopted_proposal_id == team.adopted_proposal_id
+    assert not store.get_thread(tid).pending_controller_gates
+
+
+@pytest.mark.asyncio
 async def test_combined_finalizes_then_implements_and_reviews(tmp_path, monkeypatch):
     ctrl, store, tid, _ = _make(
         tmp_path,
