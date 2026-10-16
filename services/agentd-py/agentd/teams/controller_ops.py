@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING
 
 from agentd.subagents.framing import frame
 from agentd.subagents.inbox import InboxItem
-from agentd.teams.config import team_budget_per_member, team_max_budget, team_max_live_per_thread
+from agentd.teams.config import (
+    bounded_allowance,
+    team_budget_per_member,
+    team_max_budget,
+    team_max_live_per_thread,
+)
 from agentd.teams.models import LIVE_TEAM_PHASES, TeamRecord
 from agentd.teams.validation import TeamInputError, check_assignments, check_text, parse_assignments
 
@@ -94,6 +99,9 @@ class TeamWorkflowOps:
                 and plan.payload.get("source_result_seq") == args.get("result_seq")
                 and plan.payload.get("source_run_id") == args.get("expected_run_id")
             ):
+                if args.get("request_limit") != plan.payload.get("source_request_limit"):
+                    raise TeamInputError(
+                        "this result was already started with a different request limit")
                 supplied = args.get("assignments")
                 shared_raw = args.get("shared_files", plan.payload.get("shared_files", []))
                 if not isinstance(shared_raw, list):
@@ -184,6 +192,8 @@ class TeamWorkflowOps:
         fingerprints = fingerprint_files(Path(self.host._workspace_path), paths)
         self.checkpoint(team)
         fresh = min(team_budget_per_member() * len(roster), team_max_budget())
+        allowance = bounded_allowance(
+            team.requests, team.requests + fresh, args.get("request_limit"))
         with self.store.transaction():
             instruction = self.store.append_post(
                 team_id,
@@ -195,6 +205,7 @@ class TeamWorkflowOps:
                     "shared_files": shared,
                     "source_result_seq": seq,
                     "source_run_id": team.run_id,
+                    "source_request_limit": args.get("request_limit"),
                     "execution_instruction": True,
                     "file_fingerprints": fingerprints,
                 },
@@ -205,7 +216,7 @@ class TeamWorkflowOps:
                 mode="implement",
                 run_id=team.run_id + 1,
                 run_request_start=team.requests,
-                budget=team.requests + fresh,
+                budget=allowance,
                 approval_gate=team.approval_gate or args.get("approval_gate") is True,
                 adopted_proposal_id=None,
                 closing_proposal_id=None,
@@ -313,6 +324,8 @@ class TeamWorkflowOps:
                 )
             maximum = team.run_request_start + team_max_budget()
             allowance = min(maximum, team.budget + extra)
+        allowance = bounded_allowance(
+            self.host.team_requests(team_id), allowance, args.get("request_limit"))
         if self.host.team_requests(team_id) >= allowance:
             raise TeamInputError(
                 "team budget exhausted; explicitly add allowance or cancel the request"

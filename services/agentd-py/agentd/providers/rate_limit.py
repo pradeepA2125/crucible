@@ -14,6 +14,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from agentd.performance import profile_async, span
+from agentd.providers.request_budget import REQUEST_ADMISSION
 from agentd.providers.usage import METER, USAGE_OWNER
 
 CALL_PRIORITY: ContextVar[str] = ContextVar("crucible_call_priority", default="main")
@@ -89,6 +90,11 @@ class RateLimitedTransport:
     @profile_async("provider.rate_limit_wait")
     async def _admit(self) -> None:
         waited = await self._limiter.acquire(CALL_PRIORITY.get())
+        # No await between this shared-budget check and reservation in METER. Calls
+        # waiting for rate-limit capacity must recheck when they actually enter.
+        admission = REQUEST_ADMISSION.get()
+        if admission is not None:
+            admission()
         METER.record(USAGE_OWNER.get(), requests=1, wait_ms=int(waited * 1000))
 
     async def generate_json(self, **kwargs: Any) -> Any:

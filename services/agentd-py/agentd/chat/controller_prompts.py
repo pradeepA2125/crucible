@@ -1069,7 +1069,8 @@ Example — reviewing: run the tests, then state your stance on the closing prop
 _TEAMS_MAIN_BLOCK = tagged("_TEAMS_MAIN_BLOCK", """<<main>>
 
 TEAMS (create_team, post_board, team_status, team_report, start_team_implementation, set_team_mode,
-message_team_lead, cancel_team_lead_request, adopt_proposal, resume_team, disband_team)
+message_team_lead, cancel_team_lead_request, request_team_member_upgrade,
+adopt_proposal, resume_team, disband_team)
 create_team starts a team of agents that talk on a shared board: they post findings, propose
 approaches with assignments, and agree or object with evidence. Each member's role is its agent
 definition. It fits work where several perspectives should check one plan before and while it
@@ -1086,6 +1087,12 @@ is built; dispatch_agents fits independent parts that need no discussion.
   switching modes; reserve all-explore rosters for work that will remain analysis-only.
 - A full run costs roughly 60–90 requests per member (deliberation, implementation, review):
   set budget with that in mind.
+- A user request limit must be enforced with budget on creation, or request_limit on
+  post_board, resume_team, message_team_lead and start_team_implementation. request_limit
+  caps further team model calls, including helpers and finalization, at admission; it is
+  not extra_budget. Main's own calls count separately. Do not claim a limit was set using
+  only instructions in text. At the cap the team pauses and records partial evidence without
+  spending another model call. Never resume automatically to finish a report.
 - After create_team, answer the user: the team runs in the background and the user watches its
   board. Milestones (a plan adopted or waiting for approval, a deadlock, a member lost or
   blocked, the team stuck, paused or finished) wake you — do not poll team_status. post_board is
@@ -1094,6 +1101,15 @@ is built; dispatch_agents fits independent parts that need no discussion.
 - A DONE team reopens with post_board into a new deliberate run, preserving context. Follow-up discussion
   never authorizes implementation. To execute a completed actionable result, call start_team_implementation
   with its expected_run_id and result_seq. set_team_mode only narrows to deliberate.
+- If the accepted plan needs editors but the existing members are read-only, use
+  request_team_member_upgrade for the selected member labels and accepted result. The user
+  confirms the displayed role and permission changes on a card. Do not treat asking as
+  approval or create a replacement team. Approval preserves member identity/history and
+  stays deliberate; implementation still requires start_team_implementation in a user turn.
+- A stopped or paused team's notice and team_report include recorded partial files and
+  command outcomes, even without a final report. Describe actual partial progress and
+  unfinished verification. Missing final output does not mean no files changed. Inspect
+  this evidence without resuming members; do not describe unfinished commands as passed.
 - message_team_lead addresses the lead role directly and privately without waking other members. Replies
   notify you through existing notices. Include expected_run_id. Retry a blocked exchange using
   retry_request_seq; cancel_team_lead_request clears an unresolved request before changing runs.

@@ -1172,7 +1172,19 @@ class ControllerLoop:
         if recent:
             lines += ["", "Last tool calls:", *(
                 f"- {c.tool_name} {json.dumps(c.arguments, sort_keys=True)}" for c in recent)]
+        commands = self.command_evidence()
+        if commands:
+            lines += ["", "Recorded command results (unfinished is not verified):",
+                      json.dumps(commands)]
         return "\n".join(lines)
+
+    def command_evidence(self) -> list[dict[str, object]]:
+        results = {r.call_id: r for r in self._results}
+        return [{"arguments": c.arguments,
+                 "status": "finished" if c.call_id in results else "unfinished",
+                 "is_error": results[c.call_id].is_error if c.call_id in results else None,
+                 "output": results[c.call_id].output[-2000:] if c.call_id in results else ""}
+                for c in self._calls if c.tool_name == "run_command"][-6:]
 
     @property
     def tool_calls(self) -> list[ToolCall]:
@@ -1823,6 +1835,9 @@ class ControllerLoop:
                 unavailable_retries = 0
                 overflow_retried = False
             except Exception as exc:
+                from agentd.providers.request_budget import RequestBudgetExhausted
+                if isinstance(exc, RequestBudgetExhausted):
+                    raise
                 # A plan usage limit, an ineligible account or a dead sign-in: neither a
                 # retry nor a correction message can fix it, so the turn ends here.
                 stopped = find_access_stop(exc)

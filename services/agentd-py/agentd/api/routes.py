@@ -2027,7 +2027,14 @@ def build_router(
             if _chat_agent._store.get_thread(thread_id) is None:
                 raise HTTPException(status_code=404, detail="Thread not found")
             rows = _chat_agent._store.list_agents(thread_id, turn_id)
-            return {"agents": [r.summary() for r in rows]}
+            summaries = []
+            for record in rows:
+                summary = record.summary()
+                member = _chat_agent._store.teams.member_for_agent(record.agent_id)
+                if member and member.definition_override:
+                    summary["name"] = member.definition_override["name"]
+                summaries.append(summary)
+            return {"agents": summaries}
 
         @router.get("/chat/threads/{thread_id}/agents/{agent_id}")
         async def get_thread_agent(thread_id: str, agent_id: str) -> dict:
@@ -2038,7 +2045,12 @@ def build_router(
             # event broadcast but not yet persisted is never skipped by the client.
             last_seq = max((int(m.metadata.get("seq", 0)) for m in record.transcript),
                            default=0)
-            return {**record.model_dump(mode="json"), "last_seq": last_seq}
+            view = record.model_dump(mode="json")
+            member = _chat_agent._store.teams.member_for_agent(agent_id)
+            if member and member.definition_override:
+                view.update(name=member.definition_override["name"],
+                            definition=member.definition_override)
+            return {**view, "last_seq": last_seq}
 
         @router.post("/chat/threads/{thread_id}/agents/stop-all")
         async def post_stop_all_agents(thread_id: str) -> dict:

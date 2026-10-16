@@ -70,6 +70,8 @@ class ChildResult:
     team_run_id: int | None = None
     team_activation_kind: str = "lifecycle"
     team_request_seq: int | None = None
+    activation_files_changed: list[str] | None = None
+    command_evidence: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass(eq=False)
@@ -104,6 +106,7 @@ class AgentHandle:
     team_request_seq: int | None = None
     team_phase: str | None = None
     team_fields: dict[str, object] | None = None
+    write_start_seq: int = 0
 
     @property
     def agent_id(self) -> str:

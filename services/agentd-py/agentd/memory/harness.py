@@ -27,6 +27,7 @@ from agentd.memory.scope import ScopeContext, discover_repo_identity
 from agentd.memory.store import MemoryStore
 from agentd.providers.contracts import ModelJsonTransport
 from agentd.providers.plan_access import find_access_stop
+from agentd.providers.request_budget import RequestBudgetExhausted
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +280,8 @@ class MemoryHarness:
                 result = await self._compactor.maybe_compact(
                     history, run_id, observed=observed, **options)
             except Exception as exc:
+                if isinstance(exc, RequestBudgetExhausted):
+                    raise
                 # Account refusals must reach the controller, not trigger another
                 # large foreground call after a failed memory request.
                 stopped = find_access_stop(exc)
@@ -287,6 +290,9 @@ class MemoryHarness:
                 logger.warning("[memory] compaction failed for run=%s", run_id, exc_info=True)
                 return TurnPreparation(history=history, compaction_failed=True)
         if result is not None and result.failed:
+            if isinstance(result.error, RequestBudgetExhausted):
+                history[:] = result.history
+                raise result.error
             stopped = find_access_stop(result.error) if result.error is not None else None
             if stopped is not None:
                 # A previous fold may already have committed an anchor. Preserve

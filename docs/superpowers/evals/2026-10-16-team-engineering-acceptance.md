@@ -222,3 +222,8 @@ rather than relying on a prompt instruction or manual polling. Existing `extra_b
 only increases an already-large team allowance; main's statement that it applied a small
 limit does not make it a runtime cap. This issue is recorded, not represented as fixed by
 the lifecycle/publication changes in this branch.
+
+Follow-up: [bounded recovery acceptance](2026-10-16-team-bounded-recovery.md) records the
+subsequent runtime admission cap, confirmed member upgrades, interruption evidence,
+completed implementation review, final usage ledger and remaining live coverage limits.
+The observations above describe the earlier build and remain its historical test results.

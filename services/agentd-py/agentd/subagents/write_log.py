@@ -79,6 +79,7 @@ class WorkspaceWriteLog:
         self._agents: dict[str, _AgentView] = {MAIN_AGENT_ID: _AgentView(spawn_seq=0)}
         # Every path each agent ever promoted — a child's files_changed is its subtree's.
         self._promoted: dict[str, set[str]] = {}
+        self._promoted_at: dict[str, dict[str, int]] = {}
 
     @property
     def seq(self) -> int:
@@ -117,6 +118,7 @@ class WorkspaceWriteLog:
             view.hashes[path] = digest
         self._promoted.setdefault(agent_id, set()).update(paths)
         self._seq += 1
+        self._promoted_at.setdefault(agent_id, {}).update(dict.fromkeys(paths, self._seq))
         for path in paths:
             self._last_write[path] = WriteRecord(agent_id, label, name, self._seq)
             view.last_seen[path] = self._seq
@@ -128,6 +130,10 @@ class WorkspaceWriteLog:
         for agent_id in agent_ids:
             paths |= self._promoted.get(agent_id, set())
         return sorted(paths)
+
+    def files_changed_since(self, agent_ids: set[str], seq: int) -> list[str]:
+        return sorted({path for agent_id in agent_ids
+                       for path, at in self._promoted_at.get(agent_id, {}).items() if at > seq})
 
     def stale_writer(self, agent_id: str, path: str) -> WriteRecord | None:
         """The other agent whose promote `agent_id` has not seen, or None when it is safe."""

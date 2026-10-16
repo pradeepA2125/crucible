@@ -20,14 +20,17 @@ function assignmentsOf(payload: Record<string, unknown>): Assignment[] {
                    files: Array.isArray(a.files) ? a.files.map(String) : [] }));
 }
 
-/** The user's approval of a team's adopted plan (spec v2 §8.5): approve, send feedback for
- * one more round, or reject (the team ends). One decision per card. */
+/** User decision on an adopted execution plan or an explicit member-permission upgrade.
+ * Member upgrades preserve the completed run; plan rejection ends it. */
 export function TeamPlanGate({ gateId, taskId, payload }: Props) {
   const [resolved, setResolved] = useState<string | null>(null);
   useDecisionRetry(taskId, "team_plan", () => setResolved(null), gateId);
   const [feedback, setFeedback] = useState("");
   const team = String(payload.team_name ?? "");
   const proposal = String(payload.proposal_id ?? "");
+  const upgrade = payload.action === "upgrade_members";
+  const changes = (Array.isArray(payload.changes) ? payload.changes : [])
+    .filter((c): c is Record<string, unknown> => typeof c === "object" && c !== null);
   const shared = Array.isArray(payload.shared_files) ? payload.shared_files.map(String) : [];
 
   function decide(decision: "approve" | "feedback" | "reject") {
@@ -42,13 +45,28 @@ export function TeamPlanGate({ gateId, taskId, payload }: Props) {
   return (
     <CardShell
       icon="check"
-      title={`Team ${team} · ${proposal} — approve implementation?`}
-      subtitle={`Execute this plan${typeof payload.run_id === "number" ? ` · run ${payload.run_id}` : ""}`}
+      title={upgrade ? `Team ${team} — approve member upgrades?`
+        : `Team ${team} · ${proposal} — approve implementation?`}
+      subtitle={upgrade ? "Change roles and permissions; implementation starts separately"
+        : `Execute this plan${typeof payload.run_id === "number" ? ` · run ${payload.run_id}` : ""}`}
       borderColor="var(--accent-brd)"
       headerTint="var(--accent-bg)"
     >
       <div className="max-h-60 overflow-auto border-t border-border px-2.5 py-2 text-meta text-text-2">
         <p className="whitespace-pre-wrap">{String(payload.text ?? "")}</p>
+        {upgrade && <ul className="mt-2 grid gap-2">
+          {changes.map(c => {
+            const from = c.from as Record<string, unknown> | undefined;
+            const to = c.to as Record<string, unknown> | undefined;
+            return <li key={String(c.member)}>
+              <strong>{String(c.member)}</strong>: {String(from?.name ?? "read-only")}
+              {" → "}{String(to?.name ?? "general-purpose")}
+              <p>Permission: {String(from?.permission ?? "plan")} → {String(c.permission)}</p>
+              <p>{String(c.tools)}</p>
+              <p>Existing command approval and workspace restrictions still apply.</p>
+            </li>;
+          })}
+        </ul>}
         <ul className="mt-2 grid gap-0.5">
           {assignmentsOf(payload).map((a) => (
             <li key={a.member}>
@@ -61,13 +79,15 @@ export function TeamPlanGate({ gateId, taskId, payload }: Props) {
       </div>
       {resolved === null ? (
         <div className="grid gap-1.5 border-t border-border px-2.5 py-2">
-          <textarea aria-label="Feedback for the team" rows={2} value={feedback}
+          {!upgrade && <textarea aria-label="Feedback for the team" rows={2} value={feedback}
             onChange={(e) => setFeedback(e.target.value)}
             placeholder="What should the team change? (sends the plan back for another round)"
-            className="w-full resize-y rounded-control border border-border bg-panel px-2 py-1 text-meta" />
+            className="w-full resize-y rounded-control border border-border bg-panel px-2 py-1 text-meta" />}
           <div className="flex flex-wrap items-center gap-1.5">
-            <BtnPrimary onClick={() => decide("approve")}>Approve implementation</BtnPrimary>
-            <BtnGhost onClick={() => decide("feedback")}>Send feedback</BtnGhost>
+            <BtnPrimary onClick={() => decide("approve")}>
+              {upgrade ? "Approve role and permission upgrades" : "Approve implementation"}
+            </BtnPrimary>
+            {!upgrade && <BtnGhost onClick={() => decide("feedback")}>Send feedback</BtnGhost>}
             <BtnDanger onClick={() => decide("reject")}>Reject</BtnDanger>
           </div>
         </div>

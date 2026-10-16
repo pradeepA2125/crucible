@@ -4,6 +4,16 @@ from __future__ import annotations
 from agentd.subagents.config import _int_env
 
 
+def bounded_allowance(used: int, allowance: int, limit: object = None) -> int:
+    """A maximum of N further admissions, never an additive budget increase."""
+    if limit is None:
+        return allowance
+    if type(limit) is not int or limit < 1:
+        from agentd.teams.validation import TeamInputError
+        raise TeamInputError("request_limit must be a positive integer")
+    return min(allowance, used + limit)
+
+
 def team_max_members() -> int:
     return _int_env("CRUCIBLE_TEAM_MAX_MEMBERS", 6, 2)
 

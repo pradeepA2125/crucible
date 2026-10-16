@@ -747,7 +747,7 @@ The following are concrete proposed choices to review together with the implemen
 5. Fingerprinting planned execution files detects relevant drift but does not certify the
    entire repository; a lead/main still assesses changed assumptions.
 
-No new voting policy, agent-definition escalation, automatic implementation after a
+No new voting policy, silent agent-definition escalation, automatic implementation after a
 question, hidden budget pool, automatic publication/deployment, general MCP effect
 classification, or general OS sandbox is included. Existing verification/fix behavior is
 retained except where mode/run/purpose guards must prevent accidental execution.
@@ -782,3 +782,42 @@ Compatibility refinement: migrated rows have `mode = null` to identify the histo
 workflow without inventing a finalized result or extra activation. New agent-facing
 creation requires an explicit modern mode. An ordinary follow-up enters a new deliberate
 run; historical transcripts and legacy test fixtures retain their original semantics.
+
+## 15. Bounded recovery and confirmed member upgrades — 2026-10-16
+
+Runtime request admission enforces the team's persisted-plus-live allowance before every
+logical provider call, including helpers, memory compaction and finalization. Checking and
+reserving a request is synchronous after any rate-limit wait, so concurrent members cannot
+overshoot. Denied admissions produce local partial evidence without a paid final call.
+Transport retries retain existing logical-request accounting; this is not a token/cost cap.
+
+Creation uses `budget`. `post_board`, `resume_team`, `message_team_lead` and
+`start_team_implementation` accept a positive integer `request_limit`: at most that many
+further calls within the applicable allowance. The resulting ceiling is
+`min(applicable_allowance, requests_used + request_limit)`. Resuming may explicitly add
+allowance through the existing user-started-turn policy; the limit then narrows it.
+An implementation-start retry must preserve its original limit. Main must encode user
+limits in these arguments, not only in team instructions, and must not automatically
+resume or increase allowance after exhaustion. Main's own calls are accounted separately.
+
+`request_team_member_upgrade(team, expected_run_id, result_seq, members, reason)` requests
+a user decision for selected members of a quiet DONE team with a current accepted result.
+The existing team-plan decision card displays the proposed general-purpose definition,
+effective permissions and retained restrictions. Only approving that card persists a
+membership definition override; rejection, stale run/result, active members or changed
+capabilities cannot grant it. Inherited read-only restrictions remain binding. Identity,
+history, board, accepted result and lifecycle stay intact, and snapshots rewind overrides.
+Approval does not start execution: main separately starts implementation in an authorized
+user turn with the accepted result and its own allowance. Agent details expose the effective
+approved definition while original agent snapshots remain available internally.
+
+Paused/ended notices and `team_report.partial_progress` include current-run member outcomes,
+actual activation file changes and recorded command outcomes. Filter consultation and old
+runs out of lifecycle evidence. Mark unfinished commands and partial work explicitly;
+neither implies verification or completion. This gives main useful evidence even when a
+member was interrupted before submitting its final report.
+
+Implementation waits reconcile already-recorded current-run peer completions newer than
+the waiter's most recent direct request. Prior-run reports and completions predating a
+new question cannot satisfy the wait. This prevents a completion-before-wait race from
+stranding a lead and spending the allowance on repeated recovery.

@@ -706,6 +706,26 @@ class TeamService:
         post = self._store.get_post(team_id, int(proposal_id.lstrip("Pp")))
         return post if post is not None and post.kind == "proposal" else None
 
+    def partial_progress(self, team_id: str) -> dict[str, object]:
+        team = self._store.get_team(team_id)
+        latest: dict[str, dict[str, object]] = {}
+        files: set[str] = set()
+        commands: list[dict[str, object]] = []
+        for event in self._store.activity(team_id):
+            p = event.payload
+            if (event.kind != "wrapped_up" or team is None
+                    or p.get("run_id") != team.run_id
+                    or p.get("activation_kind") == "lead_reply"):
+                continue
+            files.update(str(f) for f in p.get("files_changed", []))
+            commands.extend({"member": event.label, "activation": event.activation, **c}
+                            for c in p.get("command_evidence", []) if isinstance(c, dict))
+            latest[event.label] = {"member": event.label, "activation": event.activation,
+                "status": p.get("status"), "report": str(p.get("report", ""))[:1500]}
+        return {"run_id": team.run_id if team else None, "files_changed": sorted(files),
+                "commands": commands[-12:], "members": list(latest.values()),
+                "note": "Partial evidence; interruption does not imply successful verification."}
+
     def report(self, team_id: str, report_limit: int = 8000) -> dict[str, object]:
         """What the team produced, for the main agent's team_report: the adopted and closing
         proposals, each member's final report, and objections to either proposal. Milestones
@@ -739,7 +759,7 @@ class TeamService:
                 "phase": team.phase,
                 "end_reason": team.end_reason, "adopted": proposal(team.adopted_proposal_id),
                 "closing": proposal(team.closing_proposal_id), "result": result, "members": members,
-                "objections": objections}
+                "objections": objections, "partial_progress": self.partial_progress(team_id)}
 
     def summary(self, team_id: str) -> dict[str, object]:
         team = self._store.get_team(team_id)

@@ -1141,6 +1141,8 @@ class ChatController:
         # The turn task is detached, so this context change stays local to it (spec §3.11).
         usage_owner = f"thread:{thread_id}"
         USAGE_OWNER.set(usage_owner)
+        from agentd.providers.request_budget import REQUEST_ADMISSION
+        REQUEST_ADMISSION.set(None)  # notices may be scheduled from a capped child task
         try:
             outcome = await loop.run(
                 plan_context, max_iters=max_iters, seed_history=seed_history,
@@ -2360,6 +2362,7 @@ class ChatController:
             if not (live or recent):
                 continue
             row = record.summary()
+            row["name"] = self._agent_info(record.agent_id).name
             handle = self._subagents.registry.get(record.agent_id)
             calls = (handle.loop.tool_calls
                      if handle is not None and isinstance(handle.loop, ControllerLoop) else [])
@@ -2463,6 +2466,9 @@ class ChatController:
             raise AgentNotFoundError(f"no agent {agent_id!r} in thread {thread_id!r}")
         snapshot = definition_from_json(record.definition) if record.definition else (
             self._agent_catalog()[record.name])
+        membership = self._store.teams.member_for_agent(agent_id)
+        if membership is not None and membership.definition_override is not None:
+            snapshot = definition_from_json(membership.definition_override)
         # Monotonic (spec §3.12): what the dispatcher is restricted by now is OR-ed in, so a
         # dispatcher that became capped or read-only tightens its existing descendants.
         inherited = dict(record.inherited)
@@ -2473,7 +2479,7 @@ class ChatController:
                     inherited[key] = inherited.get(key, False) or value
         self._store.set_agent_inherited(agent_id, inherited)
         context, definition = self._context_for(
-            agent_id=record.agent_id, name=record.name, label=record.label,
+            agent_id=record.agent_id, name=snapshot.name, label=record.label,
             depth=record.depth, parent_agent_id=record.parent_agent_id,
             snapshot=snapshot, inherited=inherited)
         handle = AgentHandle(context=context, definition=definition, prompt=record.prompt,
@@ -2992,13 +2998,16 @@ class ChatController:
         record = self._store.get_agent(agent_id)
         if record is None:
             return AgentInfo("?", "", "unknown")
-        description = str((record.definition or {}).get("description", ""))
+        member = self._store.teams.member_for_agent(agent_id)
+        effective = (member.definition_override if member and member.definition_override
+                     else record.definition or {})
+        description = str(effective.get("description", ""))
         status = record.status
         if self._subagents is not None:
             handle = self._subagents.registry.get(agent_id)
             if handle is not None and self._subagents.is_active(agent_id):
                 status = handle.status
-        return AgentInfo(record.name, description, status)
+        return AgentInfo(str(effective.get("name", record.name)), description, status)
 
     def _main_team_source(self, thread_id: str, turn_id: str, *,
                           can_execute: Callable[[], bool] = lambda: True) -> MainTeamToolSource:
@@ -3006,7 +3015,23 @@ class ChatController:
         teams = self._teams
         workflows = TeamWorkflowOps(self)
 
-        def post(team_id: str, text: str, mentions: object) -> dict[str, object]:
+        async def request_upgrade(team_id: str, args: dict[str, object]) -> dict[str, object]:
+            from agentd.teams.upgrades import request_upgrade as request
+            return await request(self, thread_id, team_id, args)
+
+        def post(team_id: str, text: str, mentions: object,
+                 request_limit: int | None = None) -> dict[str, object]:
+            from agentd.teams.config import bounded_allowance
+            bounded_allowance(0, 0, request_limit)  # validate before reopening or posting
+            result = post_unbounded(team_id, text, mentions)
+            if request_limit is not None:
+                team = workflows.current(team_id)
+                self._store.teams.update_team(team_id, budget=bounded_allowance(
+                    self.team_requests(team_id), team.budget, request_limit))
+                result["budget"] = workflows.current(team_id).budget
+            return result
+
+        def post_unbounded(team_id: str, text: str, mentions: object) -> dict[str, object]:
             team = self._store.teams.get_team(team_id)
             if team is not None and team.phase == "FAILED":
                 return self._revive_team(thread_id, team, text, mentions)
@@ -3030,6 +3055,7 @@ class ChatController:
             set_mode=partial(workflows.set_mode, thread_id),
             message_lead=partial(workflows.message_lead, thread_id),
             cancel_lead_request=partial(workflows.cancel_lead_request, thread_id),
+            request_upgrade=request_upgrade,
             can_execute=can_execute),
             first_turn_team_ids=set())
 
@@ -3048,7 +3074,8 @@ class ChatController:
         return {"team_id": team_id, "adopted": proposal.proposal_id,
                 "phase": after.phase if after is not None else "DONE"}
 
-    def _resume_team(self, thread_id: str, team_id: str, extra: int | None) -> dict[str, object]:
+    def _resume_team(self, thread_id: str, team_id: str, extra: int | None,
+                     request_limit: int | None = None) -> dict[str, object]:
         """resume_team (spec v2 §8.2): only from a turn the user started — it spends more of
         the user's requests."""
         if self.turn_kind(thread_id) != "user":
@@ -3074,6 +3101,9 @@ class ChatController:
             raise TeamInputError("extra_budget must be at least 1")
         amount = min(amount, team.run_request_start + cap - team.budget)
         used = self.team_requests(team_id)
+        from agentd.teams.config import bounded_allowance
+        allowance = bounded_allowance(used, team.budget + amount, request_limit)
+        amount = allowance - team.budget
         if team.budget + amount <= used:
             raise TeamInputError(
                 f"the team has used {used} requests and its budget cannot rise above {cap} "
@@ -3104,6 +3134,9 @@ class ChatController:
                      if g.gate_id == gate_id), None)
         if gate is None:
             raise GateNotFoundError(f"no pending gate {gate_id!r} on this thread")
+        if gate.kind == "team_plan" and gate.payload.get("action") == "upgrade_members":
+            from agentd.teams.upgrades import decide_upgrade
+            return decide_upgrade(self, thread_id, gate, decision)
         team_id = gate.team.id if gate.team is not None else ""
         team = self._store.teams.get_team(team_id)
         coordinator = self._coordinators.get(team_id)
@@ -3515,6 +3548,26 @@ class ChatController:
                        delivery: Delivery = "wake", *, logical_id: str | None = None) -> None:
         """A team milestone for the main agent (spec v2 §8.8): a notice, delivered by the
         same paths as an agent's report (§5.2). `notify` never starts a notice turn."""
+        if kind in {"paused", "ended"} and self._teams is not None:
+            evidence = self._teams.partial_progress(team.team_id)
+            evidence["members"] = [{**m, "report": str(m.get("report", ""))[:350]}
+                                   for m in evidence["members"]]
+            evidence["commands"] = [{**c, "output": str(c.get("output", ""))[-1000:]}
+                                    for c in evidence["commands"][-4:]]
+            active = []
+            if self._subagents is not None:
+                log = self._write_log_for(team.thread_id)
+                for member, agent_id in self._team_agent_ids(team.team_id):
+                    handle = self._subagents.registry.get(agent_id)
+                    if (handle and self._subagents.is_active(agent_id)
+                            and handle.team_run_id == team.run_id):
+                        active.append({"member": member.label, "status": "interrupted/in flight",
+                            "files_changed": log.files_changed_since(
+                                {agent_id}, handle.write_start_seq) if log else [],
+                            "commands": handle.loop.command_evidence()[-2:]
+                                if isinstance(handle.loop, ControllerLoop) else []})
+            evidence["active"] = active
+            body += "\nRecorded partial progress (not completion):\n" + json.dumps(evidence)
         logical = logical_id or (
             f"team-result:{team.team_id}:{team.run_id}:{team.result_seq}"
             if kind == "recommendation_ready" and team.result_seq else uuid4().hex)
@@ -3697,7 +3750,10 @@ class ChatController:
         self._teams.record(record.team_id, record.label, "wrapped_up",
                            activation=record.activation_count,
                            payload={"status": result.status, "report": report,
-                                    "files_changed": list(result.files_changed), **stats,
+                                    "files_changed": (result.activation_files_changed
+                                        if result.activation_files_changed is not None
+                                        else list(result.files_changed)),
+                                    "command_evidence": result.command_evidence, **stats,
                                     "waiting_on": waiting_on, **in_round,
                                     "run_id": result.team_run_id,
                                     "activation_kind": activation_kind})
@@ -3820,6 +3876,7 @@ class ChatController:
         log = self._write_log_for(thread_id)
         assert log is not None and self._subagents is not None
         log.ensure_agent(ctx.agent_id)
+        handle.write_start_seq = log.seq
         record = self._store.get_agent(ctx.agent_id)
         assert record is not None  # rows are written before any activation runs
         activation = record.activation_count + 1
@@ -3841,6 +3898,25 @@ class ChatController:
                 handle.team_phase = team_row.phase
             if handle.team_activation_kind == "lead_reply":
                 coordinator = None
+        from agentd.providers.request_budget import REQUEST_ADMISSION, RequestBudgetExhausted
+
+        def admit_team_request() -> None:
+            assert team_of is not None
+            current = self._store.teams.get_team(team_of.team_id)
+            if (current is None or current.run_id != handle.team_run_id
+                    or current.phase in {"PAUSED", "FAILED", "DISBANDED"}):
+                raise RequestBudgetExhausted(
+                    "Team run is stopped; no further model calls admitted.")
+            if self.team_requests(current.team_id) >= current.budget:
+                current_coordinator = self._coordinators.get(current.team_id)
+                if current_coordinator is not None:
+                    current_coordinator.check_budget()
+                raise RequestBudgetExhausted(
+                    "Team request limit reached; no final model call spent.")
+
+        # Activation tasks own their context. Helpers replace this with the same
+        # ancestor team's check, including recall/compaction calls through transport.
+        REQUEST_ADMISSION.set(admit_team_request if team_of is not None else None)
         if team_row is not None and (team_row.phase != "IMPLEMENTING"
                                      or handle.team_activation_kind == "lead_reply"):
             reviewing = membership is not None and team_row.phase == "REVIEWING"
@@ -4118,8 +4194,10 @@ class ChatController:
 
         def persist_and_meter(history: list[dict[str, object]]) -> None:
             self._store.set_agent_history(ctx.agent_id, history)
-            if coordinator is not None:
-                coordinator.check_budget()   # spec v2 §3.11: enforced, not advisory
+            current_coordinator = (self._coordinators.get(team_of.team_id)
+                                   if team_of is not None else None)
+            if current_coordinator is not None:
+                current_coordinator.check_budget()
             if team_of is not None:
                 current = self._store.teams.get_team(team_of.team_id)
                 if (current is None or current.run_id != handle.team_run_id
@@ -4194,6 +4272,13 @@ class ChatController:
                 if stopped is not None:
                     self._team_member_reported(stopped, handle.result, handle.stop_reason)
             raise
+        except RequestBudgetExhausted as exc:
+            handle.stop_reason = "budget"
+            status = "partial"
+            self._store.set_agent_history(ctx.agent_id, loop.partial_history())
+            report = loop.fallback_report(str(exc), subtree_files(), status=status)
+            for child_id in self._store.child_agent_ids(ctx.agent_id):
+                await self._subagents.stop(child_id, "budget")
         except ProviderAccessStopped as exc:
             # Account-level refusal (ChatGPT plan usage limit, ended sign-in): a team
             # pauses first, so the failed_transient report below re-queues nothing; a
@@ -4246,7 +4331,11 @@ class ChatController:
             stale_refusals=log.stale_refusals(ctx.agent_id) if log is not None else 0,
             team_fields=handle.team_fields, team_run_id=handle.team_run_id,
             team_activation_kind=handle.team_activation_kind,
-            team_request_seq=handle.team_request_seq)
+            team_request_seq=handle.team_request_seq,
+            activation_files_changed=(log.files_changed_since(ids, handle.write_start_seq)
+                                      if log is not None else []),
+            command_evidence=(handle.loop.command_evidence()
+                             if isinstance(handle.loop, ControllerLoop) else []))
         if handle.transcript is not None:
             handle.transcript.append(ChatMessage(
                 role="agent", content=report, metadata={

@@ -75,6 +75,7 @@ class TeamMember(BaseModel):
     delivered_seq: int = 0
     private_delivered_seq: int = 0
     pending_start_json: dict[str, Any] | None = None
+    definition_override: dict[str, Any] | None = None  # explicit user-approved role change
     assignment: dict[str, Any] | None = None
     assignment_done: bool = False
     reprompted: bool = False

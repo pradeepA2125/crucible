@@ -19,7 +19,7 @@ MEMBER_TOOL_NAMES = frozenset({
 MAIN_TOOL_NAMES = frozenset({
     "create_team", "post_board", "team_status", "team_report", "adopt_proposal", "resume_team",
     "disband_team", "start_team_implementation", "set_team_mode",
-    "message_team_lead", "cancel_team_lead_request"})
+    "message_team_lead", "cancel_team_lead_request", "request_team_member_upgrade"})
 BACKGROUND_NOTE = ("The team runs in the background and the user can watch its board. "
                    "If your todo list holds the work you just handed over, mark those items "
                    "'blocked' with the note 'delegated to team <name>' in one write_todos "
@@ -258,16 +258,17 @@ TeamOperation = Callable[[str, dict[str, object]], Awaitable[dict[str, object]]]
 class MainTeamOps:
     create: Callable[[CreateTeamRequest], Awaitable[dict[str, object]]]
     resolve: Callable[[str], str]
-    post: Callable[[str, str, object], dict[str, object]]
+    post: Callable[..., dict[str, object]]
     status: Callable[[str], dict[str, object]]
     disband: Callable[[str], Awaitable[dict[str, object]]]
     adopt: Callable[[str, str], dict[str, object]]
-    resume: Callable[[str, int | None], dict[str, object]] = _resume_unavailable
+    resume: Callable[..., dict[str, object]] = _resume_unavailable
     report: Callable[[str], dict[str, object]] = _report_unavailable
     start_implementation: TeamOperation = _operation_unavailable
     set_mode: TeamOperation = _operation_unavailable
     message_lead: TeamOperation = _operation_unavailable
     cancel_lead_request: TeamOperation = _operation_unavailable
+    request_upgrade: TeamOperation = _operation_unavailable
     can_execute: Callable[[], bool] = lambda: True
 
 
@@ -317,7 +318,8 @@ class MainTeamToolSource:
                 "team reopens it for a follow-up request: its members keep their context and "
                 "it gets a fresh budget."),
                 parameters={"type": _OBJ, "properties": {**team, "text": _STR,
-                                                         "mentions": _STRS},
+                                                         "mentions": _STRS,
+                                                         "request_limit": {"type": "integer"}},
                             "required": ["team", "text"]}),
             ToolDefinition(name="team_status", description=(
                 "A team's phase, round, members and their status, open proposals with each "
@@ -337,7 +339,8 @@ class MainTeamToolSource:
                 "its request budget. FINALIZING activates only the lead; it does not "
                 "restart the discussion or wake peers."),
                 parameters={"type": _OBJ, "properties": {**team,
-                                                         "extra_budget": {"type": "integer"}},
+                                                         "extra_budget": {"type": "integer"},
+                                                         "request_limit": {"type": "integer"}},
                             "required": ["team"]}),
             ToolDefinition(name="start_team_implementation", description=(
                 "Explicitly extend a completed actionable deliberation result into execution. "
@@ -347,7 +350,8 @@ class MainTeamToolSource:
                 parameters={
                     "type": _OBJ, "properties": {**team, "expected_run_id": {"type": "integer"},
                     "result_seq": {"type": "integer"}, "assignments": _ASSIGNMENTS,
-                    "shared_files": _STRS, "approval_gate": {"type": "boolean"}},
+                    "shared_files": _STRS, "approval_gate": {"type": "boolean"},
+                    "request_limit": {"type": "integer"}},
                     "required": ["team", "expected_run_id", "result_seq"]}),
             ToolDefinition(name="set_team_mode", description=(
                 "Narrow a team's current run to deliberate. Stops new execution; "
@@ -356,13 +360,22 @@ class MainTeamToolSource:
                     "expected_run_id": {"type": "integer"},
                     "mode": {"type": "string", "enum": ["deliberate"]},
                     "reason": _STR}, "required": ["team", "expected_run_id", "mode", "reason"]}),
+            ToolDefinition(name="request_team_member_upgrade", description=(
+                "Ask the user to approve upgrading selected read-only members to general-purpose "
+                "on the same completed team. Preserves identities/history; only the user's "
+                "confirmation card changes roles and permissions. Does not start execution."),
+                parameters={"type": _OBJ, "properties": {**team,
+                    "expected_run_id": {"type": "integer"}, "result_seq": {"type": "integer"},
+                    "members": _STRS, "reason": _STR},
+                    "required": ["team", "expected_run_id", "result_seq", "members", "reason"]}),
             ToolDefinition(name="message_team_lead", description=(
                 "Send a private request to the team's lead. Only the lead is activated; "
                 "no board post "
                 "or execution authorization. Retry a blocked request with retry_request_seq."),
                 parameters={"type": _OBJ, "properties": {**team, "text": _STR,
                     "expected_run_id": {"type": "integer"}, "extra_budget": {"type": "integer"},
-                    "retry_request_seq": {"type": "integer"}},
+                    "retry_request_seq": {"type": "integer"},
+                    "request_limit": {"type": "integer"}},
                     "required": ["team", "text", "expected_run_id"]}),
             ToolDefinition(name="cancel_team_lead_request", description=(
                 "Cancel one unresolved private lead request before changing runs "
@@ -389,11 +402,15 @@ class MainTeamToolSource:
                 self._created.add(str(result.get("team_id", "")))
                 return _ok({**result, "note": BACKGROUND_NOTE})
             team_id = self._ops.resolve(str(args.get("team", "")))
+            limit = args.get("request_limit")
+            if limit is not None and (type(limit) is not int or limit < 1):
+                raise TeamInputError("request_limit must be a positive integer")
             operations = {
                 "start_team_implementation": self._ops.start_implementation,
                 "set_team_mode": self._ops.set_mode,
                 "message_team_lead": self._ops.message_lead,
                 "cancel_team_lead_request": self._ops.cancel_lead_request,
+                "request_team_member_upgrade": self._ops.request_upgrade,
             }
             if tool in operations:
                 run_id = args.get("expected_run_id")
@@ -413,13 +430,15 @@ class MainTeamToolSource:
                                               isinstance(value, bool) or value < 1):
                         raise TeamInputError(f"{key} must be a positive integer")
                 required_seq = {"start_team_implementation": "result_seq",
+                                "request_team_member_upgrade": "result_seq",
                                 "cancel_team_lead_request": "request_seq"}.get(tool)
                 if required_seq and args.get(required_seq) is None:
                     raise TeamInputError(f"{required_seq} is required")
                 return _ok(await operations[tool](team_id, args))
             if tool == "post_board":
-                posted = self._ops.post(team_id, check_text(args.get("text"), "text"),
-                                        args.get("mentions"))
+                post_args = (team_id, check_text(args.get("text"), "text"), args.get("mentions"))
+                posted = (self._ops.post(*post_args) if limit is None
+                          else self._ops.post(*post_args, limit))
                 raw = posted.get("mentions")
                 mentioned = [str(m) for m in raw] if isinstance(raw, list) else []
                 # Say who it reached: a bare {seq, phase} read as "nothing changed", and the
@@ -451,7 +470,9 @@ class MainTeamToolSource:
                         f"{status.get('phase')}"
                     )
                 extra = args.get("extra_budget")
-                return _ok(self._ops.resume(team_id, extra if isinstance(extra, int) else None))
+                resume_args = (team_id, extra if isinstance(extra, int) else None)
+                return _ok(self._ops.resume(*resume_args) if limit is None
+                           else self._ops.resume(*resume_args, limit))
             if tool == "disband_team":
                 return _ok(await self._ops.disband(team_id))
         except TeamInputError as exc:

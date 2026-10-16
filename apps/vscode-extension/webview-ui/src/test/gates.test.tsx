@@ -582,6 +582,22 @@ describe("McpGate", () => {
 });
 
 describe("TeamPlanGate", () => {
+  it("shows permission expansion and sends only the user's role decision", () => {
+    render(<TeamPlanGate gateId="upgrade" taskId="thread-1" payload={{
+      action: "upgrade_members", team_name: "auth", text: "Implement the accepted plan",
+      changes: [{ member: "alice", from: { name: "explore", permission: "plan" },
+        to: { name: "general-purpose" }, permission: "default",
+        tools: "Read, edit assigned files, run policy-approved commands" }],
+    }} />);
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(screen.getByText(/approve member upgrades/)).toBeInTheDocument();
+    expect(screen.getByText(/Permission: plan → default/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve implementation" })).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Approve role and permission upgrades" }));
+    expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: "teamPlanDecision",
+      threadId: "thread-1", gateId: "upgrade", decision: "approve" });
+  });
   const payload = {
     team_id: "team-1", team_name: "auth", proposal_id: "P3", text: "Add a limiter.",
     assignments: [{ member: "alice", part: "limiter", files: ["api/limiter.py"] },

@@ -119,7 +119,8 @@ class TeamStore:
                 self._conn.execute(f"ALTER TABLE teams ADD COLUMN {column} {declaration}")
         member_columns = {r[1] for r in self._conn.execute("PRAGMA table_info(team_members)")}
         for column, declaration in {"private_delivered_seq": "INTEGER NOT NULL DEFAULT 0",
-                                    "pending_start_json": "TEXT"}.items():
+                                    "pending_start_json": "TEXT",
+                                    "definition_override_json": "TEXT"}.items():
             if column not in member_columns:
                 self._conn.execute(f"ALTER TABLE team_members ADD COLUMN {column} {declaration}")
         self._conn.execute("""CREATE TABLE IF NOT EXISTS team_snapshots (
@@ -237,7 +238,8 @@ class TeamStore:
              int(member.assignment_done), int(member.reprompted), member.wakes_this_phase))
         self.update_member(member.team_id, member.label,
                            private_delivered_seq=member.private_delivered_seq,
-                           pending_start_json=member.pending_start_json)
+                           pending_start_json=member.pending_start_json,
+                           definition_override=member.definition_override)
         self._commit()
 
     @staticmethod
@@ -250,7 +252,9 @@ class TeamStore:
             wakes_this_phase=row["wakes_this_phase"],
             private_delivered_seq=row["private_delivered_seq"],
             pending_start_json=(json.loads(row["pending_start_json"])
-                                if row["pending_start_json"] else None))
+                                if row["pending_start_json"] else None),
+            definition_override=(json.loads(row["definition_override_json"])
+                                 if row["definition_override_json"] else None))
 
     def members(self, team_id: str) -> list[TeamMember]:
         rows = self._conn.execute(
@@ -423,8 +427,10 @@ class TeamStore:
         unknown = set(fields) - (set(TeamMember.model_fields) - {"team_id", "label"})
         if unknown:
             raise ValueError(f"unknown member fields: {sorted(unknown)}")
-        columns = {"assignment": "assignment_json"}
-        values = [json.dumps(v) if k in ("assignment", "pending_start_json") and v is not None
+        columns = {"assignment": "assignment_json",
+                   "definition_override": "definition_override_json"}
+        json_fields = {"assignment", "pending_start_json", "definition_override"}
+        values = [json.dumps(v) if k in json_fields and v is not None
                   else v for k, v in fields.items()]
         sets = ", ".join(f"{columns.get(k, k)} = ?" for k in fields)
         self._conn.execute(f"UPDATE team_members SET {sets} WHERE team_id = ? AND label = ?",

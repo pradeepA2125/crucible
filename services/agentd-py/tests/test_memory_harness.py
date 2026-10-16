@@ -175,6 +175,21 @@ async def test_compaction_access_stop_propagates_to_controller(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_compaction_request_cap_propagates_without_retrying_foreground(tmp_path):
+    from agentd.providers.request_budget import RequestBudgetExhausted
+
+    async def denied(old, text):
+        raise RequestBudgetExhausted("team allowance exhausted")
+
+    comp = Compactor(MemoryStore(tmp_path / "m.db"), denied, window_tokens=10000,
+                     reserve_tokens=1000, hot_turns=1, compact_evidence=True)
+    harness = MemoryHarness(enabled=True, compactor=comp)
+    history = [{"role": "user", "content": "x" * 100} for _ in range(8)]
+    with pytest.raises(RequestBudgetExhausted):
+        await harness.prepare_turn(history, "r", force=True)
+
+
+@pytest.mark.asyncio
 async def test_gated_summarizer_rejects_answer_to_historical_question_without_retry():
     t = _SeqTransport([
         "<summary>Yes, all actions have descriptions.</summary>",

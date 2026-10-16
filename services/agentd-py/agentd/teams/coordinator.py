@@ -178,6 +178,19 @@ class TeamCoordinator:
         else:
             self._waits.pop(label, None)
         self._apply(sm.MemberReported(label, status, stop_reason, tuple(files), report))
+        if status == "awaiting_peer" and self._state.phase == "IMPLEMENTING":
+            # Completion may arrive before this wait is registered. Reconcile only
+            # current-run reports newer than the waiter's latest request to that peer.
+            team = self._team()
+            posts = self._store.posts(self._team_id)
+            reports = self._store.current_reports(self._team_id, team.run_id)
+            for peer in list(self._waits.get(label, set())):
+                received = reports.get(peer)
+                sent_at = max((p.seq for p in posts
+                               if p.author == label and p.recipient == peer), default=0)
+                if (received and received.payload.get("status") == "completed"
+                        and received.seq > sent_at):
+                    self._wake_waiters(peer, "completed")
         if status != "awaiting_peer" and stop_reason != sm.BUDGET_STOP:
             self._wake_waiters(label, status)
         self._check_stuck(label)
