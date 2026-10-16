@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -28,7 +30,29 @@ def _dt(value: str | None) -> datetime | None:
 class TeamStore:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
+        self._transaction_depth = 0
         self._migrate()
+
+    def _commit(self) -> None:
+        if self._transaction_depth == 0:
+            self._conn.commit()
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Savepoints keep nested team writes atomic on the shared chat connection."""
+        name = f"team_tx_{self._transaction_depth}"
+        self._conn.execute(f"SAVEPOINT {name}")
+        self._transaction_depth += 1
+        try:
+            yield
+        except BaseException:
+            self._conn.execute(f"ROLLBACK TO SAVEPOINT {name}")
+            self._conn.execute(f"RELEASE SAVEPOINT {name}")
+            raise
+        else:
+            self._conn.execute(f"RELEASE SAVEPOINT {name}")
+        finally:
+            self._transaction_depth -= 1
 
     def _migrate(self) -> None:
         self._conn.execute("""
@@ -80,7 +104,26 @@ class TeamStore:
         if "vote_between" not in existing:
             self._conn.execute(
                 "ALTER TABLE teams ADD COLUMN vote_between TEXT NOT NULL DEFAULT ''")
-        self._conn.commit()
+        modern_columns = {
+            "mode": "TEXT", "deliverable_kind": "TEXT", "deliverable_description": "TEXT",
+            "run_id": "INTEGER NOT NULL DEFAULT 1",
+            "run_request_start": "INTEGER NOT NULL DEFAULT 0",
+            "result_seq": "INTEGER", "pending_lead_request_seq": "INTEGER",
+            "lead_exchange_status": "TEXT", "resume_phase": "TEXT",
+            "result_notice_pending": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, declaration in modern_columns.items():
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE teams ADD COLUMN {column} {declaration}")
+        member_columns = {r[1] for r in self._conn.execute("PRAGMA table_info(team_members)")}
+        for column, declaration in {"private_delivered_seq": "INTEGER NOT NULL DEFAULT 0",
+                                    "pending_start_json": "TEXT"}.items():
+            if column not in member_columns:
+                self._conn.execute(f"ALTER TABLE team_members ADD COLUMN {column} {declaration}")
+        self._conn.execute("""CREATE TABLE IF NOT EXISTS team_snapshots (
+            team_id TEXT NOT NULL, checkpoint_seq INTEGER NOT NULL, payload_json TEXT NOT NULL,
+            PRIMARY KEY(team_id, checkpoint_seq))""")
+        self._commit()
 
     # ── teams ────────────────────────────────────────────────────────────────
 
@@ -91,13 +134,14 @@ class TeamStore:
         self._conn.execute(
             f"INSERT INTO teams ({', '.join(_TEAM_COLUMNS)}) "  # noqa: S608 — fixed columns
             f"VALUES ({', '.join('?' * len(_TEAM_COLUMNS))})", values)
-        self._conn.commit()
+        self._commit()
 
     def _team_from_row(self, row: sqlite3.Row) -> TeamRecord:
         data: dict[str, Any] = dict(row)
         for name in _DATETIME_FIELDS:
             data[name] = _dt(data[name])
         data["approval_gate"] = bool(data["approval_gate"])
+        data["result_notice_pending"] = bool(data["result_notice_pending"])
         return TeamRecord(**data)
 
     def get_team(self, team_id: str) -> TeamRecord | None:
@@ -117,19 +161,21 @@ class TeamStore:
         values = [v.isoformat() if isinstance(v, datetime) else v for v in fields.values()]
         self._conn.execute(f"UPDATE teams SET {sets} WHERE team_id = ?",  # noqa: S608
                            [*values, team_id])
-        self._conn.commit()
+        self._commit()
 
     def count_live_teams(self, thread_id: str) -> int:
         marks = ", ".join("?" * len(LIVE_TEAM_PHASES))
         row = self._conn.execute(
-            f"SELECT COUNT(*) FROM teams WHERE thread_id = ? AND phase IN ({marks})",  # noqa: S608
+            f"SELECT COUNT(*) FROM teams WHERE thread_id = ? AND "
+            f"(phase IN ({marks}) OR pending_lead_request_seq IS NOT NULL)",  # noqa: S608
             (thread_id, *sorted(LIVE_TEAM_PHASES))).fetchone()
         return int(row[0])
 
     def live_team_names(self, thread_id: str) -> list[str]:
         marks = ", ".join("?" * len(LIVE_TEAM_PHASES))
         rows = self._conn.execute(
-            f"SELECT name FROM teams WHERE thread_id = ? AND phase IN ({marks}) "  # noqa: S608
+            f"SELECT name FROM teams WHERE thread_id = ? AND "
+            f"(phase IN ({marks}) OR pending_lead_request_seq IS NOT NULL) "  # noqa: S608
             "ORDER BY created_at", (thread_id, *sorted(LIVE_TEAM_PHASES))).fetchall()
         return [r[0] for r in rows]
 
@@ -142,7 +188,7 @@ class TeamStore:
         self._conn.executemany(
             "UPDATE teams SET phase = 'FAILED', end_reason = ?, ended_at = ? WHERE team_id = ?",
             [(reason, now, i) for i in ids])
-        self._conn.commit()
+        self._commit()
         return ids
 
     # ── members ──────────────────────────────────────────────────────────────
@@ -165,10 +211,10 @@ class TeamStore:
         if not team_ids:
             return
         marks = ", ".join("?" * len(team_ids))
-        for table in ("team_activity", "team_posts", "team_members", "teams"):
+        for table in ("team_snapshots", "team_activity", "team_posts", "team_members", "teams"):
             self._conn.execute(
                 f"DELETE FROM {table} WHERE team_id IN ({marks})", team_ids)  # noqa: S608 — fixed table names
-        self._conn.commit()
+        self._commit()
 
     def add_member(self, member: TeamMember) -> None:
         self._conn.execute(
@@ -179,7 +225,10 @@ class TeamStore:
              member.delivered_seq,
              json.dumps(member.assignment) if member.assignment is not None else None,
              int(member.assignment_done), int(member.reprompted), member.wakes_this_phase))
-        self._conn.commit()
+        self.update_member(member.team_id, member.label,
+                           private_delivered_seq=member.private_delivered_seq,
+                           pending_start_json=member.pending_start_json)
+        self._commit()
 
     @staticmethod
     def _member_from_row(row: sqlite3.Row) -> TeamMember:
@@ -188,7 +237,10 @@ class TeamStore:
             in_quorum=bool(row["in_quorum"]), delivered_seq=row["delivered_seq"],
             assignment=json.loads(row["assignment_json"]) if row["assignment_json"] else None,
             assignment_done=bool(row["assignment_done"]), reprompted=bool(row["reprompted"]),
-            wakes_this_phase=row["wakes_this_phase"])
+            wakes_this_phase=row["wakes_this_phase"],
+            private_delivered_seq=row["private_delivered_seq"],
+            pending_start_json=(json.loads(row["pending_start_json"])
+                                if row["pending_start_json"] else None))
 
     def members(self, team_id: str) -> list[TeamMember]:
         rows = self._conn.execute(
@@ -211,19 +263,19 @@ class TeamStore:
         self._conn.execute(
             "UPDATE team_members SET delivered_seq = MAX(delivered_seq, ?) "
             "WHERE team_id = ? AND label = ?", (seq, team_id, label))
-        self._conn.commit()
+        self._commit()
 
     def set_in_quorum(self, team_id: str, label: str, in_quorum: bool) -> None:
         self._conn.execute(
             "UPDATE team_members SET in_quorum = ? WHERE team_id = ? AND label = ?",
             (int(in_quorum), team_id, label))
-        self._conn.commit()
+        self._commit()
 
     def bump_wakes(self, team_id: str, label: str) -> int:
         self._conn.execute(
             "UPDATE team_members SET wakes_this_phase = wakes_this_phase + 1 "
             "WHERE team_id = ? AND label = ?", (team_id, label))
-        self._conn.commit()
+        self._commit()
         member = self.member(team_id, label)
         return member.wakes_this_phase if member else 0
 
@@ -235,19 +287,19 @@ class TeamStore:
             "UPDATE team_members SET assignment_json = ?, assignment_done = 0 "
             "WHERE team_id = ? AND label = ?",
             (json.dumps(assignment) if assignment is not None else None, team_id, label))
-        self._conn.commit()
+        self._commit()
 
     def set_assignment_done(self, team_id: str, label: str) -> None:
         self._conn.execute(
             "UPDATE team_members SET assignment_done = 1 WHERE team_id = ? AND label = ?",
             (team_id, label))
-        self._conn.commit()
+        self._commit()
 
     def reset_wakes(self, team_id: str) -> None:
         """The wake cap counts per phase (spec v2 §8.6)."""
         self._conn.execute("UPDATE team_members SET wakes_this_phase = 0 WHERE team_id = ?",
                            (team_id,))
-        self._conn.commit()
+        self._commit()
 
     def add_usage(self, team_id: str, usage: Usage) -> None:
         """A team's usage is the sum over its members and their helpers (spec §3.11)."""
@@ -257,7 +309,7 @@ class TeamStore:
             "WHERE team_id = ?",
             (usage.requests, usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens,
              team_id))
-        self._conn.commit()
+        self._commit()
 
     def append_post(
         self, team_id: str, *, author: str, kind: str, text: str,
@@ -277,7 +329,7 @@ class TeamStore:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
             (team_id, post.seq, author, kind, recipient, text, json.dumps(post.mentions),
              ref_id, round, json.dumps(post.payload), post.created_at.isoformat()))
-        self._conn.commit()
+        self._commit()
         return post
 
     @staticmethod
@@ -312,7 +364,7 @@ class TeamStore:
         self._conn.execute(
             "UPDATE team_posts SET closed = ? WHERE team_id = ? AND seq = ? AND kind = 'proposal'",
             (reason, team_id, seq))
-        self._conn.commit()
+        self._commit()
 
     # ── activity (spec 2026-10-05 §4) ──────────────────────────────────────
 
@@ -333,7 +385,7 @@ class TeamStore:
             "cause_seq, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (team_id, event.aseq, event.at.isoformat(), label, kind, activation, cause_seq,
              json.dumps(event.payload)))
-        self._conn.commit()
+        self._commit()
         return event
 
     @staticmethod
@@ -354,3 +406,81 @@ class TeamStore:
             "SELECT * FROM team_activity WHERE team_id = ? AND label = ? "
             "ORDER BY aseq DESC LIMIT 1", (team_id, label)).fetchone()
         return self._activity_from_row(row) if row else None
+
+    def update_member(self, team_id: str, label: str, **fields: object) -> None:
+        if not fields:
+            return
+        unknown = set(fields) - (set(TeamMember.model_fields) - {"team_id", "label"})
+        if unknown:
+            raise ValueError(f"unknown member fields: {sorted(unknown)}")
+        columns = {"assignment": "assignment_json"}
+        values = [json.dumps(v) if k in ("assignment", "pending_start_json") and v is not None
+                  else v for k, v in fields.items()]
+        sets = ", ".join(f"{columns.get(k, k)} = ?" for k in fields)
+        self._conn.execute(f"UPDATE team_members SET {sets} WHERE team_id = ? AND label = ?",
+                           [*values, team_id, label])
+        self._commit()
+
+    def append_report(self, team_id: str, label: str, text: str, status: str,
+                      run_id: int, activation_kind: str, activation: int | None = None) -> TeamPost:
+        return self.append_post(team_id, author=label, kind="report", text=text,
+                                recipient="main", payload={"run_id": run_id, "status": status,
+                                "activation_kind": activation_kind, "activation": activation})
+
+    def current_reports(self, team_id: str, run_id: int) -> dict[str, TeamPost]:
+        return {p.author: p for p in self.posts(team_id) if p.kind == "report"
+                and p.payload.get("run_id") == run_id
+                and p.payload.get("activation_kind") in ("lifecycle", "finalization")}
+
+    def save_snapshot(self, team_id: str, checkpoint_seq: int) -> None:
+        team = self.get_team(team_id)
+        if team is None:
+            return
+        payload = {"team": team.model_dump(mode="json"),
+                   "members": [m.model_dump(mode="json") for m in self.members(team_id)],
+                   "posts": [p.model_dump(mode="json") for p in self.posts(team_id)],
+                   "activity": [a.model_dump(mode="json") for a in self.activity(team_id)]}
+        self._conn.execute("INSERT OR IGNORE INTO team_snapshots VALUES (?, ?, ?)",
+                           (team_id, checkpoint_seq, json.dumps(payload)))
+        self._commit()
+
+    def restore_snapshots(self, thread_id: str, checkpoint_seq: int) -> list[str]:
+        rows = self._conn.execute("SELECT s.* FROM team_snapshots s JOIN teams t "
+            "ON t.team_id = s.team_id WHERE t.thread_id = ? AND s.checkpoint_seq >= ? "
+            "ORDER BY s.checkpoint_seq", (thread_id, checkpoint_seq)).fetchall()
+        restored: list[str] = []
+        with self.transaction():
+            for row in rows:
+                tid = row["team_id"]
+                if tid in restored:
+                    continue
+                data = json.loads(row["payload_json"])
+                # Conversation rewind revokes authority and restores evidence, but
+                # provider calls already made remain part of lifetime accounting.
+                current = self.get_team(tid)
+                if current:
+                    for field in (
+                            "requests", "prompt_tokens", "completion_tokens", "cached_tokens"):
+                        data["team"][field] = getattr(current, field)
+                for table in ("team_activity", "team_posts", "team_members", "teams"):
+                    self._conn.execute(f"DELETE FROM {table} WHERE team_id = ?", (tid,))
+                self.create_team(TeamRecord.model_validate(data["team"]))
+                for raw in data["members"]:
+                    self.add_member(TeamMember.model_validate(raw))
+                for raw in data["posts"]:
+                    post = TeamPost.model_validate(raw)
+                    self._conn.execute(
+                        "INSERT INTO team_posts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (tid, post.seq, post.author, post.kind, post.recipient, post.text,
+                         json.dumps(post.mentions), post.ref_id, post.round,
+                         json.dumps(post.payload),
+                         post.closed, post.created_at.isoformat()))
+                for raw in data["activity"]:
+                    a = TeamActivity.model_validate(raw)
+                    self._conn.execute("INSERT INTO team_activity VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (tid, a.aseq, a.at.isoformat(), a.label, a.kind, a.activation,
+                         a.cause_seq, json.dumps(a.payload)))
+                restored.append(tid)
+            self._conn.execute("DELETE FROM team_snapshots WHERE checkpoint_seq >= ? AND team_id "
+                "IN (SELECT team_id FROM teams WHERE thread_id = ?)", (checkpoint_seq, thread_id))
+        return restored

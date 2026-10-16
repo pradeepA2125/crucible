@@ -1,4 +1,6 @@
 import {
+  mapTeamWorkflow,
+  TeamWorkflowSchema,
   parseWireTeamActivity,
   parseWireTeamPost,
   type BackendTaskClient,
@@ -6,9 +8,9 @@ import {
   type TeamDetail,
   type TeamActivity,
   type TeamPost,
+  type TeamWorkflow,
 } from "@crucible/editor-client";
 
-// Phases a team never leaves (spec v2 §8.2): a final backfill, then no follow.
 export const TERMINAL_TEAM_PHASES: ReadonlySet<string> = new Set(["DONE", "DISBANDED", "FAILED"]);
 
 export function teamChannel(threadId: string, teamId: string): string {
@@ -18,7 +20,7 @@ export function teamChannel(threadId: string, teamId: string): string {
 export type TeamViewEvent =
   | { type: "team_post"; post: TeamPost }
   | { type: "team_activity"; activity: TeamActivity }
-  | { type: "team_phase"; phase: string; round: number; pausedReason: string | null };
+  | ({ type: "team_phase"; phase: string; round: number; pausedReason: string | null } & Partial<TeamWorkflow>);
 
 export interface TeamViewSink {
   detail(teamId: string, detail: TeamDetail): void;
@@ -26,19 +28,35 @@ export interface TeamViewSink {
 }
 
 type TeamClient = Pick<BackendTaskClient, "getTeam" | "streamChannel">;
+type TeamState = Pick<TeamDetail, "phase" | "round"> & Partial<TeamWorkflow>;
 
 interface OpenTeam {
   threadId: string;
   closed: boolean;
   abort: AbortController | null;
+  generation: number;
+  following: boolean;
+  state?: TeamState;
+  lastSeq: number;
+  lastAseq: number;
 }
 
-/**
- * Live data for the teams the user has open (spec v2 §9), modelled on AgentViewManager:
- * backfill with getTeam, follow the team channel skipping seq <= lastSeq, re-backfill when
- * the channel idles out. A terminal phase (event or backfill) ends the follow after one
- * final backfill. Member tabs use AgentViewManager, not this.
- */
+/** DONE may still have communication activity. Blocked requests stay visible without
+ * keeping a stream open until another state change explicitly rearms the view. */
+export function shouldFollowTeam(state: TeamState): boolean {
+  return !TERMINAL_TEAM_PHASES.has(state.phase)
+    || (state.phase === "DONE" && (state.leadExchangeStatus === "running"
+      || state.leadExchangeStatus === "pending"
+      || (state.pendingLeadRequestSeq != null && state.leadExchangeStatus == null)));
+}
+
+function stateKey(state: TeamState): string {
+  return JSON.stringify([state.runId ?? 1, state.phase, state.round, state.resultSeq,
+    state.pendingLeadRequestSeq, state.leadExchangeStatus, state.resumePhase]);
+}
+
+/** Follow only open boards. Dormant open entries retain their identity and cursors so
+ * /live or a summary refresh can rearm them without continuously polling ended teams. */
 export class TeamViewManager {
   private readonly views = new Map<string, OpenTeam>();
 
@@ -48,7 +66,6 @@ export class TeamViewManager {
     private readonly retryDelayMs = 1000,
   ) {}
 
-  /** The full set of teams open in the webview; anything not in it is closed. */
   setOpen(threadId: string, teamIds: readonly string[]): void {
     const wanted = new Set(teamIds);
     for (const [id, view] of [...this.views]) {
@@ -56,10 +73,26 @@ export class TeamViewManager {
     }
     for (const id of wanted) {
       if (this.views.has(id)) continue;
-      const view: OpenTeam = { threadId, closed: false, abort: null };
+      const view: OpenTeam = { threadId, closed: false, abort: null, generation: 0,
+        following: false, lastSeq: 0, lastAseq: 0 };
       this.views.set(id, view);
-      void this.run(id, view);
+      this.start(id, view);
     }
+  }
+
+  noteState(threadId: string, teamId: string, state: TeamState): void {
+    const view = this.views.get(teamId);
+    if (!view || view.closed || view.threadId !== threadId) return;
+    if ((state.runId ?? 1) < (view.state?.runId ?? 1)) return;
+    if ((state.runId ?? 1) === (view.state?.runId ?? 1)
+        && state.round < (view.state?.round ?? 0)) return;
+    if (view.state && stateKey(view.state) === stateKey(state)) return;
+    view.state = state;
+    // Invalidate an in-flight terminal backfill/stream before starting the fresh one.
+    view.generation++;
+    view.abort?.abort();
+    view.following = false;
+    this.start(teamId, view);
   }
 
   closeAll(): void {
@@ -70,51 +103,71 @@ export class TeamViewManager {
     const view = this.views.get(teamId);
     if (!view) return;
     view.closed = true;
+    view.generation++;
     view.abort?.abort();
     this.views.delete(teamId);
   }
 
-  private async run(teamId: string, view: OpenTeam): Promise<void> {
-    while (!view.closed) {
+  private start(teamId: string, view: OpenTeam): void {
+    if (view.following || view.closed) return;
+    view.following = true;
+    const generation = view.generation;
+    void this.run(teamId, view, generation).finally(() => {
+      if (generation === view.generation) view.following = false;
+    });
+  }
+
+  private async run(teamId: string, view: OpenTeam, generation: number): Promise<void> {
+    const current = () => !view.closed && view.generation === generation;
+    while (current()) {
       let detail: TeamDetail;
       try {
         detail = await this.client().getTeam(view.threadId, teamId);
       } catch {
+        if (current()) await delay(this.retryDelayMs);
+        continue;
+      }
+      if (!current()) return;
+      // Posts and activity have independent clocks. Never let stale backfill erase a
+      // streamed result or end a newer run, including a still-open reopened board.
+      if ((detail.runId ?? 1) < (view.state?.runId ?? 1)
+          || detail.lastSeq < view.lastSeq || detail.lastAseq < view.lastAseq) {
         await delay(this.retryDelayMs);
         continue;
       }
-      if (view.closed) return;
+      view.lastSeq = detail.lastSeq;
+      view.lastAseq = detail.lastAseq;
+      view.state = detail;
       this.sink.detail(teamId, detail);
-      if (TERMINAL_TEAM_PHASES.has(detail.phase)) return;
-      let lastSeq = detail.lastSeq;
-      let lastAseq = detail.lastAseq;
-      view.abort = new AbortController();
+      if (!shouldFollowTeam(detail)) return;
+      const abort = new AbortController();
+      view.abort = abort;
       try {
-        const stream = this.client().streamChannel(
-          teamChannel(view.threadId, teamId), view.abort.signal);
+        const stream = this.client().streamChannel(teamChannel(view.threadId, teamId), abort.signal);
         for await (const raw of stream) {
-          if (view.closed) return;
+          if (!current()) return;
           const event = toViewEvent(raw);
           if (event === null) continue;
           if (event.type === "team_post") {
-            if (event.post.seq <= lastSeq) continue;
-            lastSeq = event.post.seq;
+            if (event.post.seq <= view.lastSeq) continue;
+            view.lastSeq = event.post.seq;
           } else if (event.type === "team_activity") {
-            if (event.activity.aseq <= lastAseq) continue;
-            lastAseq = event.activity.aseq;
+            if (event.activity.aseq <= view.lastAseq) continue;
+            view.lastAseq = event.activity.aseq;
+          } else {
+            if ((event.runId ?? view.state?.runId ?? 1) < (view.state?.runId ?? 1)) continue;
+            view.state = { ...view.state, ...event };
           }
           this.sink.event(teamId, event);
-          // The final backfill carries the closing system post and the ended state.
-          if (event.type === "team_phase" && TERMINAL_TEAM_PHASES.has(event.phase)) break;
+          // Always get the final result/reply backfill after communication or lifecycle ends.
+          if (event.type === "team_phase" && !shouldFollowTeam(view.state!)) break;
         }
       } catch {
-        // Aborted (closed) or the connection dropped: re-backfill.
+        // Closed, rearmed, or disconnected: the current generation alone may backfill.
       } finally {
-        view.abort = null;
+        if (view.abort === abort) view.abort = null;
       }
-      // A channel that ends at once (idle timeout, a closed replay) must not spin: a
-      // backfill → stream → backfill loop of resolved promises never yields to timers.
-      if (!view.closed) await delay(this.retryDelayMs);
+      if (current()) await delay(this.retryDelayMs);
     }
   }
 }
@@ -127,8 +180,10 @@ function toViewEvent(event: SequencedStreamEvent): TeamViewEvent | null {
     return { type: "team_activity", activity: parseWireTeamActivity(event.payload.event) };
   }
   if (event.type === "team_phase") {
+    const workflow = "run_id" in event.payload || "mode" in event.payload
+      ? TeamWorkflowSchema.parse(mapTeamWorkflow(event.payload)) : {};
     return { type: "team_phase", phase: event.payload.phase, round: event.payload.round,
-             pausedReason: event.payload.paused_reason };
+      pausedReason: event.payload.paused_reason, ...workflow };
   }
   return null;
 }

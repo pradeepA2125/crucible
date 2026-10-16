@@ -125,3 +125,73 @@ describe("TeamViewManager", () => {
     expect(backfills).toBe(after);
   });
 });
+
+describe("team workflow subscription boundaries", () => {
+  test("an open dormant DONE board rearms for a new run without reopening the window", async () => {
+    let current = { ...detail("DONE", 7), runId: 1 };
+    let subscriptions = 0;
+    const states: string[] = [];
+    const client = { getTeam: async () => current,
+      streamChannel: (id: string, signal?: AbortSignal) => { subscriptions++; return channel([], true)(id, signal); } };
+    const m = new TeamViewManager(() => client, { detail: (_id, d) => states.push(`${d.runId}:${d.phase}`), event: () => {} }, 0);
+    m.setOpen("t", ["team-1"]);
+    await flush(); await flush();
+    current = { ...detail("FINALIZING", 9), runId: 2 };
+    m.noteState("t", "team-1", current);
+    await flush(); await flush();
+    expect(states).toEqual(["1:DONE", "2:FINALIZING"]);
+    expect(subscriptions).toBe(1);
+    m.closeAll();
+  });
+
+  test("DONE with a pending lead exchange follows and backfills its reply before going dormant", async () => {
+    let reads = 0;
+    const summaries: string[] = [];
+    const client = {
+      getTeam: async () => reads++ === 0
+        ? { ...detail("DONE", 10), runId: 2, pendingLeadRequestSeq: 10, leadExchangeStatus: "running" }
+        : { ...detail("DONE", 11), runId: 2, pendingLeadRequestSeq: null, leadExchangeStatus: null },
+      streamChannel: channel([{ type: "team_phase", payload: { phase: "DONE", round: 1,
+        paused_reason: null, run_id: 2, pending_lead_request_seq: null, lead_exchange_status: null } } as SequencedStreamEvent], true),
+    };
+    const m = new TeamViewManager(() => client, { detail: (_id, d) => summaries.push(`${d.lastSeq}:${d.leadExchangeStatus}`), event: () => {} }, 0);
+    m.setOpen("t", ["team-1"]);
+    for (let i = 0; i < 6; i++) await flush();
+    expect(summaries).toEqual(["10:running", "11:null"]);
+    expect(reads).toBe(2);
+    m.closeAll();
+  });
+
+  test("an older terminal backfill cannot overwrite a newer reopened run", async () => {
+    let resolveOld!: (d: TeamDetail) => void;
+    let reads = 0;
+    const seen: string[] = [];
+    const current = { ...detail("IMPLEMENTING", 9), runId: 2 };
+    const client = { getTeam: async () => reads++ === 0
+      ? new Promise<TeamDetail>((resolve) => { resolveOld = resolve; }) : current,
+      streamChannel: channel([], true) };
+    const m = new TeamViewManager(() => client, { detail: (_id, d) => seen.push(d.phase), event: () => {} }, 0);
+    m.setOpen("t", ["team-1"]);
+    m.noteState("t", "team-1", current);
+    await flush();
+    resolveOld({ ...detail("DONE", 7), runId: 1 });
+    await flush(); await flush();
+    expect(seen).toEqual(["IMPLEMENTING"]);
+    m.closeAll();
+  });
+
+  test("closed boards and another thread's notifications do not start polling", async () => {
+    let reads = 0;
+    const done = detail("DONE", 0);
+    const client = { getTeam: async () => { reads++; return done; }, streamChannel: channel([], false) };
+    const m = new TeamViewManager(() => client, { detail: () => {}, event: () => {} }, 0);
+    m.setOpen("t", ["team-1"]);
+    await flush();
+    m.noteState("other-thread", "team-1", { ...done, phase: "DELIBERATING", runId: 2 });
+    m.setOpen("t", []);
+    m.noteState("t", "team-1", { ...done, phase: "DELIBERATING", runId: 2 });
+    await flush();
+    expect(reads).toBe(1);
+    m.closeAll();
+  });
+});

@@ -320,7 +320,18 @@ export interface ThreadUsageView {
   teams: Record<string, { total: TokenUsageView; members: Record<string, TokenUsageView> }>;
 }
 
-export interface TeamSummaryView {
+export interface TeamWorkflowView {
+  mode?: "deliberate" | "deliberate_and_implement" | "implement" | null;
+  deliverable?: { kind: string; description: string } | null;
+  runId?: number;
+  resultSeq?: number | null;
+  resultSummary?: { seq: number; runId: number; summary: string; outcome: string; kind?: string | null } | null;
+  pendingLeadRequestSeq?: number | null;
+  leadExchangeStatus?: string | null;
+  resumePhase?: string | null;
+}
+
+export interface TeamSummaryView extends TeamWorkflowView {
   teamId: string;
   name: string;
   goal: string;
@@ -331,7 +342,7 @@ export interface TeamSummaryView {
   lead?: string | null;
   members: TeamMemberView[];
   openProposals: { id: string; author: string; text: string; stances: Record<string, string> }[];
-  usage: { requests: number; budget: number };
+  usage: { requests: number; budget: number; runRequests?: number; runBudget?: number };
   createdAt: string;
   endReason?: string | null;
   latest?: TeamLatestView | null;
@@ -339,7 +350,7 @@ export interface TeamSummaryView {
   roundProgress?: TeamRoundProgressView | null;
 }
 
-export interface TeamLiveView {
+export interface TeamLiveView extends TeamWorkflowView {
   teamId: string;
   name: string;
   phase: string;
@@ -364,7 +375,7 @@ export interface TeamDetailView extends TeamSummaryView {
 export type TeamEventView =
   | { type: "team_post"; post: TeamPostView }
   | { type: "team_activity"; activity: TeamActivityView }
-  | { type: "team_phase"; phase: string; round: number; pausedReason: string | null };
+  | ({ type: "team_phase"; phase: string; round: number; pausedReason: string | null } & TeamWorkflowView);
 
 /** An open team's board. */
 export interface TeamViewState {

@@ -8,7 +8,7 @@ it.each(["mode", "clarify", "team_plan"])("reopens %s after failed admission and
  const payload = kind === "mode" ? { options: [{ mode: "edit", label: "Edit" }] } : kind === "clarify" ? { question: "Which?", options: ["First"] } : { team_name: "Test", proposal: "Plan" };
  render(kind === "mode" ? <ModeGate taskId="t" payload={payload} /> : kind === "clarify" ? <ClarifyGate taskId="t" payload={payload} /> : <TeamPlanGate taskId="t" gateId="g" payload={payload} />);
  const draft = screen.getByRole("textbox"); fireEvent.change(draft, { target: { value: "Keep this feedback" } });
- const pick = kind === "mode" ? "Edit" : kind === "clarify" ? "First" : "Approve";
+ const pick = kind === "mode" ? "Edit" : kind === "clarify" ? "First" : "Approve implementation";
  fireEvent.click(screen.getByRole("button", { name: pick })); expect(screen.queryByRole("textbox")).toBeNull();
  act(() => window.dispatchEvent(new MessageEvent("message", { data: { type: "decisionRetry", threadId: "other", kind, gateId: "g" } })));
  expect(screen.queryByRole("textbox")).toBeNull();

@@ -12,12 +12,19 @@ from agentd.subagents.framing import frame
 from agentd.teams import state_machine as sm
 from agentd.teams.adoption import evaluate_round
 from agentd.teams.config import team_review_cycles
+from agentd.teams.finalization import (
+    finalization_input,
+    fingerprint_files,
+    validate_execution,
+    validate_final_result,
+)
 from agentd.teams.milestones import milestone_text
 from agentd.teams.models import TeamMember, TeamPost, TeamRecord
 from agentd.teams.review import Routing, evaluate_review, route_objection
 from agentd.teams.service import PreparedPost, TeamService
 from agentd.teams.store import TeamStore
 from agentd.teams.trace import CoordinatorTrace
+from agentd.teams.validation import TeamInputError
 
 logger = logging.getLogger(__name__)
 _FORCE_RETRY_S = 5.0   # the member's loop was not built yet: look again shortly
@@ -73,6 +80,11 @@ class TeamCoordinator:
         self._state.review_cycle = team.review_cycles
         self._state.max_review_cycles = team_review_cycles()
         self._state.lead = team.lead
+        self._state.mode = team.mode
+        self._state.selected_proposal_id = team.adopted_proposal_id
+        self._state.paused_from = team.resume_phase
+        if team.adopted_proposal_id:
+            self._state.pending_assignees = self._assignees(team.adopted_proposal_id)
         self._timers: dict[str, asyncio.TimerHandle] = {}
         self._start_reason = ""
         self._evaluation: dict[str, object] = {}   # the latest round_ended payload
@@ -110,7 +122,8 @@ class TeamCoordinator:
         self._apply(sm.Kickoff(kind, tuple(mentions)))
 
     def on_post(self, post: TeamPost) -> None:
-        if post.kind == "system":
+        if (post.kind in ("system", "result", "report")
+                or post.payload.get("channel") == "main_lead"):
             return
         phase = self._state.phase
         if phase == "DELIBERATING":
@@ -124,7 +137,8 @@ class TeamCoordinator:
 
     def on_report(self, label: str, status: str, stop_reason: str | None, *,
                   files: tuple[str, ...] | list[str] = (), report: str = "",
-                  waiting_on: tuple[str, ...] | list[str] = ()) -> None:
+                  waiting_on: tuple[str, ...] | list[str] = (),
+                  team_fields: dict[str, Any] | None = None) -> None:
         self._cancel(f"deadline:{label}")
         self._cancel(f"grace:{label}")
         self._starting.discard(label)
@@ -134,6 +148,24 @@ class TeamCoordinator:
                 # The forced final iteration always reports partial; a member that finished
                 # before the forcing took effect reported for real (spec v2 §8.2).
                 stop_reason = sm.BUDGET_STOP
+        if self._state.phase == "FINALIZING" and label == self._state.lead:
+            fields = team_fields or {}
+            if status == "completed" and fields.get("finalization_feedback"):
+                feedback = fields["finalization_feedback"]
+                reason = feedback.get("reason") if isinstance(feedback, dict) else None
+                if isinstance(reason, str) and reason.strip():
+                    self._svc.system_post(
+                        self._team_id, "Finalization needs another round: " + reason)
+                    self._apply(sm.FinalizationReported(label, "", needs_deliberation=True))
+                    return
+            if status == "completed" and fields.get("final_result"):
+                try:
+                    self._accept_result(label, report, fields["final_result"])
+                except (TeamInputError, OSError) as exc:
+                    # Validation is repeated at acceptance: files may have changed
+                    # after the loop checked the report. Preserve a resumable debt.
+                    self._apply(sm.ProviderStopped(f"finalization validation failed: {exc}"))
+                return
         self._last_status[label] = status
         if status == "awaiting_peer":
             # A wait that names nobody (the loop's one redirect was not enough) waits on
@@ -151,8 +183,84 @@ class TeamCoordinator:
 
     def on_activation_start(self, label: str) -> None:
         self._starting.discard(label)
-        if self._state.phase in ("DELIBERATING", "REVIEWING"):
+        if self._state.phase in ("DELIBERATING", "FINALIZING", "REVIEWING"):
             self._schedule(f"deadline:{label}", self._timeout, lambda: self._check_deadline(label))
+
+    def narrow_mode(self) -> None:
+        """Remove continuation authority; the host drains executable work before reopening."""
+        self._state.mode = "deliberate"
+        self._store.update_team(self._team_id, mode="deliberate")
+        if self._state.phase in ("IMPLEMENTING", "REVIEWING", "AWAITING_APPROVAL"):
+            self.close()
+
+    def start_execution(self, proposal_id: str) -> None:
+        proposal = self._store.get_post(self._team_id, int(proposal_id.lstrip("Pp")))
+        if proposal is None or proposal.kind != "proposal":
+            raise TeamInputError("Implementation requires a supplied proposal")
+        validate_execution(self._svc, self._team(), proposal)
+        self._apply(sm.StartExecution(proposal_id, self._assignees(proposal_id)))
+
+    def _accept_result(self, label: str, report: str, metadata: object) -> None:
+        team = self._team()
+        posts = self._store.posts(self._team_id)
+        selected_at = max((p.seq for p in posts if p.kind == "system"
+                           and p.payload.get("adopted") == team.adopted_proposal_id), default=0)
+        if any(p.seq > selected_at and p.author == "main" and p.recipient is None
+               and p.kind == "post" for p in posts):
+            self._apply(sm.FinalizationReported(label, "", needs_deliberation=True))
+            return
+        result = validate_final_result(report, metadata, team.adopted_proposal_id)
+        proposal = self._adopted()
+        if team.mode == "deliberate_and_implement" and result["outcome"] == "actionable":
+            if proposal is None:
+                raise TeamInputError("Actionable continuation needs the selected execution plan")
+            validate_execution(self._svc, team, proposal)
+        paths = [str(f) for a in (proposal.payload.get("assignments", []) if proposal else [])
+                 for f in a.get("files", [])]
+        if proposal is not None:
+            paths += [str(f) for f in proposal.payload.get("shared_files", [])]
+        snapshot = fingerprint_files(self._svc.workspace, paths)
+        event = sm.FinalizationReported(label, result["outcome"],
+                                        self._assignees(team.adopted_proposal_id or ""))
+        next_state, _ = sm.apply(self._state, event)
+        with self._store.transaction():
+            previous = (self._store.get_post(self._team_id, team.result_seq)
+                        if team.result_seq is not None else None)
+            if (previous is not None and previous.payload.get("run_id") == team.run_id
+                    and previous.payload.get("basis_proposal_id") == team.adopted_proposal_id):
+                post = previous
+            else:
+                post = self._store.append_post(
+                    self._team_id, author=label, kind="result", text=report,
+                    payload={**result, "run_id": team.run_id, "mode": team.mode,
+                             "deliverable_kind": team.deliverable_kind,
+                             "deliverable_description": team.deliverable_description,
+                             "selected_by": self._selected_by(), "file_fingerprints": snapshot})
+                self._store.update_team(
+                    self._team_id, result_seq=post.seq, result_notice_pending=True)
+            completed = next_state.phase == "DONE"
+            self._store.update_team(
+                self._team_id, phase=next_state.phase, resume_phase=next_state.phase,
+                round_cutoff_seq=None,
+                end_reason="deliberation_complete" if completed else None,
+                ended_at=datetime.now(UTC) if completed else None)
+            if next_state.phase == "IMPLEMENTING" and proposal is not None:
+                by_member = {a["member"]: a for a in proposal.payload.get("assignments", [])}
+                for member in self._store.members(self._team_id):
+                    self._store.set_assignment(
+                        self._team_id, member.label, by_member.get(member.label))
+        self._svc._emit(self._team(), post)
+        self._apply(event)
+
+    def _selected_by(self) -> str:
+        for post in reversed(self._store.posts(self._team_id)):
+            if (post.kind == "system"
+                    and post.payload.get("adopted") == self._team().adopted_proposal_id):
+                return str(post.payload.get("by", "team"))
+        return "team"
+
+    def _start_finalization(self, label: str) -> None:
+        self._start(label, finalization_input(self._store, self._team()))
 
     def main_adopt(self, proposal_id: str) -> None:
         self._apply(sm.MainAdopt(proposal_id, self._assignees(proposal_id)))
@@ -253,7 +361,8 @@ class TeamCoordinator:
                 "retry": action.retry, "of": len(sm.RETRY_BACKOFF_S),
                 "after_ms": int(action.after_s * 1000)})
             self._schedule(f"requeue:{action.label}", action.after_s,
-                           lambda: self._start(action.label))
+                           lambda: self._start_finalization(action.label)
+                           if self._state.phase == "FINALIZING" else self._start(action.label))
         elif isinstance(action, sm.EvaluateRound):
             self._evaluate(action.round)
         elif isinstance(action, sm.Adopt):
@@ -265,7 +374,11 @@ class TeamCoordinator:
         elif isinstance(action, sm.EnterPhase):
             self._store.update_team(
                 self._team_id, phase=action.phase,
-                paused_reason=action.reason if action.phase == "PAUSED" else None)
+                paused_reason=action.reason if action.phase == "PAUSED" else None,
+                resume_phase=self._state.paused_from if action.phase == "PAUSED" else action.phase,
+                mode=self._state.mode,
+                round_cutoff_seq=(self._team().round_cutoff_seq
+                                  if action.phase == "DELIBERATING" else None))
             self._svc.record(self._team_id, "team", "phase", payload={
                 "phase": action.phase, "round": action.round, "reason": action.reason})
             self._host.team_phase_changed(self._team())
@@ -275,6 +388,8 @@ class TeamCoordinator:
                 self._host.raise_plan_gate(self._team(), proposal)
         elif isinstance(action, sm.ClosePlan):
             self._close_plan(action.reason)
+        elif isinstance(action, sm.StartFinalization):
+            self._start_finalization(action.label)
         elif isinstance(action, sm.StartImplementation):
             self._start_implementation(action.labels)
         elif isinstance(action, sm.AssignmentDone):
@@ -312,7 +427,13 @@ class TeamCoordinator:
     def _milestone(self, action: sm.Milestone) -> None:
         team = self._team()
         data: dict[str, object] = dict(action.data)
-        if action.kind == "deadlock":
+        if action.kind == "recommendation_ready":
+            post = self._store.get_post(self._team_id, team.result_seq or 0)
+            if post is not None:
+                data.update(post.payload, text=post.text, result_seq=post.seq,
+                            actual_phase=team.phase,
+                            members=self._svc.member_summaries(self._team_id))
+        elif action.kind == "deadlock":
             # Quoted so adopt_proposal is never a choice between bare ids.
             raw_proposals = self._evaluation.get("proposals", [])
             data["proposals"] = [
@@ -363,7 +484,8 @@ class TeamCoordinator:
     def _start_round(self, action: sm.StartRound) -> None:
         now = datetime.now(UTC)
         self._store.update_team(self._team_id, phase="DELIBERATING", round=action.round,
-                                max_rounds=self._state.max_rounds, round_started_at=now)
+                                max_rounds=self._state.max_rounds, round_started_at=now,
+                                mode=self._state.mode, resume_phase="DELIBERATING")
         reason, self._start_reason = self._start_reason, ""
         if action.round > 1:
             payload: dict[str, object] = {"phase": "DELIBERATING", "round": action.round}
@@ -417,7 +539,7 @@ class TeamCoordinator:
         self._svc.system_post(self._team_id, text, payload={
             "adopted": action.proposal_id, "by": action.by,
             "assignments": assignments, "shared_files": shared})
-        if not action.close:
+        if not action.close or self._state.mode in ("deliberate", "deliberate_and_implement"):
             return       # the approval_needed milestone tells the main agent instead
         team = self._team()
         headline, body = milestone_text(team, "adopted", {
@@ -440,6 +562,15 @@ class TeamCoordinator:
 
     def _start_implementation(self, labels: tuple[str, ...]) -> None:
         proposal = self._adopted()
+        if self._team().mode is not None:
+            try:
+                if proposal is None:
+                    raise TeamInputError("missing executable proposal")
+                team = self._team()
+                validate_execution(self._svc, team, proposal)
+            except TeamInputError as exc:
+                self._apply(sm.ProviderStopped(str(exc)))
+                return
         payload = proposal.payload if proposal is not None else {}
         by_member = {str(a.get("member")): a for a in payload.get("assignments", [])
                      if isinstance(a, dict)}
@@ -646,7 +777,7 @@ class TeamCoordinator:
     def _check_deadline(self, label: str) -> None:
         """The clock counts active time only (spec v2 §8.3): re-arm for what is left."""
         active = self._host.active_seconds(self._team_id, label)
-        if active is None or self._state.phase not in ("DELIBERATING", "REVIEWING"):
+        if active is None or self._state.phase not in ("DELIBERATING", "FINALIZING", "REVIEWING"):
             return
         if active < self._timeout:
             self._schedule(f"deadline:{label}", max(0.01, self._timeout - active),

@@ -902,6 +902,7 @@ export class CrucibleController {
     }
     if (threadId !== this.activeThreadId) return;
     if (teams.length > 0) this.ui.renderTeams(teams);
+    for (const team of teams) this.teamViews.noteState(threadId, team.teamId, team);
   }
 
 
@@ -2599,6 +2600,7 @@ export class CrucibleController {
     }
     const liveTeamIds = new Set((live.teams ?? []).map((t) => t.teamId));
     if (live.teams && live.teams.length > 0) this.ui.renderLiveTeams(live.teams);
+    for (const team of live.teams ?? []) this.teamViews.noteState(threadId, team.teamId, team);
     // /live lists live teams only: one that left has ended — reload its summary.
     if ([...this.lastLiveTeamIds].some((id) => !liveTeamIds.has(id))) {
       void this.refreshTeams(threadId);

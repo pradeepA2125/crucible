@@ -92,6 +92,7 @@ class AggregatingToolRegistry:
 
     def __init__(
         self, sources: list[ToolSource], allowed_tools: frozenset[str] | None = None,
+        execution_guard: Callable[[str], str | None] | None = None,
     ) -> None:
         seen: set[str] = set()
         for src in sources:
@@ -102,6 +103,7 @@ class AggregatingToolRegistry:
         self._sources = sources
         # A sub-agent's tool set (spec §5.3): None = every tool the sources offer.
         self._allowed = allowed_tools
+        self._execution_guard = execution_guard
         builtin = next((s for s in sources if isinstance(s, BuiltinToolSource)), None)
         self.shadow_root = builtin._inner._shadow_root if builtin else Path.cwd()
         self.real_root = builtin._inner._real_workspace_path if builtin else Path.cwd()
@@ -135,15 +137,29 @@ class AggregatingToolRegistry:
         return builtin._inner._read_root_for(path) if builtin else self.real_root
 
     async def prepare(self, tool: str, args: dict[str, object]):
+        if self._execution_guard is not None:
+            refusal = self._execution_guard(tool)
+            if refusal:
+                return ToolOutput(output=refusal, is_error=True)
         if self._allowed is None or tool in self._allowed:
             for s in self._sources:
                 if s.owns(tool):
                     prepare = getattr(s, "prepare", None)
                     if callable(prepare):
-                        return await prepare(tool, args)
-                    async def run(source=s):
-                        return await source.execute(tool, args)
-                    return run
+                        prepared = await prepare(tool, args)
+                    else:
+                        async def run(source=s):
+                            return await source.execute(tool, args)
+                        prepared = run
+                    if isinstance(prepared, ToolOutput):
+                        return prepared
+                    async def guarded(run=prepared):
+                        if self._execution_guard is not None:
+                            refusal = self._execution_guard(tool)
+                            if refusal:
+                                return ToolOutput(output=refusal, is_error=True)
+                        return await run()
+                    return guarded
         return ToolOutput(output=f"Error: unknown tool '{tool}'", is_error=True)
 
     def use_shadow_for_reads(self) -> None:

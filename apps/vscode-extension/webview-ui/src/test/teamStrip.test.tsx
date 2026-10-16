@@ -61,3 +61,11 @@ describe("the pinned team strip", () => {
     expect(teamPhaseText({ ...TEAM, phase: "PAUSED", pausedReason: "budget reached" })).toBe("Paused — budget reached");
   });
 });
+
+it("keeps a completed result visible while the lead replies without claiming implementation", () => {
+  wrap(<TeamStrip />, { "team-1": { ...TEAM, phase: "DONE", roundProgress: null,
+    mode: "deliberate", runId: 1, deliverable: { kind: "plan", description: "Propose work" },
+    pendingLeadRequestSeq: 12, leadExchangeStatus: "running" } });
+  expect(screen.getByTestId("team-strip-team-1")).toHaveTextContent("Plan ready · lead replying");
+  expect(screen.getByTestId("team-strip-team-1")).not.toHaveTextContent("Implementing");
+});

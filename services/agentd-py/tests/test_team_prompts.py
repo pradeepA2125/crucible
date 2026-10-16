@@ -188,7 +188,8 @@ def test_members_are_told_not_to_write_files_before_implementation() -> None:
     member = format_controller_system_prompt(
         [{"name": "team_post"}], task_subsystem_enabled=False, memory_enabled=False,
         render_ctx=_ctx("Team 'auth'. Goal: add login."), persona="")
-    assert "change no files — neither with edits nor through\n  run_command" in member
+    assert "Only phase IMPLEMENTING permits execution" in member
+    assert "In every other phase change no files, including through run_command" in member
 
 
 def test_report_proposal_assignments_survive_the_strict_codec() -> None:
@@ -211,7 +212,8 @@ def test_the_main_agent_learns_a_done_team_reopens() -> None:
     from agentd.subagents.definitions import BUILTIN_AGENTS
     from agentd.teams.tools import MainTeamOps, MainTeamToolSource
     text = render_prompt(_TEAMS_MAIN_BLOCK, RenderContext.main())
-    assert "A DONE team reopens with post_board for a follow-up request" in text
+    assert "A DONE team reopens with post_board into a new deliberate run" in text
+    assert "Follow-up discussion\n  never authorizes implementation" in text
 
     async def never(*_a, **_k):  # type: ignore[no-untyped-def]
         raise AssertionError
@@ -236,3 +238,38 @@ def test_members_learn_a_proposal_is_a_plan_not_finished_code() -> None:
     text = " ".join(render_prompt(_TEAM_BLOCK, ctx).split())
     assert ("A proposal is a plan for work not done yet: object when the plan is wrong or "
             "incomplete, never because the code does not have it yet.") in text
+
+
+@pytest.mark.parametrize("tight,anyof", [(False, False), (True, False), (False, True)])
+def test_finalization_metadata_remains_structured_in_report_schemas(tight, anyof) -> None:
+    from agentd.providers.openai_strict_schema import encode_strict_schema
+    schema = controller_response_schema(phase="AGENT", allowed_types=["report"],
+                                        team_member=True, tight=tight, anyof=anyof)
+    props = (schema.get("oneOf", schema.get("anyOf", [{}]))[0].get("properties", {})
+             if "oneOf" in schema or "anyOf" in schema else schema["properties"])
+    assert set(props["final_result"]["properties"]) == {"summary", "outcome", "basis_proposal_id"}
+    assert props["finalization_feedback"]["properties"] == {"reason": {"type": "string"}}
+    encoded = json.dumps(encode_strict_schema(schema).schema)
+    assert '"basis_proposal_id"' in encoded and '"needs_decision"' in encoded
+
+
+def test_notice_actions_and_private_request_delegation_are_scoped() -> None:
+    from agentd.chat.controller_loop import ControllerLoop
+    from agentd.chat.controller_prompts import _delegated_hint
+    loop = object.__new__(ControllerLoop)
+    loop._notice_actions = []
+    loop._notice_posts = set()
+    loop._notice_scoped_actions = set()
+    first = {"team": "alpha", "expected_run_id": 1, "result_seq": 4}
+    loop._note_notice_action("start_team_implementation", first)
+    assert loop._notice_repeat("start_team_implementation", first, {"notice_turn": True})
+    assert loop._notice_repeat("start_team_implementation", {**first, "team": "beta"},
+                               {"notice_turn": True}) is None
+    assert loop._notice_repeat("start_team_implementation", {**first, "expected_run_id": 2},
+                               {"notice_turn": True}) is None
+    loop._note_notice_action("post_board", {"team": "alpha", "mentions": ["alice"]})
+    assert loop._notice_repeat("post_board", {"team": "beta", "mentions": ["alice"]},
+                               {"notice_turn": True}) is None
+    hint = _delegated_hint({"lead_requests": ["alpha"]})
+    assert "Only the lead" in hint and "reply will notify you" in hint
+    assert "started team" not in hint

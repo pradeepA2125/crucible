@@ -248,7 +248,8 @@ class TeamService:
                 # the plan everyone had just agreed to, and nothing was ever adopted.
                 raise TeamInputError(
                     f"{current.proposal_id} is under review and nobody objects to it. Keep it: "
-                    "teammates' notes are applied during implementation. Report that you are "
+                    "teammates' notes are included when finalizing the recommendation. "
+                    "Report that you are "
                     "waiting for the review.")
         body = check_text(text, "proposal")
         roster = self._roster(team_id)
@@ -266,7 +267,7 @@ class TeamService:
         raw_shared = [str(f) for f in shared_files] if isinstance(shared_files, list) else []
         parts, shared = check_assignments(
             parts, raw_shared, workspace=self._workspace,
-            can_edit=lambda member: self._can_edit(team_id, member))
+            can_edit=lambda member: team.mode == "deliberate" or self._can_edit(team_id, member))
         closes: list[TeamPost] = []
         if lead is not None:
             # One open plan at a time: the lead's proposal replaces its previous draft and
@@ -348,11 +349,19 @@ class TeamService:
                 if p.author != label and (p.round or 0) < team.round
                 and label not in stances.get(p.seq, {})]
 
-    def final_hint(self, team_id: str, label: str) -> str:
+    def final_hint(self, team_id: str, label: str, *, activation_kind: str = "lifecycle") -> str:
         """What the phase needs before a forced report (spec v2 §3.11)."""
+        if activation_kind == "lead_reply":
+            return ("This consultation is ending. Use team_reply_main for the pending request "
+                    "if you can answer; otherwise report partial with the blocker. Your terminal "
+                    "report does not answer the request or complete any lifecycle work.")
         team = self._store.get_team(team_id)
         if team is None:
             return ""
+        if team.phase == "FINALIZING":
+            return ("deliver the requested result in summary and final_result "
+                    "{summary, outcome: actionable|no_change|needs_decision, basis_proposal_id}; "
+                    "or finalization_feedback {reason} when deliberation needs revision")
         if team.phase == "IMPLEMENTING":
             return ("finish or report partial, listing what is left under 'Unfinished' — "
                     "your assignment stays open for the next activation")
@@ -397,7 +406,8 @@ class TeamService:
         return ended[-1].payload if ended else None
 
     def read(self, team_id: str, viewer: str, since_seq: int = 0) -> list[TeamPost]:
-        posts = self._store.posts(team_id, since_seq=since_seq, viewer=viewer)
+        posts = [p for p in self._store.posts(team_id, since_seq=since_seq, viewer=viewer)
+                 if p.payload.get("channel") != "main_lead"]
         team = self._store.get_team(team_id)
         return self._within(posts, self._round_cutoff(team), viewer) if team else posts
 
@@ -485,7 +495,16 @@ class TeamService:
         kickoff = self._store.get_post(team.team_id, 1)
         team_lead = team.lead
         is_lead = team_lead is not None and team_lead == label
-        if team.phase != "DELIBERATING":
+        if team.phase == "FINALIZING":
+            lead = (f"Team {team.name!r} — Finalizing recommendation. You are the lead: synthesize "
+                    "the selected proposal, member reports, notes and objections into the "
+                    "requested "
+                    "deliverable. End with report: full result in summary, plus final_result "
+                    "{summary, outcome: actionable|no_change|needs_decision, basis_proposal_id}. "
+                    "If it cannot be finalized, report partial with "
+                    "finalization_feedback {reason}. "
+                    "Publishing the result wakes main only. Do not start implementation.")
+        elif team.phase != "DELIBERATING":
             lead = f"Team {team.name!r} — phase {team.phase}."
         elif n == 1 and kickoff is not None and kickoff.kind == "proposal":
             lead = (f"Round 1 of {total}: the main agent proposed {kickoff.proposal_id}. "
@@ -535,8 +554,15 @@ class TeamService:
                 lead += (f" Your {current.proposal_id} is under review. If an objection "
                          "arrived, revise it with team_propose (your new proposal replaces "
                          "it); otherwise report that you are waiting — teammates' notes are "
-                         "applied during implementation.")
+                         "included when finalizing the recommendation.")
+        if team.mode is not None:
+            lead = (lead.replace("the plan", "the recommendation")
+                    .replace("a plan", "a recommendation")
+                    .replace("revised plan", "revised recommendation"))
         lines = [lead]
+        if team.mode is not None:
+            lines.append(f"Mode: {team.mode}. Deliverable: {team.deliverable_kind} — "
+                         f"{team.deliverable_description}. Only IMPLEMENTING authorizes execution.")
         if first:
             lines.append(f"Goal: {team.goal}")
         if team.phase == "DELIBERATING":
@@ -564,7 +590,7 @@ class TeamService:
         team = self._store.get_team(team_id)
         member = self._store.member(team_id, label)
         assert team is not None and member is not None
-        visible = self._store.posts(team_id, since_seq=member.delivered_seq, viewer=label)
+        visible = self.read(team_id, label, member.delivered_seq)
         limit = until_seq if until_seq is not None else self._round_cutoff(team)
         if limit is not None:
             visible = [p for p in visible if p.seq <= limit]
@@ -579,14 +605,25 @@ class TeamService:
         text, top, _ = self.render_delta_posts(team_id, label)
         return text, top
 
-    def status_text(self, team_id: str, label: str) -> str:
+    def status_text(self, team_id: str, label: str, *, activation_kind: str = "lifecycle") -> str:
         team = self._store.get_team(team_id)
         member = self._store.member(team_id, label)
         assert team is not None and member is not None
         stances = self.stances(team_id)
         cutoff = self._round_cutoff(team)
         lines = [f"team {team.name!r}: phase {team.phase}, round {team.round} of "
-                 f"{team.max_rounds}", f"goal: {team.goal}", "roster:"]
+                 f"{team.max_rounds}", f"goal: {team.goal}"]
+        if team.mode is not None:
+            lines.extend([f"mode: {team.mode}; run: {team.run_id}",
+                          f"deliverable: {team.deliverable_kind} — {team.deliverable_description}",
+                          f"activation purpose: {activation_kind}"])
+        if activation_kind == "lead_reply":
+            lines.append("This activation only owes a read-only reply to main via team_reply_main. "
+                         "End with report after replying, or report partial if blocked.")
+        if label == team.lead and team.pending_lead_request_seq:
+            lines.append(f"pending main request: #{team.pending_lead_request_seq}; "
+                         "reference this request_seq in team_reply_main")
+        lines.append("roster:")
         for m in self._store.members(team_id):
             info = self._agent_info(m.agent_id)
             you = " (you)" if m.label == label else ""
@@ -604,7 +641,7 @@ class TeamService:
             done = " (done)" if member.assignment_done else ""
             lines.append(f"your assignment{done}: {json.dumps(member.assignment)}")
         unread = self._within(
-            self._store.posts(team_id, since_seq=member.delivered_seq, viewer=label),
+            self.read(team_id, label, member.delivered_seq),
             cutoff, label)
         dms = sum(1 for p in unread if p.recipient == label)
         mentions = sum(1 for p in unread if p.recipient is None and
@@ -634,6 +671,10 @@ class TeamService:
 
     def _final_reports(self, team_id: str) -> dict[str, tuple[str, str]]:
         """Each member's latest wrapped_up activity: (status, report)."""
+        team = self._store.get_team(team_id)
+        if team is not None and team.mode is not None:
+            return {label: (str(post.payload.get("status", "")), post.text)
+                    for label, post in self._store.current_reports(team_id, team.run_id).items()}
         latest: dict[str, tuple[str, str]] = {}
         for event in self._store.activity(team_id):
             if event.kind == "wrapped_up":
@@ -678,6 +719,10 @@ class TeamService:
             return ({"id": post.proposal_id, "author": post.author, "text": post.text}
                     if post is not None else None)
 
+        accepted = (self._store.get_post(team_id, team.result_seq)
+                    if team.result_seq is not None else None)
+        result = ({"seq": accepted.seq, "text": accepted.text, **accepted.payload}
+                  if accepted is not None and accepted.kind == "result" else None)
         reports = self._final_reports(team_id)
         members = []
         for member in self._store.members(team_id):
@@ -690,9 +735,10 @@ class TeamService:
         objections = [{"seq": p.seq, "author": p.author, "on": p.ref_id, "text": p.text}
                       for p in self._store.posts(team_id)
                       if p.kind == "object" and p.ref_id in targets]
-        return {"team": team.name, "goal": team.goal, "phase": team.phase,
+        return {**self._workflow_summary(team), "team": team.name, "goal": team.goal,
+                "phase": team.phase,
                 "end_reason": team.end_reason, "adopted": proposal(team.adopted_proposal_id),
-                "closing": proposal(team.closing_proposal_id), "members": members,
+                "closing": proposal(team.closing_proposal_id), "result": result, "members": members,
                 "objections": objections}
 
     def summary(self, team_id: str) -> dict[str, object]:
@@ -701,6 +747,7 @@ class TeamService:
             raise TeamInputError(f"no team {team_id!r}")
         stances = self.stances(team_id)
         return {
+            **self._workflow_summary(team),
             "team_id": team.team_id, "name": team.name, "goal": team.goal, "phase": team.phase,
             "round": team.round, "max_rounds": team.max_rounds,
             "paused_reason": team.paused_reason,
@@ -716,6 +763,26 @@ class TeamService:
                 {"id": p.proposal_id, "author": p.author, "text": p.text[:600],
                  "stances": stances.get(p.seq, {})}
                 for p in self.open_proposals(team_id)],
-            "usage": {"requests": team.requests, "budget": team.budget},
+            "usage": {"requests": team.requests, "budget": team.budget,
+                      "run_requests": max(0, team.requests - team.run_request_start),
+                      "run_budget": max(0, team.budget - team.run_request_start)},
             "evaluation": self.latest_evaluation(team_id),
         }
+
+    def _workflow_summary(self, team: TeamRecord) -> dict[str, object]:
+        result = (self._store.get_post(team.team_id, team.result_seq)
+                  if team.result_seq is not None else None)
+        result_summary = None
+        if result is not None and result.kind == "result":
+            result_summary = {"seq": result.seq, "run_id": result.payload.get("run_id"),
+                              "summary": result.payload.get("summary", result.text[:240]),
+                              "outcome": result.payload.get("outcome"),
+                              "kind": result.payload.get("deliverable_kind", team.deliverable_kind)}
+        return {"mode": team.mode,
+                "deliverable": ({"kind": team.deliverable_kind,
+                                 "description": team.deliverable_description or ""}
+                                if team.deliverable_kind else None),
+                "run_id": team.run_id, "resume_phase": team.resume_phase,
+                "result_seq": team.result_seq, "result_summary": result_summary,
+                "pending_lead_request_seq": team.pending_lead_request_seq,
+                "lead_exchange_status": team.lead_exchange_status}

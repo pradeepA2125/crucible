@@ -121,3 +121,43 @@ describe("named waits and fix assignments", () => {
     expect((await c.listTeams("t"))[0].members[0].assignment?.fix).toEqual(["#12"]);
   });
 });
+
+describe("team execution workflow contracts", () => {
+  const workflow = {
+    mode: "deliberate", deliverable_kind: "diagnosis", deliverable_description: "Find the cause",
+    run_id: 3, result_seq: 12, resume_phase: "FINALIZING", pending_lead_request_seq: 15,
+    lead_exchange_status: "running",
+    result_summary: { seq: 12, run_id: 3, summary: "Cause identified", outcome: "actionable", deliverable_kind: "diagnosis" },
+  };
+
+  it("maps workflow on summaries, detail and live without returning full result in live", async () => {
+    const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: respond({ teams: [{ ...SUMMARY, ...workflow }] }) });
+    const expected = { mode: "deliberate", runId: 3,
+      deliverable: { kind: "diagnosis", description: "Find the cause" },
+      resultSeq: 12, pendingLeadRequestSeq: 15, leadExchangeStatus: "running", resumePhase: "FINALIZING",
+      resultSummary: { seq: 12, runId: 3, summary: "Cause identified", outcome: "actionable", kind: "diagnosis" } };
+    expect((await c.listTeams("t"))[0]).toMatchObject(expected);
+    const detailClient = new HttpBackendClient({ baseUrl: "http://x", fetchFn: respond({ ...SUMMARY, ...workflow,
+      posts: [{ ...POST, seq: 12, kind: "result", text: "Full **diagnosis**", payload: { run_id: 3 } }], last_seq: 12 }) });
+    const detail = await detailClient.getTeam("t", "team-1");
+    expect(detail).toMatchObject(expected);
+    expect(detail.posts[0]).toMatchObject({ kind: "result", text: "Full **diagnosis**" });
+    const live = new HttpBackendClient({ baseUrl: "http://x", fetchFn: respond({
+      active_task_id: null, status: null, plan: null, pending_gates: [], teams: [{ ...SUMMARY, ...workflow }] }) });
+    expect((await live.getThreadLiveState("t")).teams?.[0]).toMatchObject(expected);
+  });
+
+  it("does not invent modern authorization for missing or unknown legacy modes", async () => {
+    const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: respond({ teams: [SUMMARY, { ...SUMMARY, mode: "future_mode" }] }) });
+    const teams = await c.listTeams("t");
+    expect(teams.map((team) => team.mode)).toEqual([null, null]);
+    expect(teams[0]).toMatchObject({ runId: 1, resultSeq: null, deliverable: null });
+  });
+
+  it("preserves private role-channel posts independently of ordinary member messages", () => {
+    expect(parseWireTeamPost({ ...POST, kind: "post", author: "review", recipient: "main",
+      payload: { channel: "main_lead", reply_to: 11, run_id: 3 } })).toMatchObject({
+      author: "review", recipient: "main", payload: { channel: "main_lead", reply_to: 11, run_id: 3 },
+    });
+  });
+});

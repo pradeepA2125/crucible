@@ -10,7 +10,28 @@ from agentd.teams.models import TeamRecord
 
 def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tuple[str, str]:
     name = repr(team.name)
-    if kind == "adopted":
+    if kind == "recommendation_ready":
+        headline = f"Team {name}: {team.deliverable_kind or 'recommendation'} ready"
+        details = [str(data.get("summary", "")), str(data.get("text", "")),
+                   f"Outcome: {data.get('outcome')}; "
+                   f"selected by: {data.get('selected_by', 'team')}; "
+                   f"basis: {data.get('basis_proposal_id')}; result #{data.get('result_seq')}.",
+                   f"Current phase: {data.get('actual_phase', team.phase)}."]
+        if team.mode == "deliberate":
+            details.append("Deliberation is complete. Present the result to the user. "
+                           "Do not implement; implementation requires an explicit "
+                           "user-authorized transition.")
+        elif team.phase == "AWAITING_APPROVAL":
+            details.append("Implementation is awaiting approval of the executable plan.")
+        elif team.phase == "IMPLEMENTING":
+            details.append("The members are implementing the authorized plan.")
+        else:
+            details.append("The team completed its recommendation without starting implementation.")
+        raw_members = data.get("members", [])
+        members = raw_members if isinstance(raw_members, list) else []
+        details.extend(f"- {m.get('label')}: {m.get('summary', '')}" for m in members
+                       if isinstance(m, dict))
+    elif kind == "adopted":
         headline = f"Team {name} adopted {data['proposal_id']}"
         by = " by you (the main agent)" if data.get("by") == "main" else " by the team"
         raw_parts = data.get("assignments")

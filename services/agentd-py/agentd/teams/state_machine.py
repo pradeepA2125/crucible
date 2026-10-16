@@ -7,7 +7,8 @@ import copy
 from dataclasses import dataclass, field
 
 RETRY_BACKOFF_S: tuple[float, ...] = (30.0, 120.0)
-LIVE_PHASES = frozenset({"DELIBERATING", "AWAITING_APPROVAL", "IMPLEMENTING", "REVIEWING",
+LIVE_PHASES = frozenset({"DELIBERATING", "FINALIZING", "AWAITING_APPROVAL", "IMPLEMENTING",
+                         "REVIEWING",
                          "DEADLOCKED", "PAUSED"})
 BUDGET_STOP = "budget"          # the stop_reason of a report forced by a budget pause
 TRANSIENT_BURST = 3             # consecutive final failed_transient outcomes that pause
@@ -39,6 +40,8 @@ class TeamState:
     pending_assignees: tuple[str, ...] = ()   # the adopted plan's assignees, awaiting approval
     review_cycle: int = 0            # the current closing proposal's cycle (1 = the first)
     max_review_cycles: int = 2       # closing proposals allowed after the first
+    mode: str | None = None
+    selected_proposal_id: str | None = None
     lead: str | None = None          # the member who alone proposes (spec 2026-10-07)
 
     def quorum(self) -> list[str]:
@@ -73,6 +76,20 @@ class RoundEvaluated:
 class MainAdopt:
     proposal_id: str
     assignees: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FinalizationReported:
+    label: str
+    outcome: str
+    assignees: tuple[str, ...] = ()
+    needs_deliberation: bool = False
+
+
+@dataclass(frozen=True)
+class StartExecution:
+    proposal_id: str
+    assignees: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -134,7 +151,7 @@ class ReviewEvaluated:
 
 Event = (Kickoff | MemberReported | RoundEvaluated | MainAdopt | MainPost | Disband | Approval
          | BudgetExhausted | ProviderStopped | Stuck | MainResume | Revive | ReviewStarted
-         | ReviewEvaluated)
+         | ReviewEvaluated | FinalizationReported | StartExecution)
 
 
 # ── actions ──────────────────────────────────────────────────────────────────
@@ -200,6 +217,11 @@ class ClosePlan:
 
 
 @dataclass(frozen=True)
+class StartFinalization:
+    label: str
+
+
+@dataclass(frozen=True)
 class StartImplementation:
     labels: tuple[str, ...]
 
@@ -249,7 +271,7 @@ class StartFixes:
 Action = (StartRound | Requeue | EvaluateRound | Adopt | Milestone | SetQuorum | EnterPhase
           | End | RaisePlanGate | ClosePlan | StartImplementation | AssignmentDone
           | ResumeMembers | CancelTimers | ForceFinalAll | OpenReview | StartReviewRound
-          | EvaluateReview | StartFixes)
+          | EvaluateReview | StartFixes | StartFinalization)
 
 
 def _start_round(state: TeamState, labels: list[str]) -> list[Action]:
@@ -262,6 +284,8 @@ def _start_round(state: TeamState, labels: list[str]) -> list[Action]:
 
 
 def _implement(state: TeamState, assignees: tuple[str, ...]) -> list[Action]:
+    if state.mode == "deliberate":
+        return _pause(state, "implementation forbidden in deliberate mode")
     state.phase = "IMPLEMENTING"
     state.pending_assignees = ()
     state.stuck_count = 0
@@ -275,6 +299,14 @@ def _implement(state: TeamState, assignees: tuple[str, ...]) -> list[Action]:
 def _adopt(state: TeamState, proposal_id: str, by: str,
            assignees: tuple[str, ...]) -> list[Action]:
     known = tuple(lb for lb in assignees if lb in state.members)
+    state.selected_proposal_id = proposal_id
+    if state.mode in ("deliberate", "deliberate_and_implement"):
+        if not state.lead or state.lead not in state.members:
+            return _pause(state, "lead required for finalization")
+        state.pending_assignees = known
+        state.phase = "FINALIZING"
+        return [Adopt(proposal_id, by), EnterPhase("FINALIZING", state.round),
+                StartFinalization(state.lead)]
     if not known:
         # Nothing to implement: the plan is the deliverable (5A's behavior).
         state.phase = "DONE"
@@ -303,6 +335,8 @@ def _owing(state: TeamState, phase: str) -> tuple[str, ...]:
     if phase in ("DELIBERATING", "REVIEWING"):
         return tuple(lb for lb in state.round_members
                      if state.members[lb].in_quorum and not state.members[lb].reported)
+    if phase == "FINALIZING":
+        return (state.lead,) if state.lead else ()
     if phase == "IMPLEMENTING":
         return tuple(lb for lb, m in state.members.items() if m.assigned and not m.done)
     return ()
@@ -322,6 +356,9 @@ def _restore_quorum(state: TeamState) -> list[Action]:
 
 def _resume(state: TeamState) -> list[Action]:
     phase = state.paused_from or "DELIBERATING"
+    if state.mode == "deliberate" and phase in ("IMPLEMENTING", "REVIEWING", "AWAITING_APPROVAL"):
+        phase = "DELIBERATING"
+        state.pending_assignees = ()
     state.phase = phase
     state.paused_from = None
     state.stuck_count = 0
@@ -335,6 +372,8 @@ def _resume(state: TeamState) -> list[Action]:
         return [*actions, EvaluateReview(state.review_cycle)]
     if phase == "IMPLEMENTING" and not owing:
         return [*actions, OpenReview(state.review_cycle + 1)]
+    if phase == "FINALIZING" and state.lead:
+        return [*actions, StartFinalization(state.lead)]
     return [*actions, ResumeMembers(owing)] if owing else actions
 
 
@@ -431,6 +470,13 @@ def _revive(state: TeamState, event: Revive) -> list[Action]:
     state.stuck_count = 0
     state.transient_streak = 0
     phase = event.from_phase
+    if state.mode == "deliberate" and phase in ("IMPLEMENTING", "REVIEWING", "AWAITING_APPROVAL"):
+        state.pending_assignees = ()
+        return [*restored, *_start_round(state, state.quorum())]
+    if phase == "FINALIZING" and state.lead:
+        state.phase = phase
+        return [*restored, EnterPhase(phase, state.round, "revived"),
+                StartFinalization(state.lead)]
     if phase == "IMPLEMENTING":
         state.phase = phase
         owing = _owing(state, phase)
@@ -453,8 +499,36 @@ def apply(state: TeamState, event: Event) -> tuple[TeamState, list[Action]]:
     s = copy.deepcopy(state)
     if isinstance(event, Revive):
         return (s, _revive(s, event)) if s.phase == "FAILED" else (s, [])
-    if s.phase not in LIVE_PHASES:
+    if s.phase not in LIVE_PHASES and not (isinstance(event, StartExecution) and s.phase == "DONE"):
         return s, []
+    if isinstance(event, StartExecution):
+        if s.mode != "implement" or s.phase not in ("DELIBERATING", "DONE") or not event.assignees:
+            return s, []
+        return s, _adopt(s, event.proposal_id, "main", event.assignees)
+    if isinstance(event, FinalizationReported):
+        if s.phase != "FINALIZING" or event.label != s.lead:
+            return s, []
+        if event.needs_deliberation:
+            s.pending_assignees = ()
+            s.selected_proposal_id = None
+            if s.round >= s.max_rounds:
+                s.phase = "DEADLOCKED"
+                return s, [ClosePlan("feedback"), EnterPhase("DEADLOCKED", s.round),
+                           Milestone("deadlock", {"round": s.round})]
+            s.round += 1
+            return s, [ClosePlan("feedback"), *_start_round(s, s.quorum())]
+        if s.mode == "deliberate" or event.outcome in ("no_change", "needs_decision"):
+            s.phase = "DONE"
+            return s, [End("DONE", "deliberation_complete"), Milestone("recommendation_ready", {})]
+        if event.outcome != "actionable" or not event.assignees:
+            return s, _pause(s, "finalization requires an executable mapping or needs_decision")
+        if s.approval_gate:
+            s.phase = "AWAITING_APPROVAL"
+            s.pending_assignees = event.assignees
+            return s, [EnterPhase("AWAITING_APPROVAL", s.round),
+                       RaisePlanGate(s.selected_proposal_id or ""),
+                       Milestone("recommendation_ready", {})]
+        return s, [*_implement(s, event.assignees), Milestone("recommendation_ready", {})]
     if isinstance(event, Disband):
         s.phase = "DISBANDED"
         return s, [End("DISBANDED", "disbanded")]
@@ -490,6 +564,8 @@ def apply(state: TeamState, event: Event) -> tuple[TeamState, list[Action]]:
         if event.decision == "approve":
             return s, [ClosePlan("adopted"), *_implement(s, s.pending_assignees)]
         if event.decision == "feedback":
+            if s.mode == "implement":
+                s.mode = "deliberate_and_implement"
             s.pending_assignees = ()
             s.round += 1
             s.max_rounds += 1
@@ -533,6 +609,8 @@ def apply(state: TeamState, event: Event) -> tuple[TeamState, list[Action]]:
         if event.objections == 0:
             return s, _finish(s, "reviewed")
         if event.fixers and s.review_cycle < 1 + s.max_review_cycles:
+            if s.mode == "deliberate":
+                return s, _pause(s, "implementation forbidden in deliberate mode")
             s.phase = "IMPLEMENTING"
             for label, member in s.members.items():
                 if label in event.fixers:
@@ -545,6 +623,15 @@ def apply(state: TeamState, event: Event) -> tuple[TeamState, list[Action]]:
         return (s, _resume(s)) if s.phase == "PAUSED" else (s, [])
     assert isinstance(event, MemberReported)
     phase = s.paused_from if s.phase == "PAUSED" else s.phase
+    if phase == "FINALIZING":
+        if event.label != s.lead:
+            return s, []
+        member = s.members[event.label]
+        if event.status == "failed_transient":
+            actions, final = _final_transient(s, member, event)
+            if not final:
+                return s, actions
+        return s, _pause(s, "finalization incomplete") if s.phase != "PAUSED" else []
     if phase in ("DELIBERATING", "REVIEWING"):
         return s, _round_report(s, event)
     if phase == "IMPLEMENTING":

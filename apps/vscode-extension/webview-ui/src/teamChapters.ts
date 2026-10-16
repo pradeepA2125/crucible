@@ -54,7 +54,11 @@ export function buildChapters(
     const current = last && opts.working;
     return {
       n: seg.n,
-      why: woke ? { cause: String(woke.payload.cause ?? ""), by: (woke.payload.by as string | null) ?? null,
+      why: took?.payload.activation_kind === "finalization" || took?.payload.purpose === "finalization"
+        ? { cause: "finalization", by: null, postSeq: null }
+        : took?.payload.activation_kind === "lead_reply" || took?.payload.purpose === "lead_reply"
+          ? { cause: "lead_reply", by: "main", postSeq: null }
+        : woke ? { cause: String(woke.payload.cause ?? ""), by: (woke.payload.by as string | null) ?? null,
                     postSeq: (woke.payload.post_seq as number | null) ?? woke.causeSeq }
         : typeof took?.payload.round === "number"
           ? { cause: "round", by: null, postSeq: null, round: took.payload.round }
@@ -95,6 +99,8 @@ export function whyText(why: ChapterWhy | null, isProposal: (seq: number) => boo
   if (!why) return "started";
   const ref = why.postSeq === null ? "" : isProposal(why.postSeq) ? `P${why.postSeq}` : `#${why.postSeq}`;
   switch (why.cause) {
+    case "finalization": return "synthesizing the team recommendation";
+    case "lead_reply": case "main_lead": return "replying to main";
     case "kickoff": return `kickoff — main's proposal ${ref}`.trim();
     case "mention": return `woken by ${why.by}'s post ${ref}`;
     case "team_mention": return `woken by ${why.by}'s @team post ${ref}`;
@@ -107,6 +113,8 @@ export function whyText(why: ChapterWhy | null, isProposal: (seq: number) => boo
 
 /** A chapter's header: deliberation activations are rounds (spec 2026-10-05 §9). */
 export function chapterHeading(c: MemberChapter, isProposal: (seq: number) => boolean): { title: string; why: string } {
+  if (c.why?.cause === "finalization") return { title: "Finalizing recommendation", why: whyText(c.why, isProposal) };
+  if (c.why?.cause === "lead_reply" || c.why?.cause === "main_lead") return { title: "Replying to main", why: whyText(c.why, isProposal) };
   if (c.why?.cause === "round") {
     const handed = c.handed.map((s) => (isProposal(s) ? `P${s}` : `#${s}`)).join(" ");
     return { title: `Round ${c.why.round}`, why: handed ? `handed ${handed}` : "nothing new on the board" };

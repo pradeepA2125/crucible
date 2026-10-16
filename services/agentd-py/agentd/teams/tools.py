@@ -15,10 +15,11 @@ from agentd.tools.registry import ToolDefinition, ToolOutput
 
 MEMBER_TOOL_NAMES = frozenset({
     "team_post", "team_message", "team_propose", "team_agree", "team_object", "team_withdraw",
-    "team_read"})
+    "team_read", "team_reply_main"})
 MAIN_TOOL_NAMES = frozenset({
     "create_team", "post_board", "team_status", "team_report", "adopt_proposal", "resume_team",
-    "disband_team"})
+    "disband_team", "start_team_implementation", "set_team_mode",
+    "message_team_lead", "cancel_team_lead_request"})
 BACKGROUND_NOTE = ("The team runs in the background and the user can watch its board. "
                    "If your todo list holds the work you just handed over, mark those items "
                    "'blocked' with the note 'delegated to team <name>' in one write_todos "
@@ -42,11 +43,14 @@ class TeamToolSource:
     name = "team"
 
     def __init__(self, service: TeamService, team_id: str, label: str,
-                 counters: ActivationCounters) -> None:
+                 counters: ActivationCounters, *,
+                 reply_main: Callable[[str, int | None], dict[str, object]] | None = None) -> None:
         self._svc = service
         self._team_id = team_id
         self._label = label
         self._counters = counters
+        self._reply_main = reply_main
+        self._unsolicited_reply_sent = False
 
     def definitions(self) -> list[ToolDefinition]:
         def tool(name: str, description: str, props: dict[str, object],
@@ -75,6 +79,10 @@ class TeamToolSource:
                  ["proposal_id", "reason", "evidence"]),
             tool("team_withdraw", "Withdraw one of your own open proposals.",
                  {"proposal_id": _STR}, ["proposal_id"]),
+            tool("team_reply_main", "Reply privately to main's pending request (lead only). "
+                 "This resolves communication; it does not complete your lifecycle report or "
+                 "wake other members.",
+                 {"text": _STR, "request_seq": {"type": "integer"}}, ["text"]),
             tool("team_read", "Re-read board posts and your direct messages after since_seq "
                  "(all of them when omitted).", {"since_seq": {"type": "integer"}}, []),
         ]
@@ -85,6 +93,26 @@ class TeamToolSource:
     async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
         tid, me, n = self._team_id, self._label, self._counters
         try:
+            if tool == "team_reply_main":
+                if self._reply_main is None:
+                    raise TeamInputError("team_reply_main is only available to the lead "
+                                         "with a pending request")
+                seq = args.get("request_seq")
+                if seq is not None and (not isinstance(seq, int) or
+                                        isinstance(seq, bool) or seq < 1):
+                    raise TeamInputError("request_seq must be a positive integer")
+                text = check_text(args.get("text"), "text")
+                if seq is None and self._unsolicited_reply_sent:
+                    raise TeamInputError("only one unsolicited question to main per activation")
+                self._svc._count(n, [])
+                try:
+                    result = self._reply_main(text, seq)
+                except Exception:
+                    n.posts -= 1
+                    raise
+                if seq is None:
+                    self._unsolicited_reply_sent = True
+                return _ok(result)
             if tool == "team_post":
                 post = self._svc.post(tid, me, args.get("text"), args.get("mentions"), n)
                 return _ok({"seq": post.seq, "mentions": post.mentions})
@@ -135,11 +163,22 @@ class CreateTeamRequest:
     kickoff_shared_files: list[str]
     kickoff_mentions: list[str]
     lead: str | None = None
+    mode: str | None = None
+    deliverable_kind: str = "recommendation"
+    deliverable_description: str = ""
 
 
 def parse_create_team(
     args: dict[str, object], catalog: dict[str, AgentDefinition],
 ) -> CreateTeamRequest:
+    mode = args.get("mode")
+    if mode not in ("deliberate", "deliberate_and_implement", "implement"):
+        raise TeamInputError("mode must be deliberate, deliberate_and_implement, or implement")
+    deliverable = args.get("deliverable")
+    if not isinstance(deliverable, dict):
+        raise TeamInputError("deliverable must be {kind, description}")
+    deliverable_kind = check_text(deliverable.get("kind"), "deliverable.kind")
+    deliverable_description = check_text(deliverable.get("description"), "deliverable.description")
     name = check_text(args.get("name"), "name")[:80]
     goal = check_text(args.get("goal"), "goal")
     raw_members = args.get("members")
@@ -151,6 +190,8 @@ def parse_create_team(
         if not isinstance(item, dict):
             raise TeamInputError(f"members[{i}] must be {{label, agent}}")
         label = check_label(str(item.get("label", "")))
+        if label in ("main", "user", "system", "team"):
+            raise TeamInputError(f"label {label!r} is reserved")
         if any(m.label == label for m in members):
             raise TeamInputError(f"duplicate label {label!r}")
         agent = catalog.get(str(item.get("agent", "")))
@@ -174,6 +215,10 @@ def parse_create_team(
     assignments = kickoff.get("assignments") or []
     if kind == "proposal" and not isinstance(assignments, list):
         raise TeamInputError("kickoff.assignments must be a list of {member, part, files}")
+    if any(not isinstance(a, dict) for a in assignments):
+        raise TeamInputError("kickoff.assignments must contain objects")
+    if mode == "implement" and (kind != "proposal" or not assignments):
+        raise TeamInputError("implement mode requires a proposal kickoff with nonempty assignments")
     raw_rounds = args.get("max_rounds")
     max_rounds = raw_rounds if isinstance(raw_rounds, int) else (3 if kind == "proposal" else 4)
     if not 1 <= max_rounds <= 6:
@@ -190,7 +235,8 @@ def parse_create_team(
         max_rounds=max_rounds, budget=budget, kickoff_kind=kind, kickoff_text=text,
         kickoff_assignments=[a for a in assignments if isinstance(a, dict)],
         kickoff_shared_files=[str(f) for f in shared] if isinstance(shared, list) else [],
-        kickoff_mentions=mentions, lead=lead)
+        kickoff_mentions=mentions, lead=lead, mode=str(mode),
+        deliverable_kind=deliverable_kind, deliverable_description=deliverable_description)
 
 
 def _resume_unavailable(_team_id: str, _extra: int | None) -> dict[str, object]:
@@ -199,6 +245,13 @@ def _resume_unavailable(_team_id: str, _extra: int | None) -> dict[str, object]:
 
 def _report_unavailable(team_id: str) -> dict[str, object]:
     raise TeamInputError("team_report is not available here")
+
+
+async def _operation_unavailable(_team_id: str, _args: dict[str, object]) -> dict[str, object]:
+    raise TeamInputError("this team operation is not available here")
+
+
+TeamOperation = Callable[[str, dict[str, object]], Awaitable[dict[str, object]]]
 
 
 @dataclass(frozen=True)
@@ -211,6 +264,11 @@ class MainTeamOps:
     adopt: Callable[[str, str], dict[str, object]]
     resume: Callable[[str, int | None], dict[str, object]] = _resume_unavailable
     report: Callable[[str], dict[str, object]] = _report_unavailable
+    start_implementation: TeamOperation = _operation_unavailable
+    set_mode: TeamOperation = _operation_unavailable
+    message_lead: TeamOperation = _operation_unavailable
+    cancel_lead_request: TeamOperation = _operation_unavailable
+    can_execute: Callable[[], bool] = lambda: True
 
 
 class MainTeamToolSource:
@@ -233,18 +291,25 @@ class MainTeamToolSource:
         team = {"team": _STR}
         return [
             ToolDefinition(name="create_team", description=(
-                "Start a team of agents that deliberate on a shared board and then implement "
-                "together. Each member's role is its agent definition. lead is the member who "
+                "Start a team with explicit mode deliberate, deliberate_and_implement, "
+                "or implement. "
+                "Deliberate ends with the requested deliverable; consensus never authorizes "
+                "execution. Each member's role is its agent definition. lead is the member who "
                 "writes and revises the plan — the only one who proposes; pick the member whose "
                 "role owns the overall design. kickoff \"proposal\" opens with your own plan for "
                 "them to check; \"post\" asks the lead to propose. Returns at once; the team runs "
                 "in the background."),
                 parameters={"type": _OBJ, "properties": {
                     "name": _STR, "goal": _STR, "lead": _STR,
+                    "mode": {"type": "string",
+                             "enum": ["deliberate", "deliberate_and_implement", "implement"]},
+                    "deliverable": {"type": _OBJ, "properties": {"kind": _STR, "description": _STR},
+                                    "required": ["kind", "description"]},
                     "members": {"type": "array", "items": member},
                     "approval_gate": {"type": "boolean"}, "max_rounds": {"type": "integer"},
                     "budget": {"type": "integer"}, "kickoff": kickoff},
-                    "required": ["name", "goal", "lead", "members", "kickoff"]}),
+                    "required": ["name", "goal", "lead", "members", "kickoff",
+                                 "mode", "deliverable"]}),
             ToolDefinition(name="post_board", description=(
                 "Post on a team's board as the main agent — how the user's requests reach "
                 "the team. Mention members with @label. A post to a FAILED team (after a "
@@ -272,6 +337,37 @@ class MainTeamToolSource:
                 parameters={"type": _OBJ, "properties": {**team,
                                                          "extra_budget": {"type": "integer"}},
                             "required": ["team"]}),
+            ToolDefinition(name="start_team_implementation", description=(
+                "Explicitly extend a completed actionable deliberation result into execution. "
+                "Use its expected_run_id and result_seq; optional assignments replace "
+                "the proposed owners. "
+                "Requires execution authority and no unresolved private lead request."),
+                parameters={
+                    "type": _OBJ, "properties": {**team, "expected_run_id": {"type": "integer"},
+                    "result_seq": {"type": "integer"}, "assignments": _ASSIGNMENTS,
+                    "shared_files": _STRS, "approval_gate": {"type": "boolean"}},
+                    "required": ["team", "expected_run_id", "result_seq"]}),
+            ToolDefinition(name="set_team_mode", description=(
+                "Narrow a team's current run to deliberate. Stops new execution; "
+                "does not undo changes."),
+                parameters={"type": _OBJ, "properties": {**team,
+                    "expected_run_id": {"type": "integer"},
+                    "mode": {"type": "string", "enum": ["deliberate"]},
+                    "reason": _STR}, "required": ["team", "expected_run_id", "mode", "reason"]}),
+            ToolDefinition(name="message_team_lead", description=(
+                "Send a private request to the team's lead. Only the lead is activated; "
+                "no board post "
+                "or execution authorization. Retry a blocked request with retry_request_seq."),
+                parameters={"type": _OBJ, "properties": {**team, "text": _STR,
+                    "expected_run_id": {"type": "integer"}, "extra_budget": {"type": "integer"},
+                    "retry_request_seq": {"type": "integer"}},
+                    "required": ["team", "text", "expected_run_id"]}),
+            ToolDefinition(name="cancel_team_lead_request", description=(
+                "Cancel one unresolved private lead request before changing runs "
+                "or asking a replacement question."),
+                parameters={"type": _OBJ, "properties": {**team,
+                    "expected_run_id": {"type": "integer"}, "request_seq": {"type": "integer"}},
+                    "required": ["team", "expected_run_id", "request_seq"]}),
             ToolDefinition(name="disband_team", description=(
                 "End a team: stop its members and close its board."),
                 parameters={"type": _OBJ, "properties": team, "required": ["team"]}),
@@ -283,10 +379,42 @@ class MainTeamToolSource:
     async def execute(self, tool: str, args: dict[str, object]) -> ToolOutput:
         try:
             if tool == "create_team":
-                result = await self._ops.create(parse_create_team(args, self._catalog))
+                req = parse_create_team(args, self._catalog)
+                if req.mode != "deliberate" and not self._ops.can_execute():
+                    raise TeamInputError("PLAN mode only permits deliberate teams; "
+                                         "execution requires execution authority")
+                result = await self._ops.create(req)
                 self._created.add(str(result.get("team_id", "")))
                 return _ok({**result, "note": BACKGROUND_NOTE})
             team_id = self._ops.resolve(str(args.get("team", "")))
+            operations = {
+                "start_team_implementation": self._ops.start_implementation,
+                "set_team_mode": self._ops.set_mode,
+                "message_team_lead": self._ops.message_lead,
+                "cancel_team_lead_request": self._ops.cancel_lead_request,
+            }
+            if tool in operations:
+                run_id = args.get("expected_run_id")
+                if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id < 1:
+                    raise TeamInputError("expected_run_id must be a positive integer")
+                if tool == "start_team_implementation" and not self._ops.can_execute():
+                    raise TeamInputError("PLAN mode cannot start team implementation")
+                if tool == "set_team_mode":
+                    if args.get("mode") != "deliberate":
+                        raise TeamInputError("set_team_mode only narrows to deliberate")
+                    check_text(args.get("reason"), "reason")
+                if tool == "message_team_lead":
+                    check_text(args.get("text"), "text")
+                for key in ("result_seq", "request_seq", "retry_request_seq", "extra_budget"):
+                    value = args.get(key)
+                    if value is not None and (not isinstance(value, int) or
+                                              isinstance(value, bool) or value < 1):
+                        raise TeamInputError(f"{key} must be a positive integer")
+                required_seq = {"start_team_implementation": "result_seq",
+                                "cancel_team_lead_request": "request_seq"}.get(tool)
+                if required_seq and args.get(required_seq) is None:
+                    raise TeamInputError(f"{required_seq} is required")
+                return _ok(await operations[tool](team_id, args))
             if tool == "post_board":
                 posted = self._ops.post(team_id, check_text(args.get("text"), "text"),
                                         args.get("mentions"))

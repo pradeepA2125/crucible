@@ -12,6 +12,7 @@ import { Avatar } from "./Avatar";
 import { Journey } from "./Journey";
 import { MemberView } from "./MemberView";
 import { PhaseStepper } from "./PhaseStepper";
+import { WorkflowBadges } from "./WorkflowBadges";
 import { TeamUsage } from "./TeamUsage";
 import { useTeamsUi } from "./TeamsContext";
 import { usageText, usageTitle } from "../../usage";
@@ -84,7 +85,8 @@ export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
               </button>
             </span>
           </div>
-          <PhaseStepper phase={team.phase} round={team.round} maxRounds={team.maxRounds} endReason={team.endReason} />
+          <WorkflowBadges team={team} />
+          <PhaseStepper {...team} />
           <div className="flex flex-wrap items-center gap-3.5">
             {team.members.map((m) => {
               const status = agentsUi.agents[m.agentId]?.status ?? m.status;
@@ -107,7 +109,9 @@ export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
                 {teamUsage && teamUsage.requests > 0 && (
                   <span data-testid="team-usage-total" className="font-mono tabular-nums text-text-2"
                     title={usageTitle(teamUsage)}>{usageText(teamUsage)}</span>)}
-                {team.usage.budget > 0 && <span>budget {team.usage.budget} requests</span>}
+                {team.usage.budget > 0 && <span>{team.usage.runRequests !== undefined
+                  ? `${team.usage.runRequests} of ${team.usage.runBudget ?? team.usage.budget} run requests`
+                  : `budget ${team.usage.budget} requests`}</span>}
               </span>
             )}
           </div>

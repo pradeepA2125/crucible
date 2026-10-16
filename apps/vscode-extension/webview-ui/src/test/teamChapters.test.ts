@@ -100,3 +100,13 @@ describe("edits (spec 2026-10-05 §9)", () => {
       { path: "b.py", additions: 3, deletions: 1, status: "discarded" }]);
   });
 });
+
+it("labels finalization and consultation activations independently of team rounds", () => {
+  const chapters = buildChapters("review", MESSAGES, [
+    ev(1, 1, "took_up", 1, { activation_kind: "finalization", posts: [1] }),
+    ev(2, 20, "wrapped_up", 1, { status: "completed" }),
+    ev(3, 30, "took_up", 2, { activation_kind: "lead_reply", posts: [12] }),
+  ], [], { working: true, fallbackStatus: "running" });
+  expect(chapterHeading(chapters[0], () => false).title).toBe("Finalizing recommendation");
+  expect(chapterHeading(chapters[1], () => false).title).toBe("Replying to main");
+});

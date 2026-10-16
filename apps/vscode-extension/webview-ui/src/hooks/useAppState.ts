@@ -2,7 +2,7 @@ import { useReducer, useEffect, useCallback } from "react";
 import type { AppState, ExtensionMessage, ChatMsg, StreamingBubble, ToolEventView } from "../types";
 import { vscode } from "../vscodeApi";
 import { appendDurable, applyAgentEvent, viewFromDetail } from "../agents";
-import { applyTeamEvent, mergeLiveTeam, summaryWithEvent, viewFromTeamDetail } from "../teams";
+import { applyTeamEvent, mergeLiveTeam, summaryWithEvent, mergeTeamDetail, olderTeamState } from "../teams";
 
 // ── Stable content signatures ────────────────────────────────────────────────
 
@@ -495,7 +495,9 @@ function reducer(state: AppState, action: Action): AppState {
 
     case "renderTeams": {
       const teams = { ...state.teams };
-      for (const team of msg.teams) teams[team.teamId] = team;
+      for (const team of msg.teams) {
+        if (!olderTeamState(team, teams[team.teamId])) teams[team.teamId] = { ...teams[team.teamId], ...team };
+      }
       return { ...state, teams };
     }
 
@@ -506,12 +508,15 @@ function reducer(state: AppState, action: Action): AppState {
     }
 
     case "teamDetail": {
+      const priorView = state.teamViews[msg.teamId];
+      const stale = olderTeamState(msg.detail, state.teams[msg.teamId])
+        || (priorView && (msg.detail.lastSeq < priorView.lastSeq || msg.detail.lastAseq < priorView.lastAseq));
       const { posts: _posts, lastSeq: _lastSeq, activity: _activity, lastAseq: _lastAseq,
               ...summary } = msg.detail;
       return {
         ...state,
-        teams: { ...state.teams, [msg.teamId]: summary },
-        teamViews: { ...state.teamViews, [msg.teamId]: viewFromTeamDetail(msg.detail) },
+        teams: { ...state.teams, [msg.teamId]: stale ? state.teams[msg.teamId] ?? summary : { ...state.teams[msg.teamId], ...summary } },
+        teamViews: { ...state.teamViews, [msg.teamId]: mergeTeamDetail(priorView, msg.detail) },
       };
     }
 

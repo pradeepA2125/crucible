@@ -35,7 +35,8 @@ const STANCE_KINDS = new Set(["agree", "object", "withdraw"]);
 export function chapterTitle(phase: string, round: number): string {
   switch (phase) {
     case "DELIBERATING": return `Round ${round} · deliberating`;
-    case "AWAITING_APPROVAL": return "Awaiting your approval";
+    case "FINALIZING": return "Finalizing recommendation";
+    case "AWAITING_APPROVAL": return "Awaiting implementation approval";
     case "IMPLEMENTING": return "Implementing";
     case "REVIEWING": return "Review";
     case "DEADLOCKED": return "Deadlocked";

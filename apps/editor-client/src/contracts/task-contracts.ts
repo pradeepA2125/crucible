@@ -215,7 +215,7 @@ export type StreamEvent =
   // Team channel (chat:{thread}:team:{team}); seq = the post's seq.
   | { type: "team_post"; payload: { post: Record<string, unknown> } }
   | { type: "team_activity"; payload: { event: Record<string, unknown> } }
-  | { type: "team_phase"; payload: { phase: string; round: number; paused_reason: string | null } }
+  | { type: "team_phase"; payload: { phase: string; round: number; paused_reason: string | null; mode?: string | null; run_id?: number; resume_phase?: string | null; result_seq?: number | null; result_summary?: Record<string, unknown> | null; deliverable?: { kind: string; description: string } | null; pending_lead_request_seq?: number | null; lead_exchange_status?: string | null } }
   | { type: "retry_status"; payload: { attempt: number; max_attempts: number; reason: string; message: string } }
   // Live token counts DURING a model call, ~6/sec. `thinking` climbs during
   // reasoning, then `output` climbs — the transition that otherwise looks like
@@ -357,7 +357,24 @@ export const ThreadUsageSchema = z.object({
 });
 export type ThreadUsage = z.infer<typeof ThreadUsageSchema>;
 
+// Additive workflow metadata. Missing legacy mode conveys no execution authorization.
+export const TeamWorkflowSchema = z.object({
+  mode: z.enum(["deliberate", "deliberate_and_implement", "implement"]).nullable().catch(null).default(null),
+  deliverable: z.object({ kind: z.string(), description: z.string() }).nullable().default(null),
+  runId: z.number().int().positive().default(1),
+  resultSeq: z.number().int().nullable().default(null),
+  resultSummary: z.object({
+    seq: z.number(), runId: z.number(), summary: z.string(), outcome: z.string(),
+    kind: z.string().nullable().optional(),
+  }).nullable().default(null),
+  pendingLeadRequestSeq: z.number().int().nullable().default(null),
+  leadExchangeStatus: z.string().nullable().default(null),
+  resumePhase: z.string().nullable().default(null),
+});
+export type TeamWorkflow = z.infer<typeof TeamWorkflowSchema>;
+
 export const TeamSummarySchema = z.object({
+  ...TeamWorkflowSchema.shape,
   teamId: z.string(),
   name: z.string(),
   // The member who alone proposes (spec 2026-10-07 lead proposer); null for older teams.
@@ -379,7 +396,8 @@ export const TeamSummarySchema = z.object({
     id: z.string(), author: z.string(), text: z.string(),
     stances: z.record(z.string(), z.string()),
   })),
-  usage: z.object({ requests: z.number(), budget: z.number() }),
+  usage: z.object({ requests: z.number(), budget: z.number(),
+    runRequests: z.number().optional(), runBudget: z.number().optional() }),
   createdAt: z.string(),
   endReason: z.string().nullable().default(null),
   approvalGate: z.boolean().default(false),
@@ -397,6 +415,7 @@ export type TeamDetail = z.infer<typeof TeamDetailSchema>;
 
 // /live carries only slow-changing team fields (the dedup signature must not churn).
 export const TeamLiveSchema = z.object({
+  ...TeamWorkflowSchema.shape,
   teamId: z.string(),
   name: z.string(),
   lead: z.string().nullable().default(null),

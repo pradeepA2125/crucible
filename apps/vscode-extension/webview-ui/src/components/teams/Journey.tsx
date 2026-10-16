@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { elapsedMs, formatElapsed, isTerminalAgent } from "../../agents";
-import { isTerminalTeam } from "../../teams";
+import { hasTeamExchange, isTerminalTeam } from "../../teams";
 import { identityFor } from "../../teamIdentity";
 import { DEFAULT_FILTERS, buildJourney, type JourneyFilters, type JourneyItem, type TallyChip } from "../../teamJourney";
 import type { TeamActivityView, TeamPostView } from "../../types";
@@ -8,6 +8,7 @@ import { useAgentsUi } from "../agents/AgentsContext";
 import { useNow } from "../agents/useNow";
 import { Avatar } from "./Avatar";
 import { PostBody } from "./PostBody";
+import { ResultCard } from "./ResultCard";
 import { isLongReport, ReportDisclosure } from "../shared/ReportDisclosure";
 import { AdoptedCard, RoundStrip, Verdict, heldText } from "./RoundItems";
 import { useTeamsUi } from "./TeamsContext";
@@ -72,7 +73,7 @@ function PostCard({ post, footer, tally, roster }: Omit<Extract<JourneyItem, { k
         {post.kind === "proposal"
           ? <span className="rounded border px-1.5 font-mono text-[11px] font-semibold" style={{ color: "var(--color-accent-ink)", background: "var(--accent-bg)", borderColor: "var(--accent-brd)" }}>P{post.seq}</span>
           : <Seq seq={post.seq} />}
-        <span className="text-[11px] text-text-3">{post.payload.closing === true ? `closing proposal · review cycle ${String(post.payload.cycle)}` : post.kind === "proposal" ? "proposal" : post.recipient ? "direct message" : post.author === "main" ? "post · from you, via main" : "post"}</span>
+        <span className="text-[11px] text-text-3">{post.payload.closing === true ? `closing proposal · review cycle ${String(post.payload.cycle)}` : post.kind === "proposal" ? "proposal" : post.payload.channel === "main_lead" ? "main ↔ lead" : post.recipient ? "direct message" : post.author === "main" ? "post · from you, via main" : "post"}</span>
         <Time at={post.createdAt} />
       </div>
       <div className={long && !open ? "max-h-[7.6em] overflow-hidden [mask-image:linear-gradient(#000_70%,transparent)]" : undefined}>
@@ -83,7 +84,7 @@ function PostCard({ post, footer, tally, roster }: Omit<Extract<JourneyItem, { k
         <div className="grid gap-1 rounded-lg border px-2.5 py-2 text-[11.5px]" style={{ background: "var(--color-panel)", borderColor: "var(--hairline)" }}>
           {assignments.map((a, i) => (
             <div key={i} className="flex flex-wrap items-center gap-2">
-              <span className="w-16 text-[10px] uppercase tracking-[.08em] text-text-3">Assigns</span>
+              <span className="w-16 text-[10px] uppercase tracking-[.08em] text-text-3">{post.payload.execution_instruction === true ? "Assigns" : "Proposed"}</span>
               <Avatar label={String(a.member)} roster={roster} size="sm" /><Name label={String(a.member)} roster={roster} />
               <span className="text-text-2">{a.part}</span>
               {(a.files ?? []).map((f) => <code key={f} className="font-mono text-[11px] text-[var(--color-code)]">{f}</code>)}
@@ -157,7 +158,7 @@ export function SaidPost({ post, roster }: { post: TeamPostView; roster: string[
         <Name label={post.author} roster={roster} />
         {post.recipient && <><span className="text-text-3">→</span><Name label={post.recipient} roster={roster} /></>}
         <Seq seq={post.seq} />
-        <span className="text-[11px] text-text-3">{post.recipient ? "direct message" : post.kind}</span>
+        <span className="text-[11px] text-text-3">{post.payload.channel === "main_lead" ? "main ↔ lead" : post.recipient ? "direct message" : post.kind}</span>
         <Time at={post.createdAt} />
       </div>
       <PostBody text={post.text} />
@@ -170,6 +171,9 @@ const CAUSE_TEXT: Record<string, (by: string, seq: string) => string> = {
   mention: (by, seq) => `mentioned by ${by} in ${seq}`,
   team_mention: (by, seq) => `@team from ${by} in ${seq}`,
   message: (by, seq) => `direct message from ${by} ${seq}`,
+  finalization: () => "finalizing recommendation",
+  lead_reply: () => "replying to main",
+  main_lead: () => "a direct request from main",
   main_post: (_by, seq) => `main's post ${seq}`,
   leftover: () => "input that arrived after its last step",
 };
@@ -345,6 +349,7 @@ export function Journey({ teamId }: { teamId: string }) {
                 </div>
               );
             case "post": {
+              if (item.post.kind === "result") return <ResultCard key={item.key} post={item.post} roster={roster} />;
               const { key, ...post } = item;
               return <PostCard key={key} {...post} roster={roster} />;
             }
@@ -368,7 +373,7 @@ export function Journey({ teamId }: { teamId: string }) {
           }
         })}
       </div>
-      {team && !isTerminalTeam(team.phase) && <NowStrip teamId={teamId} roster={roster} />}
+      {team && (!isTerminalTeam(team.phase) || hasTeamExchange(team)) && <NowStrip teamId={teamId} roster={roster} />}
     </div>
   );
 }

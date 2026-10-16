@@ -225,3 +225,29 @@ describe("ThreadView team wiring", () => {
     expect(postMessage).toHaveBeenCalledWith({ type: "setOpenAgents", agentIds: ["agent-r"] });
   });
 });
+
+describe("published team deliverables and directed communication", () => {
+  it("renders an accepted result as Markdown without a proposal tally", () => {
+    renderWindow("board", { ...TEAM, mode: "deliberate", phase: "DONE", runId: 1,
+      deliverable: { kind: "diagnosis", description: "Explain the failure" }, endReason: "deliberation_complete" }, [
+      post(12, 40, { kind: "result", text: "The **retry timer** races the callback.", payload: {
+        run_id: 1, summary: "Cause identified", outcome: "actionable", basis_proposal_id: "P7", deliverable_kind: "diagnosis" } }),
+    ], { review: "completed", impl: "completed" }, null, []);
+    const result = screen.getByTestId("team-result-12");
+    expect(result).toHaveTextContent("Diagnosis ready");
+    expect(result).toHaveTextContent("Based on P7");
+    expect(result).toHaveTextContent("Cause identified");
+    expect(screen.getByText("retry timer").tagName).toBe("STRONG");
+    expect(result).not.toHaveTextContent("Stances");
+    expect(result).not.toHaveTextContent("pending");
+  });
+
+  it("labels main-lead messages and keeps the existing Messages filter", () => {
+    renderWindow("board", TEAM, [post(8, 30, { author: "main", recipient: "review", text: "Explain the tradeoff",
+      payload: { channel: "main_lead", run_id: 1 } })], undefined, null, []);
+    expect(screen.getByText("main ↔ lead")).toBeInTheDocument();
+    expect(screen.getByText("Explain the tradeoff")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Messages" }));
+    expect(screen.queryByText("Explain the tradeoff")).toBeNull();
+  });
+});

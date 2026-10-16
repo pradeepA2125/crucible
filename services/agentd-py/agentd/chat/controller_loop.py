@@ -557,7 +557,9 @@ _PROGRESS_DEDUP_TEMPLATE = tagged("progress_dedup", (
 ))
 
 
-_NOTICE_ACTION_TOOLS = frozenset({"post_board", "adopt_proposal", "resume_team", "disband_team"})
+_NOTICE_ACTION_TOOLS = frozenset({"post_board", "adopt_proposal", "resume_team", "disband_team",
+                                "start_team_implementation", "set_team_mode", "message_team_lead",
+                                "cancel_team_lead_request"})
 
 
 def _mention_set(args: dict[str, object]) -> frozenset[str]:
@@ -821,6 +823,7 @@ class ControllerLoop:
         # without it a model that delegated was told every call to start the work again
         # (live 2026-10-07, gpt-5.6-luna: it re-dispatched a team's whole job).
         self._delegated_teams: list[str] = []
+        self._delegated_lead_requests: list[str] = []
         self._delegated_agents: list[str] = []
         self._agents_collected = False
         # In a notice turn: the team actions this turn already took (for the hint) and the
@@ -828,7 +831,8 @@ class ControllerLoop:
         # stuck") stays the only news, every call looks like the first, and the model
         # repeats the action (live 2026-10-07: six post_boards to one builder).
         self._notice_actions: list[str] = []
-        self._notice_posts: set[frozenset[str]] = set()
+        self._notice_posts: set[tuple[str, frozenset[str]]] = set()
+        self._notice_scoped_actions: set[tuple[str, str, str, str]] = set()
         # The provider's exact size for the last call this loop made, pinned to the
         # history length it measured (see ObservedPrompt). Seeded from run()'s
         # observed_prompt param — the caller's carried cross-turn state — updated in
@@ -1194,12 +1198,16 @@ class ControllerLoop:
         """Record work a successful tool call handed off (see _delegated_teams)."""
         fields = args if isinstance(args, dict) else {}
         reopened = tool == "post_board" and _reopened(output)
-        if tool == "create_team" or reopened:
+        if tool in ("create_team", "start_team_implementation") or reopened:
             # A post_board that reopened a DONE team hands it work like create_team does
             # (live 2026-10-08: the main agent then posted three more nudges in that turn).
             name = str(fields.get("name") or fields.get("team") or "the team")
             if name not in self._delegated_teams:
                 self._delegated_teams.append(name)
+        elif tool == "message_team_lead":
+            name = str(fields.get("team") or "the team")
+            if name not in self._delegated_lead_requests:
+                self._delegated_lead_requests.append(name)
         elif tool == "dispatch_agents":
             agents = fields.get("agents")
             for entry in agents if isinstance(agents, list) else []:
@@ -1216,22 +1224,37 @@ class ControllerLoop:
         if tool not in _NOTICE_ACTION_TOOLS:
             return
         team = str(args.get("team") or "the team")
+        if tool != "post_board":
+            self._notice_scoped_actions.add(self._notice_action_key(tool, args))
         if tool == "post_board":
             mentions = _mention_set(args)
-            self._notice_posts.add(mentions)
+            self._notice_posts.add((team, mentions))
             who = ", ".join(f"@{m}" for m in sorted(mentions)) or "the board"
             self._notice_actions.append(f"post_board to {who} ({team})")
         else:
             self._notice_actions.append(f"{tool} ({team})")
 
+    @staticmethod
+    def _notice_action_key(tool: str, args: dict[str, object]) -> tuple[str, str, str, str]:
+        return (tool, str(args.get("team", "")), str(args.get("expected_run_id", "")),
+                str(args.get("request_seq") or args.get("retry_request_seq") or
+                    args.get("result_seq") or args.get("proposal_id") or ""))
+
     def _notice_repeat(self, tool: str, args: dict[str, object],
                        plan_context: dict[str, object]) -> str | None:
         """In a notice turn, a second post_board to the same members is refused: the first
         already reached them and nothing new can arrive before the next milestone."""
-        if not plan_context.get("notice_turn") or tool != "post_board":
+        if not plan_context.get("notice_turn"):
+            return None
+        if tool in _NOTICE_ACTION_TOOLS and tool != "post_board":
+            if self._notice_action_key(tool, args) in self._notice_scoped_actions:
+                return (f"Not repeated: {tool} already reached this team and request this turn. "
+                        "Wait for its next notice; answer the user now.")
+            return None
+        if tool != "post_board":
             return None
         mentions = _mention_set(args)
-        if mentions not in self._notice_posts:
+        if (str(args.get("team") or "the team"), mentions) not in self._notice_posts:
             return None
         who = ", ".join(f"@{m}" for m in sorted(mentions)) or "the board"
         return (f"Not posted: you already posted to {who} this turn and they are working on "
@@ -1241,9 +1264,12 @@ class ControllerLoop:
     def _delegation(self) -> dict[str, object] | None:
         """What this turn handed off, for the per-turn hint — None when nothing was, or
         once the turn applied an edit itself (the edit hints take over then)."""
-        if self._edit_applied or not (self._delegated_teams or self._delegated_agents):
+        if self._edit_applied or not (self._delegated_teams or self._delegated_agents or
+                                      self._delegated_lead_requests):
             return None
         return {"teams": list(self._delegated_teams), "agents": list(self._delegated_agents),
+                **({"lead_requests": list(self._delegated_lead_requests)}
+                   if self._delegated_lead_requests else {}),
                 "agents_collected": self._agents_collected}
 
     @profile_controller_run
@@ -1886,7 +1912,8 @@ class ControllerLoop:
                 except ValueError as exc:
                     consecutive_malformed += 1
                     if consecutive_malformed > _MAX_MALFORMED:
-                        raise ControllerLoopExhausted("Controller repeatedly omitted a valid recap")
+                        raise ControllerLoopExhausted(
+                            "Controller repeatedly omitted a valid recap") from exc
                     history.append(self._assistant_turn(resp))
                     history.append({
                         "role": "tool_result", "tool": "", "is_error": True,
@@ -2388,7 +2415,9 @@ class ControllerLoop:
                           else chosen if chosen in self._report_statuses else "completed")
                 return ControllerOutcome(
                     kind="report", text=summary, history=history,
-                    payload={"status": status})
+                    payload={"status": status, **{
+                        key: resp[key] for key in ("final_result", "finalization_feedback")
+                        if key in resp}})
             if atype == "submit_changes":
                 # Hard gate: a non-empty ledger is a contract. Block submit while items are
                 # pending/in_progress (NOT blocked/cancelled/done — those never deadlock) and

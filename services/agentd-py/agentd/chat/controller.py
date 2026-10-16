@@ -147,6 +147,7 @@ from agentd.teams.config import (
     team_max_wakes,
     team_round_timeout_s,
 )
+from agentd.teams.controller_ops import TeamWorkflowOps
 from agentd.teams.coordinator import Delivery, TeamCoordinator
 from agentd.teams.implementation import ImplementationReport, chain_checks
 from agentd.teams.models import (
@@ -1032,7 +1033,8 @@ class ChatController:
             [self._dispatch_source(thread_id, turn_id, None)]
             if self._subagents is not None and turn_id else [])
         if dispatch_sources and turn_id and is_teams_enabled() and self._teams is not None:
-            dispatch_sources.append(self._main_team_source(thread_id, turn_id))
+            dispatch_sources.append(self._main_team_source(
+                thread_id, turn_id, can_execute=lambda: sm.phase == "ACTIVE"))
         loop = ControllerLoop(
             self._reasoning,
             self._build_registry(command_cb, ledger, todo_persist_cb,
@@ -1258,7 +1260,8 @@ class ChatController:
                     continue
                 try:
                     action = json.loads(str(entry.get("content", "")))
-                    if isinstance(action, dict) and action.get("type") in {"answer", "submit_changes"}:
+                    if (isinstance(action, dict)
+                            and action.get("type") in {"answer", "submit_changes"}):
                         self._store.set_recap(thread_id, validate_recap(action.get("recap")))
                         break
                 except (ValueError, TypeError):
@@ -1886,8 +1889,32 @@ class ChatController:
             for shadow in root.glob("chatturn-*-agent-*"):
                 shutil.rmtree(shadow, ignore_errors=True)
         released = self._store.release_all_unpersisted_notices()
+        for thread in self._store.list_threads(self._workspace_path):
+            for team in self._store.teams.list_teams(thread.thread_id):
+                if team.pending_lead_request_seq:
+                    self._store.teams.update_team(team.team_id, lead_exchange_status="blocked")
+                self._recover_team_delivery(team)
         logger.info("[subagent] reap rows=%d notices_released=%d teams=%d", reaped, released,
                     len(failed_teams))
+
+    def _recover_team_delivery(self, team: TeamRecord) -> None:
+        """Drain durable publication intent, including results already committed as DONE."""
+        from agentd.teams.milestones import milestone_text
+
+        if team.result_notice_pending and team.result_seq:
+            result = self._store.teams.get_post(team.team_id, team.result_seq)
+            if result:
+                headline, body = milestone_text(team, "recommendation_ready", {
+                    **result.payload, "text": result.text, "result_seq": result.seq,
+                    "actual_phase": team.phase,
+                    "members": self._teams.member_summaries(team.team_id) if self._teams else []})
+                self.team_milestone(team, "recommendation_ready", headline, body)
+        for post in self._store.teams.posts(team.team_id):
+            if post.recipient == "main" and post.payload.get("channel") == "main_lead":
+                self.team_milestone(
+                    team, "lead_reply", f"Team {team.name!r}: lead replied",
+                    f"Lead {post.author} replied to main (#{post.seq}):\n{post.text}",
+                    logical_id=f"team-reply:{team.team_id}:{post.seq}")
 
     def attach_context_runtime(self, runtime) -> None:
         self._context_usage.attach_runtime(runtime)
@@ -1939,6 +1966,11 @@ class ChatController:
         self._store.teams.delete_teams(team_ids)
         self._store.delete_notices_for_sources(thread_id, team_ids)
         if from_seq is not None:
+            restored_teams = self._store.teams.restore_snapshots(thread_id, from_seq)
+            for team_id in restored_teams:
+                coordinator = self._coordinators.pop(team_id, None)
+                if coordinator:
+                    coordinator.close()
             # A run started inside the span answered a request that no longer exists:
             # its report goes, and the agent itself rolls back to before it.
             self._store.delete_notices_from_activation_seq(thread_id, from_seq)
@@ -2077,6 +2109,8 @@ class ChatController:
     async def _child_command_approval_cb(
         self, child: AgentHandle, command: str, args: list[str], cwd: str,
     ) -> ApprovalOutcome:
+        if self._team_tool_refusal(child, "run_command"):
+            return ApprovalOutcome.deny("policy")
         if (self._shell_policy == ShellPolicy.ALLOW_ALL
                 or CommandRuleStore(self._workspace_path).matches(command, args)):
             return ApprovalOutcome.allow()
@@ -2090,6 +2124,8 @@ class ChatController:
     async def _child_mcp_approval_cb(
         self, child: AgentHandle, server: str, tool: str, args: dict[str, object],
     ) -> ApprovalOutcome:
+        if self._team_tool_refusal(child, f"mcp__{server}__{tool}"):
+            return ApprovalOutcome.deny("policy")
         from agentd.mcp.rules import McpRuleStore
 
         if McpRuleStore(self._workspace_path).matches(server, tool):
@@ -2166,7 +2202,7 @@ class ChatController:
             return []
         out: list[dict[str, object]] = []
         for team in self._store.teams.list_teams(thread_id):
-            if team.phase not in LIVE_TEAM_PHASES:
+            if team.phase not in LIVE_TEAM_PHASES and not team.pending_lead_request_seq:
                 continue
             members = self._store.teams.members(team.team_id)
             posts = self._store.teams.posts(team.team_id)
@@ -2175,6 +2211,7 @@ class ChatController:
                 "lead": team.lead,
                 "round": team.round, "max_rounds": team.max_rounds,
                 "paused_reason": team.paused_reason,
+                **self._team_workflow_metadata(team),
                 "members": [{"label": m.label, "agent_id": m.agent_id,
                              "status": self._member_row_status(m.agent_id),
                              "last": _last_view(self._store.teams.latest_activity_for(
@@ -2185,6 +2222,12 @@ class ChatController:
                 "round_progress": _round_progress(team, self._store.teams.activity(team.team_id)),
             })
         return out
+
+    def _team_workflow_metadata(self, team: TeamRecord) -> dict[str, object]:
+        summary = self._teams.summary(team.team_id) if self._teams is not None else {}
+        keys = ("mode", "deliverable", "run_id", "resume_phase", "result_seq", "result_summary",
+                "pending_lead_request_seq", "lead_exchange_status")
+        return {key: summary.get(key) for key in keys}
 
     def _team_latest(self, team_id: str, posts: list[TeamPost]) -> dict[str, object] | None:
         """The card's 'latest' line: the newer of the last board post and the last
@@ -2310,8 +2353,17 @@ class ChatController:
         membership = self._store.teams.member_for_agent(handle.agent_id)
         if membership is not None:
             team = self._store.teams.get_team(membership.team_id)
+            if handle.team_activation_kind == "lead_reply":
+                assert self._subagents is not None
+                self._subagents.keep(handle.agent_id, others)
+                asyncio.get_running_loop().call_soon(
+                    self._drain_team_start, membership.team_id, membership.label)
+                return
+            if team is not None and (team.phase not in LIVE_TEAM_PHASES
+                                     or handle.team_run_id not in (None, team.run_id)):
+                return
             if team is not None and team.phase in (
-                    "DELIBERATING", "AWAITING_APPROVAL", "PAUSED", "REVIEWING"):
+                    "DELIBERATING", "FINALIZING", "AWAITING_APPROVAL", "PAUSED", "REVIEWING"):
                 # Nothing reaches a member mid-round (spec v2 E5), and nothing starts while a
                 # plan waits for approval or the team is paused (§8.2): the next activation's
                 # delta covers the board, and anything else waits in the inbox.
@@ -2335,6 +2387,9 @@ class ChatController:
         assert self._subagents is not None
         fresh = self._handle_from_record(handle.thread_id, handle.agent_id)
         fresh.activation_input = activation_input
+        fresh.team_run_id = handle.team_run_id
+        fresh.team_phase = handle.team_phase
+        fresh.team_activation_kind = handle.team_activation_kind
         self._subagents.enqueue(fresh, self._activate)
 
     def _context_for(
@@ -2496,6 +2551,10 @@ class ChatController:
                 context=context, definition=definition, prompt=request.prompt,
                 thread_id=thread_id, turn_id=turn_id)
             handle.inherited = inherited
+            if dispatcher is not None:
+                handle.team_run_id = dispatcher.team_run_id
+                handle.team_phase = dispatcher.team_phase
+                handle.team_activation_kind = dispatcher.team_activation_kind
             handles.append(handle)
         self._on_dispatch_start(thread_id, turn_id, dispatcher, handles)
         queued: list[QueuedAgent] = []
@@ -2676,6 +2735,9 @@ class ChatController:
         for team in self._store.teams.list_teams(thread_id):
             if team.phase in LIVE_TEAM_PHASES:
                 await self.disband_team(thread_id, team.team_id)
+            elif team.pending_lead_request_seq:
+                await TeamWorkflowOps(self).cancel_lead_request(thread_id, team.team_id, {
+                    "expected_run_id": team.run_id, "request_seq": team.pending_lead_request_seq})
         for agent_id in self._store.live_agent_ids(thread_id):
             if await self._subagents.stop(agent_id, "user"):
                 stopped += 1
@@ -2897,9 +2959,11 @@ class ChatController:
                 status = handle.status
         return AgentInfo(record.name, description, status)
 
-    def _main_team_source(self, thread_id: str, turn_id: str) -> MainTeamToolSource:
+    def _main_team_source(self, thread_id: str, turn_id: str, *,
+                          can_execute: Callable[[], bool] = lambda: True) -> MainTeamToolSource:
         assert self._teams is not None
         teams = self._teams
+        workflows = TeamWorkflowOps(self)
 
         def post(team_id: str, text: str, mentions: object) -> dict[str, object]:
             team = self._store.teams.get_team(team_id)
@@ -2920,7 +2984,12 @@ class ChatController:
             disband=partial(self.disband_team, thread_id),
             adopt=partial(self._adopt_proposal, thread_id),
             resume=partial(self._resume_team, thread_id),
-            report=teams.report),
+            report=teams.report,
+            start_implementation=partial(workflows.start_implementation, thread_id),
+            set_mode=partial(workflows.set_mode, thread_id),
+            message_lead=partial(workflows.message_lead, thread_id),
+            cancel_lead_request=partial(workflows.cancel_lead_request, thread_id),
+            can_execute=can_execute),
             first_turn_team_ids=set())
 
     def _adopt_proposal(self, thread_id: str, team_id: str, proposal_id: str) -> dict[str, object]:
@@ -2932,6 +3001,7 @@ class ChatController:
                 or coordinator.phase != "DEADLOCKED":
             raise TeamInputError("adopt_proposal is only for a DEADLOCKED team")
         proposal = self._teams.open_proposal(team_id, proposal_id)
+        TeamWorkflowOps(self).checkpoint(team)
         coordinator.main_adopt(proposal.proposal_id)
         after = self._store.teams.get_team(team_id)
         return {"team_id": team_id, "adopted": proposal.proposal_id,
@@ -2956,12 +3026,13 @@ class ChatController:
         amount = extra if extra is not None else min(team_budget_per_member() * members, cap)
         if amount < 1:
             raise TeamInputError("extra_budget must be at least 1")
-        amount = min(amount, cap - team.budget)
+        amount = min(amount, team.run_request_start + cap - team.budget)
         used = self.team_requests(team_id)
         if team.budget + amount <= used:
             raise TeamInputError(
                 f"the team has used {used} requests and its budget cannot rise above {cap} "
                 "(CRUCIBLE_TEAM_MAX_BUDGET): disband it, or ask the user to raise that limit")
+        TeamWorkflowOps(self).checkpoint(team)
         coordinator.resume(amount)
         after = self._store.teams.get_team(team_id)
         assert after is not None
@@ -2982,13 +3053,23 @@ class ChatController:
         coordinator = self._coordinators.get(team_id)
         if (gate.kind != "team_plan" or team is None or coordinator is None
                 or team.phase != "AWAITING_APPROVAL"
-                or team.adopted_proposal_id != gate.payload.get("proposal_id")):
+                or team.adopted_proposal_id != gate.payload.get("proposal_id")
+                or gate.payload.get("run_id", team.run_id) != team.run_id):
             raise TeamPlanConflict("this card no longer matches the team's plan")
         text = (feedback or "").strip()
         if decision == "feedback" and not 1 <= len(text) <= TEXT_MAX:
             raise TeamPlanInvalid(f"feedback must be 1 to {TEXT_MAX} characters")
         if decision not in ("approve", "feedback", "reject"):
             raise TeamPlanInvalid("decision must be approve, feedback or reject")
+        if decision == "approve" and team.mode is not None:
+            from agentd.teams.finalization import validate_execution
+            assert self._teams is not None
+            plan = self._store.teams.get_post(team_id, int(str(team.adopted_proposal_id)[1:]))
+            try:
+                validate_execution(self._teams, team, plan)
+            except TeamInputError as exc:
+                raise TeamPlanConflict(str(exc)) from exc
+        TeamWorkflowOps(self).checkpoint(team)
         self._store.remove_controller_gate(thread_id, gate_id)
         pid = team.adopted_proposal_id
         crumb = {"approve": f"✓ Approved {pid} of team {team.name!r}",
@@ -3004,7 +3085,10 @@ class ChatController:
         member that owns it instead of editing it (spec v2 §8.6, tightened after the 5B
         live smoke)."""
         for team in self._store.teams.list_teams(thread_id):
-            if team.phase not in LIVE_TEAM_PHASES:
+            if team.phase not in LIVE_TEAM_PHASES or team.mode == "deliberate":
+                continue
+            if team.mode is not None and team.phase not in {
+                    "IMPLEMENTING", "REVIEWING", "AWAITING_APPROVAL"}:
                 continue
             plans = [p for p in self._store.teams.posts(team.team_id) if p.kind == "proposal"
                      and (p.closed is None or p.proposal_id == team.adopted_proposal_id)]
@@ -3021,6 +3105,9 @@ class ChatController:
 
     def _failed_from(self, team_id: str) -> str:
         """The live phase a FAILED team was in (its activity record), PAUSED skipped."""
+        team = self._store.teams.get_team(team_id)
+        if team and team.resume_phase:
+            return team.resume_phase
         for event in reversed(self._store.teams.activity(team_id)):
             phase = str(event.payload.get("phase", "")) if event.kind == "phase" else ""
             if phase in LIVE_TEAM_PHASES and phase != "PAUSED":
@@ -3038,6 +3125,7 @@ class ChatController:
             raise TeamInputError(f"this thread already has {live} live teams (limit "
                                  f"{team_max_live_per_thread()}) — disband one first")
         from_phase = self._failed_from(team.team_id)
+        TeamWorkflowOps(self).checkpoint(team)
         coordinator = TeamCoordinator(       # built while the row still says FAILED
             team.team_id, self._store.teams, self._teams, self,
             CoordinatorTrace(chat_turn_artifacts_root(thread_id, team.created_turn_id,
@@ -3060,6 +3148,11 @@ class ChatController:
         round on the same board, with the members' transcripts (their context) intact and a
         fresh default budget. A DISBANDED team stays closed."""
         assert self._teams is not None
+        workflows = TeamWorkflowOps(self)
+        workflows.quiet(team)
+        if not team.lead and team.mode is not None:
+            raise TeamInputError("a lead is required to reopen this team")
+        workflows.checkpoint(team)
         live = self._store.teams.count_live_teams(thread_id)
         if live >= team_max_live_per_thread():
             raise TeamInputError(f"this thread already has {live} live teams (limit "
@@ -3075,7 +3168,8 @@ class ChatController:
             team.team_id, phase="DELIBERATING", round=new_round, max_rounds=new_round + 3,
             budget=team.requests + fresh, adopted_proposal_id=None, closing_proposal_id=None,
             review_cycles=0, stuck_count=0, paused_reason=None, end_reason=None,
-            ended_at=None)
+            ended_at=None, mode="deliberate", run_id=team.run_id + 1,
+            run_request_start=team.requests, resume_phase=None)
         p = self._teams.post(team.team_id, "main", text, mentions)
         coordinator = TeamCoordinator(
             team.team_id, self._store.teams, self._teams, self,
@@ -3132,14 +3226,25 @@ class ChatController:
             parts, shared = check_assignments(
                 parse_assignments(req.kickoff_assignments, [s.label for s in req.members]),
                 req.kickoff_shared_files, workspace=Path(self._workspace_path),
-                can_edit=lambda label: edit_ok.get(label, False))
+                can_edit=lambda label: req.mode == "deliberate" or edit_ok.get(label, False))
             req = replace(req, kickoff_assignments=parts, kickoff_shared_files=shared)
+        execution_payload: dict[str, object] = {}
+        if req.mode == "implement":
+            from agentd.teams.finalization import fingerprint_files
+            paths = {str(f) for part in req.kickoff_assignments
+                     for f in (part["files"] if isinstance(part["files"], list) else [])}
+            execution_payload = {
+                "execution_instruction": True,
+                "file_fingerprints": fingerprint_files(
+                    Path(self._workspace_path), sorted(paths | set(req.kickoff_shared_files)))}
         now = datetime.now(UTC)
         team = TeamRecord(
             team_id=new_team_id(), thread_id=thread_id, name=req.name, goal=req.goal,
             max_rounds=req.max_rounds, round_started_at=now, approval_gate=req.approval_gate,
             budget=req.budget, created_turn_id=turn_id, lead=req.lead,
-            checkpoint_seq=self._store.current_checkpoint_seq(thread_id), created_at=now)
+            checkpoint_seq=self._store.current_checkpoint_seq(thread_id), created_at=now,
+            mode=req.mode, deliverable_kind=req.deliverable_kind,
+            deliverable_description=req.deliverable_description)
         self._store.teams.create_team(team)
         self._teams.record(team.team_id, "team", "phase",
                            payload={"phase": team.phase, "round": team.round})
@@ -3171,7 +3276,8 @@ class ChatController:
             kind="proposal" if req.kickoff_kind == "proposal" else "post",
             text=req.kickoff_text, mentions=req.kickoff_mentions, round=0,
             payload=({"assignments": req.kickoff_assignments,
-                      "shared_files": req.kickoff_shared_files, "supersedes": []}
+                      "shared_files": req.kickoff_shared_files, "supersedes": [],
+                      **execution_payload}
                      if req.kickoff_kind == "proposal" else {}))
         self._broadcast_post(team, kickoff)
         coordinator = TeamCoordinator(
@@ -3180,9 +3286,14 @@ class ChatController:
                              / "teams" / team.team_id / "coordinator.jsonl"),
             round_timeout_s=team_round_timeout_s())
         self._coordinators[team.team_id] = coordinator
-        coordinator.kickoff(req.kickoff_kind, req.kickoff_mentions)
-        return {"team_id": team.team_id, "members": members, "phase": team.phase,
-                "round": team.round}
+        if req.mode == "implement":
+            coordinator.start_execution(kickoff.proposal_id)
+        else:
+            coordinator.kickoff(req.kickoff_kind, req.kickoff_mentions)
+        after = self._store.teams.get_team(team.team_id)
+        assert after is not None
+        return {"team_id": team.team_id, "members": members, "phase": after.phase,
+                "round": after.round, "run_id": after.run_id, "mode": after.mode}
 
     def _team_activity(self, team: TeamRecord, event: TeamActivity) -> None:
         """Every activity event streams on the team channel (spec 2026-10-05 §5.2)."""
@@ -3229,15 +3340,42 @@ class ChatController:
             current = record.parent_agent_id if record is not None else None
         return None
 
-    def _team_edit_rule(self, team_id: str, label: str, key: str) -> str | None:
+    def _team_edit_rule(self, team_id: str, label: str, key: str, *,
+                        expected_run_id: int | None = None,
+                        activation_kind: str = "lifecycle") -> str | None:
         team = self._store.teams.get_team(team_id)
         if team is None:
             return "the team no longer exists"
+        if expected_run_id is not None and expected_run_id != team.run_id:
+            return "this activation belongs to an earlier team run"
+        if team.mode == "deliberate" or activation_kind == "lead_reply":
+            return "deliberation and lead consultation do not allow implementation edits"
         shared: set[str] = set()
         if team.adopted_proposal_id is not None:
             plan = self._store.teams.get_post(team_id, int(team.adopted_proposal_id.lstrip("Pp")))
             shared = {str(f) for f in (plan.payload if plan else {}).get("shared_files", [])}
         return team_edit_refusal(team, self._store.teams.members(team_id), label, key, shared)
+
+    def _team_tool_refusal(self, handle: AgentHandle, tool: str) -> str | None:
+        membership = self._team_membership_of(handle.agent_id)
+        if membership is None:
+            return None
+        team = self._store.teams.get_team(membership.team_id)
+        if team is None or handle.team_run_id not in (None, team.run_id):
+            return "this activation belongs to an earlier or deleted team run"
+        if team.mode is None and handle.team_activation_kind != "lead_reply":
+            return None  # historical workflow
+        if team.phase in {"PAUSED", "FAILED", "DISBANDED", "AWAITING_APPROVAL"}:
+            return "team work is paused, closed, or waiting for approval"
+        if (team.mode == "deliberate" or team.phase in {"DELIBERATING", "FINALIZING", "DONE"}
+                or handle.team_activation_kind == "lead_reply"):
+            from agentd.teams.execution_policy import READ_TOOLS
+            if (handle.team_activation_kind == "lead_reply" and tool in MEMBER_TOOL_NAMES
+                    and tool not in {"team_read", "team_reply_main"}):
+                return "lead consultation permits reading and replying to main only"
+            if tool not in READ_TOOLS | MEMBER_TOOL_NAMES:
+                return "team investigation permits read tools and discussion only"
+        return None
 
     def _member_handle(self, team_id: str, label: str) -> AgentHandle | None:
         member = self._store.teams.member(team_id, label)
@@ -3267,37 +3405,85 @@ class ChatController:
         """Scheduled, never inline: the round's last reporter calls this from inside its own
         finishing activation, which is still active until that task ends (the same rule
         as _on_leftover)."""
-        asyncio.get_running_loop().call_soon(self._start_member_now, team_id, label, extra)
+        team = self._store.teams.get_team(team_id)
+        if team is None:
+            return
+        self._store.teams.update_member(team_id, label, pending_start_json={
+            "run_id": team.run_id, "phase": team.phase, "extra": extra})
+        asyncio.get_running_loop().call_soon(
+            self._start_scheduled_member, team_id, label, team.run_id, team.phase, extra)
+
+    def _start_scheduled_member(self, team_id: str, label: str, run_id: int,
+                                phase: str, extra: str) -> None:
+        team = self._store.teams.get_team(team_id)
+        if team and team.run_id == run_id and team.phase == phase:
+            self._start_member_now(team_id, label, extra)
 
     def _start_member_now(self, team_id: str, label: str, extra: str = "") -> None:
         assert self._subagents is not None
         team = self._store.teams.get_team(team_id)
         member = self._store.teams.member(team_id, label)
-        if team is None or member is None or team.phase not in LIVE_TEAM_PHASES:
+        if team is None or member is None or team.phase not in {
+                "DELIBERATING", "FINALIZING", "IMPLEMENTING", "REVIEWING"}:
             return
         if self._subagents.is_active(member.agent_id):
-            logger.warning("[teams] %s of %s still running at its start", label, team.name)
+            self._store.teams.update_member(team_id, label, pending_start_json={
+                "run_id": team.run_id, "phase": team.phase, "extra": extra})
+            handle = self._subagents.registry.get(member.agent_id)
+            if handle and handle.task:
+                handle.task.add_done_callback(
+                    lambda _task: self._drain_team_start(team_id, label))
             return
+        self._store.teams.update_member(team_id, label, pending_start_json=None)
         handle = self._handle_from_record(team.thread_id, member.agent_id)
         handle.activation_input = TEAM_DELTA + (f"\n\n{extra}" if extra else "")
+        handle.team_run_id = team.run_id
+        handle.team_phase = team.phase
+        handle.team_activation_kind = "finalization" if team.phase == "FINALIZING" else "lifecycle"
         self._subagents.enqueue(handle, self._activate)
 
+    def _drain_team_start(self, team_id: str, label: str) -> None:
+        team = self._store.teams.get_team(team_id)
+        member = self._store.teams.member(team_id, label)
+        if team is None or member is None or self.is_busy(team_id, label):
+            return
+        pending = member.pending_start_json
+        if pending:
+            self._store.teams.update_member(team_id, label, pending_start_json=None)
+            if pending.get("run_id") == team.run_id and pending.get("phase") == team.phase:
+                self._start_member_now(team_id, label, str(pending.get("extra", "")))
+                return
+        TeamWorkflowOps(self).deliver_request(team_id)
+
     def team_milestone(self, team: TeamRecord, kind: str, headline: str, body: str,
-                       delivery: Delivery = "wake") -> None:
+                       delivery: Delivery = "wake", *, logical_id: str | None = None) -> None:
         """A team milestone for the main agent (spec v2 §8.8): a notice, delivered by the
         same paths as an agent's report (§5.2). `notify` never starts a notice turn."""
+        logical = logical_id or (
+            f"team-result:{team.team_id}:{team.run_id}:{team.result_seq}"
+            if kind == "recommendation_ready" and team.result_seq else uuid4().hex)
         notice = NoticeRecord(
-            notice_id=uuid4().hex, thread_id=team.thread_id, source_kind="team",
+            notice_id=logical, thread_id=team.thread_id, source_kind="team",
             source_id=team.team_id, kind=kind,
             payload={"team_name": team.name, "team_id": team.team_id, "headline": headline,
-                     "body": body, "phase": team.phase},
+                     "body": body, "phase": team.phase,
+                     "run_id": team.run_id, "result_seq": team.result_seq,
+                     "activation_seq": self._store.current_checkpoint_seq(team.thread_id)},
             delivery=delivery, created_at=datetime.now(UTC))
-        self._store.insert_notice(notice)
+        inserted = self._store.insert_notice(notice)
+        if kind == "recommendation_ready" and team.result_seq:
+            self._store.teams.update_team(team.team_id, result_notice_pending=False)
+        if not inserted:
+            return
         if team.thread_id in self._active_loops:
             self._main_inbox.setdefault(team.thread_id, []).append(InboxItem(
                 kind="note", text=body, wakes=False, source_id=team.team_id,
                 author=notice_author(notice), notice_id=notice.notice_id))
             return
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return  # persisted notice will be folded when the thread next runs
         self._rearm_notices(team.thread_id)
 
     def raise_plan_gate(self, team: TeamRecord, proposal: TeamPost) -> None:
@@ -3305,7 +3491,7 @@ class ChatController:
         self._store.add_controller_gate(team.thread_id, PendingGate.new(
             "team_plan",
             {"team_id": team.team_id, "team_name": team.name,
-             "proposal_id": proposal.proposal_id, "text": proposal.text,
+             "proposal_id": proposal.proposal_id, "text": proposal.text, "run_id": team.run_id,
              "assignments": proposal.payload.get("assignments", []),
              "shared_files": proposal.payload.get("shared_files", [])},
             team=GateTeam(id=team.team_id, name=team.name)))
@@ -3351,14 +3537,22 @@ class ChatController:
         return member is not None and self._subagents.has_wakes(member.agent_id)
 
     def team_phase_changed(self, team: TeamRecord) -> None:
+        if team.phase == "DISBANDED" and team.pending_lead_request_seq:
+            self._store.teams.update_team(team.team_id, pending_lead_request_seq=None,
+                                          lead_exchange_status=None)
+            team = TeamWorkflowOps(self).current(team.team_id)
         self._broadcaster.broadcast(team_channel(team.thread_id, team.team_id), {
             "type": "team_phase", "payload": {"phase": team.phase, "round": team.round,
-                                              "paused_reason": team.paused_reason}})
+                                              "paused_reason": team.paused_reason,
+                                              **self._team_workflow_metadata(team)}})
         if team.phase not in LIVE_TEAM_PHASES:
             self._store.remove_team_gates(team.thread_id, team.team_id)
             coordinator = self._coordinators.pop(team.team_id, None)
             if coordinator is not None:
                 coordinator.close()
+        if team.pending_lead_request_seq and team.lead_exchange_status == "pending":
+            asyncio.get_running_loop().call_soon(
+                TeamWorkflowOps(self).deliver_request, team.team_id)
 
     def wake_for_post(self, team: TeamRecord, post: TeamPost) -> None:
         """Outside deliberation a post wakes whom it concerns: Phase 4's policy, which 5B's
@@ -3402,6 +3596,8 @@ class ChatController:
                            payload={"cause": cause, "by": by, "post_seq": post_seq})
         handle = self._handle_from_record(team.thread_id, member.agent_id)
         handle.activation_input = TEAM_DELTA
+        handle.team_run_id = team.run_id
+        handle.team_phase = team.phase
         self._subagents.enqueue(handle, self._activate)
 
     def _drain_member(self, agent_id: str, team_id: str, label: str) -> list[InboxItem]:
@@ -3436,19 +3632,43 @@ class ChatController:
             report = report[:20_000] + "\n… (truncated)"
         stats = _activation_stats(record, self._store.teams.posts(record.team_id))
         team = self._store.teams.get_team(record.team_id)
+        activation_kind = result.team_activation_kind
+        current_run = team is not None and result.team_run_id in (None, team.run_id)
         in_round = ({"round": team.round}
-                    if team is not None and team.phase == "DELIBERATING" else {})
+                    if team is not None and team.phase == "DELIBERATING"
+                    and activation_kind == "lifecycle" else {})
         waiting_on = self._member_waits.pop(record.agent_id, [])
         self._teams.record(record.team_id, record.label, "wrapped_up",
                            activation=record.activation_count,
                            payload={"status": result.status, "report": report,
                                     "files_changed": list(result.files_changed), **stats,
-                                    "waiting_on": waiting_on, **in_round})
+                                    "waiting_on": waiting_on, **in_round,
+                                    "run_id": result.team_run_id,
+                                    "activation_kind": activation_kind})
+        if team is not None and team.mode is not None:
+            post = self._store.teams.append_report(
+                record.team_id, record.label, result.report, result.status,
+                result.team_run_id or team.run_id, activation_kind, record.activation_count)
+            self._broadcast_post(team, post)
+        if activation_kind == "lead_reply":
+            if team and current_run and team.pending_lead_request_seq == result.team_request_seq:
+                self._store.teams.update_team(team.team_id, lead_exchange_status="blocked")
+                self.team_phase_changed(TeamWorkflowOps(self).current(team.team_id))
+            asyncio.get_running_loop().call_soon(
+                self._drain_team_start, record.team_id, record.label)
+            return
+        if not current_run:
+            return
         coordinator = self._coordinators.get(record.team_id)
         if coordinator is not None:
             coordinator.on_report(record.label, result.status, stop_reason,
                                   files=tuple(result.files_changed), report=result.report,
-                                  waiting_on=waiting_on)
+                                  waiting_on=waiting_on, team_fields=result.team_fields)
+        if team and team.pending_lead_request_seq and record.label == team.lead:
+            current = self._store.teams.get_team(team.team_id)
+            if current and current.pending_lead_request_seq:
+                self._store.teams.update_team(team.team_id, lead_exchange_status="blocked")
+                self.team_phase_changed(TeamWorkflowOps(self).current(team.team_id))
 
     async def disband_team(self, thread_id: str, team_id: str) -> dict[str, object]:
         """Stop every member, close the board (spec v2 §8.9's DISBANDED)."""
@@ -3471,9 +3691,16 @@ class ChatController:
             self._teams.record(team_id, "team", "phase",
                                payload={"phase": "DISBANDED", "round": team.round,
                                         "reason": "disbanded"})
-            self._broadcaster.broadcast(team_channel(thread_id, team_id), {
-                "type": "team_phase", "payload": {"phase": "DISBANDED", "round": team.round,
-                                                  "paused_reason": None}})
+            self.team_phase_changed(TeamWorkflowOps(self).current(team_id))
+        if team.phase not in LIVE_TEAM_PHASES and team.phase != "DISBANDED":
+            self._store.teams.update_team(team_id, phase="DISBANDED",
+                                          pending_lead_request_seq=None,
+                                          lead_exchange_status=None, end_reason="disbanded",
+                                          ended_at=datetime.now(UTC))
+            assert self._subagents is not None
+            for _member, agent_id in self._team_agent_ids(team_id):
+                await self._subagents.stop(agent_id, "disband")
+            self.team_phase_changed(TeamWorkflowOps(self).current(team_id))
         return {"team_id": team_id, "phase": "DISBANDED"}
 
     def _on_dispatch_start(
@@ -3552,12 +3779,22 @@ class ChatController:
                         and team_row.phase == "DELIBERATING")
         coordinator = (self._coordinators.get(team_of.team_id)
                        if team_of is not None else None)
-        if team_row is not None and team_row.phase != "IMPLEMENTING":
+        if team_row is not None:
+            if handle.team_run_id is None:
+                handle.team_run_id = team_row.run_id
+                handle.team_phase = team_row.phase
+            if handle.team_activation_kind == "lead_reply":
+                coordinator = None
+        if team_row is not None and (team_row.phase != "IMPLEMENTING"
+                                     or handle.team_activation_kind == "lead_reply"):
             reviewing = membership is not None and team_row.phase == "REVIEWING"
             # Edits only where the phase allows them (spec v2 §3.9), recomputed at each
             # activation start; deliberation activations are capped at 40 iterations and
             # review activations at 25 (§3.11).
-            cap = 40 if deliberating else 25 if reviewing else ctx.max_iters
+            cap = (15 if handle.team_activation_kind == "lead_reply"
+                   else 40 if deliberating or team_row.phase == "FINALIZING"
+                   else 25 if reviewing
+                   else ctx.max_iters)
             ctx = replace(ctx, allowed_types=tuple(t for t in ctx.allowed_types if t != "edit"),
                           max_iters=min(ctx.max_iters, cap))
             handle.context = ctx
@@ -3574,8 +3811,31 @@ class ChatController:
                                activation=activation,
                                payload={"posts": [p.seq for p in handed],
                                         "from": sorted({p.author for p in handed}),
+                                        "activation_kind": handle.team_activation_kind,
+                                        "run_id": handle.team_run_id,
                                         **({"round": team_row.round}
                                            if deliberating and team_row is not None else {})})
+        if membership and team_row and team_row.lead == membership.label:
+            pending = team_row.pending_lead_request_seq
+            if (pending and team_row.lead_exchange_status == "pending"
+                    and team_row.phase not in {"PAUSED", "AWAITING_APPROVAL"}):
+                request = self._store.teams.get_post(team_row.team_id, pending)
+                if request:
+                    activation_input += "\n\n" + frame(
+                        "main", "direct request", request.text, seq=pending)
+                    activation_input += (
+                        f"\nReply with team_reply_main(text, request_seq={pending}).")
+                    self._store.teams.update_member(team_row.team_id, membership.label,
+                                                    private_delivered_seq=pending)
+                    self._store.teams.update_team(
+                        team_row.team_id, lead_exchange_status="running")
+        if membership and handle.team_activation_kind == "lead_reply":
+            assert self._teams is not None
+            self._teams.record(membership.team_id, membership.label, "took_up",
+                               activation=activation, payload={
+                                   "activation_kind": "lead_reply", "run_id": handle.team_run_id,
+                                   "posts": ([handle.team_request_seq]
+                                             if handle.team_request_seq else [])})
         channel = agent_channel(thread_id, ctx.agent_id)
         broadcaster = SequencedBroadcaster(self._broadcaster, channel,
                                            initial_seq=record.last_seq)
@@ -3649,8 +3909,13 @@ class ChatController:
             if may_dispatch:
                 built.append(self._dispatch_source(thread_id, turn_id, handle))
             if membership is not None and self._teams is not None:
+                assert handle.team_run_id is not None
                 built.append(TeamToolSource(self._teams, membership.team_id,
-                                            membership.label, team_counters))
+                                            membership.label, team_counters,
+                                            reply_main=partial(
+                                                TeamWorkflowOps(self).reply_main,
+                                                membership.team_id,
+                                                membership.label, handle.team_run_id)))
             return built
 
         available = [d.name for d in AggregatingToolRegistry(sources(None)).definitions()]
@@ -3661,14 +3926,24 @@ class ChatController:
             # Members can always take part (spec §7.3): only the team tools are exempt from
             # the definition's tools/disallowedTools filter — nothing else is re-admitted.
             names = names | MEMBER_TOOL_NAMES
+        if team_row and ((team_row.mode is not None and team_row.phase in {
+                "DELIBERATING", "FINALIZING", "DONE"})
+                or handle.team_activation_kind == "lead_reply"):
+            from agentd.teams.execution_policy import investigation_tools
+            names = investigation_tools(names, MEMBER_TOOL_NAMES if membership else frozenset())
+        if handle.team_activation_kind == "lead_reply":
+            names -= MEMBER_TOOL_NAMES - {"team_read", "team_reply_main"}
         render_ctx = RenderContext.for_agent(
             ctx, tools=names,
             shell_policy="allow_all" if self._shell_policy == ShellPolicy.ALLOW_ALL else "ask",
             team_brief=(self._teams.brief(membership.team_id, membership.label)
                         if membership is not None and self._teams is not None else ""))
-        registry = AggregatingToolRegistry(sources(render_ctx), allowed_tools=names)
+        registry = AggregatingToolRegistry(
+            sources(render_ctx), allowed_tools=names,
+            execution_guard=partial(self._team_tool_refusal, handle) if team_of else None)
         protection = (TeamProtection(partial(self._team_edit_rule, team_of.team_id,
-                                             team_of.label))
+                                             team_of.label, expected_run_id=handle.team_run_id,
+                                             activation_kind=handle.team_activation_kind))
                       if team_of is not None else AgentProtection())
         edit_session_factory = (
             (lambda: TurnEditSession(
@@ -3731,7 +4006,7 @@ class ChatController:
         impl_check = (
             ImplementationReport(self._store.teams, membership.team_id, membership.label,
                                  team_counters, lambda: set(subtree_files()))
-            if membership is not None else None)
+            if membership is not None and handle.team_activation_kind != "lead_reply" else None)
         report_check = (
             chain_checks(
                 impl_check,
@@ -3741,6 +4016,47 @@ class ChatController:
                                          else (lambda _errors: None))))
             if impl_check is not None and membership is not None and self._teams is not None
             else None)
+        if membership and handle.team_activation_kind == "finalization":
+            from agentd.chat.controller_loop import ReportVerdict
+            from agentd.teams.finalization import validate_execution, validate_final_result
+
+            def finalization_check(resp: dict[str, object], final: bool) -> ReportVerdict:
+                if final or resp.get("status") == "partial":
+                    return ReportVerdict()
+                current = self._store.teams.get_team(membership.team_id)
+                if current is None or current.run_id != handle.team_run_id:
+                    return ReportVerdict(message="This team run ended; report partial.")
+                feedback = resp.get("finalization_feedback")
+                if isinstance(feedback, dict) and str(feedback.get("reason", "")).strip():
+                    return ReportVerdict()
+                try:
+                    metadata = validate_final_result(
+                        str(resp.get("summary", "")), resp.get("final_result"),
+                        current.adopted_proposal_id)
+                    if (current.mode == "deliberate_and_implement"
+                            and metadata["outcome"] == "actionable"):
+                        assert self._teams is not None
+                        proposal = self._store.teams.get_post(
+                            current.team_id, int(str(current.adopted_proposal_id)[1:]))
+                        validate_execution(self._teams, current, proposal)
+                except TeamInputError as exc:
+                    return ReportVerdict(message=f"Final report refused: {exc}")
+                return ReportVerdict()
+
+            report_check = finalization_check
+        if membership and handle.team_activation_kind == "lead_reply":
+            from agentd.chat.controller_loop import ReportVerdict
+
+            def reply_check(resp: dict[str, object], final: bool) -> ReportVerdict:
+                current = self._store.teams.get_team(membership.team_id)
+                if (not final and resp.get("status") == "completed" and current
+                        and current.pending_lead_request_seq == handle.team_request_seq):
+                    return ReportVerdict(
+                        message="Reply with team_reply_main before reporting completed, "
+                                "or report partial if blocked.")
+                return ReportVerdict()
+
+            report_check = reply_check
 
         from agentd.chat.batch_history import interrupted_history
 
@@ -3748,6 +4064,12 @@ class ChatController:
             self._store.set_agent_history(ctx.agent_id, history)
             if coordinator is not None:
                 coordinator.check_budget()   # spec v2 §3.11: enforced, not advisory
+            if team_of is not None:
+                current = self._store.teams.get_team(team_of.team_id)
+                if (current is None or current.run_id != handle.team_run_id
+                        or current.phase in {"PAUSED", "FAILED", "DISBANDED"}
+                        or self.team_requests(team_of.team_id) >= current.budget):
+                    loop.force_final()
 
         status, report = "failed", ""
         try:
@@ -3768,13 +4090,15 @@ class ChatController:
                     else partial(self._drain_and_mark, ctx.agent_id)
                 ),
                 status_tail=(
-                    partial(self._teams.status_text, membership.team_id, membership.label)
+                    partial(self._teams.status_text, membership.team_id, membership.label,
+                            activation_kind=handle.team_activation_kind)
                     if membership is not None and self._teams is not None
                     else None
                 ),
                 report_guard=partial(self._report_guard, handle),
                 final_hint=(
-                    partial(self._teams.final_hint, membership.team_id, membership.label)
+                    partial(self._teams.final_hint, membership.team_id, membership.label,
+                            activation_kind=handle.team_activation_kind)
                     if membership is not None and self._teams is not None
                     else None
                 ),
@@ -3790,6 +4114,11 @@ class ChatController:
                 if status == "awaiting_peer" and impl_check is not None:
                     self._member_waits[ctx.agent_id] = list(impl_check.waiting_on)
                 report = outcome.text
+                if membership is not None:
+                    handle.team_fields = {
+                        key: (outcome.payload or {})[key]
+                        for key in ("final_result", "finalization_feedback")
+                        if key in (outcome.payload or {})}
                 if status == "partial":
                     # The forced-final report: stop the agents it never waited for (§4.2).
                     for child_id in self._store.child_agent_ids(ctx.agent_id):
@@ -3858,10 +4187,15 @@ class ChatController:
                                             if self._store.get_agent(other) else []))
         result = ChildResult(
             status=status, report=report, files_changed=files,
-            stale_refusals=log.stale_refusals(ctx.agent_id) if log is not None else 0)
+            stale_refusals=log.stale_refusals(ctx.agent_id) if log is not None else 0,
+            team_fields=handle.team_fields, team_run_id=handle.team_run_id,
+            team_activation_kind=handle.team_activation_kind,
+            team_request_seq=handle.team_request_seq)
         if handle.transcript is not None:
             handle.transcript.append(ChatMessage(
-                role="agent", content=report, metadata={"report": True, "status": status}))
+                role="agent", content=report, metadata={
+                    "report": True, "status": status, "run_id": handle.team_run_id,
+                    "activation_kind": handle.team_activation_kind}))
         if handle.loop is not None and isinstance(handle.loop, ControllerLoop):
             self._store.set_agent_history(ctx.agent_id, handle.loop.partial_history())
         if handle.broadcaster is not None:

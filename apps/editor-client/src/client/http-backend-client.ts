@@ -825,6 +825,7 @@ export class HttpBackendClient implements BackendTaskClient {
       teamId: t["team_id"], name: t["name"], phase: t["phase"], round: t["round"],
       maxRounds: t["max_rounds"], pausedReason: t["paused_reason"] ?? null,
       lead: t["lead"] ?? null,
+      ...mapTeamWorkflow(t),
     };
   }
 
@@ -842,7 +843,11 @@ export class HttpBackendClient implements BackendTaskClient {
                                      assignmentDone: m["assignment_done"] === true })),
       // Proposal keys (id/author/text) are camel-safe; stances are label → stance.
       openProposals: proposals,
-      usage: t["usage"] ?? { requests: 0, budget: 0 },
+      usage: (() => {
+        const usage = t["usage"] as Record<string, unknown> | undefined;
+        return { requests: usage?.requests ?? 0, budget: usage?.budget ?? 0,
+          runRequests: usage?.run_requests, runBudget: usage?.run_budget };
+      })(),
       createdAt: t["created_at"] ?? "",
       endReason: t["end_reason"] ?? null,
       approvalGate: t["approval_gate"] === true,
@@ -1738,4 +1743,21 @@ export function parseWireTeamPost(raw: Record<string, unknown>): TeamPost {
 
 export function parseWireTeamActivity(raw: Record<string, unknown>): TeamActivity {
   return TeamActivitySchema.parse(HttpBackendClient.toTeamActivity(raw));
+}
+
+/** Stable workflow metadata shared by summary, live and phase-event transport. */
+export function mapTeamWorkflow(t: Record<string, unknown>): Record<string, unknown> {
+  const result = t.result_summary as Record<string, unknown> | null | undefined;
+  return {
+    mode: t.mode ?? null,
+    deliverable: t.deliverable ?? (typeof t.deliverable_kind === "string"
+      ? { kind: t.deliverable_kind, description: t.deliverable_description ?? "" } : null),
+    runId: t.run_id ?? 1,
+    resultSeq: t.result_seq ?? null,
+    resultSummary: result ? { seq: result.seq, runId: result.run_id ?? t.run_id ?? 1,
+      summary: result.summary ?? "", outcome: result.outcome ?? "", kind: result.kind ?? result.deliverable_kind ?? null } : null,
+    pendingLeadRequestSeq: t.pending_lead_request_seq ?? null,
+    leadExchangeStatus: t.lead_exchange_status ?? null,
+    resumePhase: t.resume_phase ?? null,
+  };
 }

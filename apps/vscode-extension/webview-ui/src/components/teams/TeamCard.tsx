@@ -1,5 +1,5 @@
 import { isTerminalAgent } from "../../agents";
-import { countsText, isTerminalTeam, latestText, memberPhrase, roundProgressText } from "../../teams";
+import { countsText, latestText, memberPhrase, roundProgressText } from "../../teams";
 import { identityFor } from "../../teamIdentity";
 import type { TeamSummaryView } from "../../types";
 import { rosterRow } from "../agents/AgentRosterCard";
@@ -7,6 +7,7 @@ import { useAgentsUi } from "../agents/AgentsContext";
 import { useNow } from "../agents/useNow";
 import { Avatar } from "./Avatar";
 import { PhaseStepper } from "./PhaseStepper";
+import { WorkflowBadges } from "./WorkflowBadges";
 import { useTeamsUi } from "./TeamsContext";
 import { usageText, usageTitle } from "../../usage";
 
@@ -30,10 +31,9 @@ export function TeamCard({ teamId, agentIds, name = "team" }: {
   const team = teamsUi.teams[teamId]
     ?? placeholder(teamId, name, agentIds, agentIds.map((id) => rosterRow(agentsUi.agents, id).label));
   const roster = team.members.map((m) => m.label);
-  const ended = isTerminalTeam(team.phase);
   const anyWorking = team.members.some((m) => !isTerminalAgent(agentsUi.agents[m.agentId]?.status ?? m.status));
-  const now = useNow(!ended && anyWorking);
-  const counts = countsText(team.counts, team.usage.budget);
+  const now = useNow(anyWorking);
+  const counts = countsText(team.counts, team.usage.runBudget ?? team.usage.budget, team.usage.runRequests);
   const teamUsage = teamsUi.usage?.teams[teamId]?.total;
   const progress = roundProgressText(team.roundProgress, team, agentsUi.agents, now);
   return (
@@ -48,7 +48,8 @@ export function TeamCard({ teamId, agentIds, name = "team" }: {
             Open board
           </button>
         </div>
-        {team.maxRounds > 0 && <PhaseStepper phase={team.phase} round={team.round} maxRounds={team.maxRounds} endReason={team.endReason} mini />}
+        <WorkflowBadges team={team} />
+        {team.maxRounds > 0 && <PhaseStepper {...team} mini />}
         {progress && (
           <div data-testid="round-progress" className="flex items-center gap-2.5 text-[11px] text-text-2">
             <span>{progress.text}</span>

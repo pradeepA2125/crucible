@@ -1,55 +1,51 @@
-import { isTerminalTeam } from "../../teams";
+import { isTerminalTeam, teamCompletionLabel } from "../../teams";
+import type { TeamWorkflowView } from "../../types";
 
-const STEPS = ["Kickoff", "Deliberating", "Implementing", "Review", "Done"];
-const INDEX: Record<string, number> = {
-  DELIBERATING: 1, AWAITING_APPROVAL: 1, DEADLOCKED: 1, PAUSED: 1,
-  IMPLEMENTING: 2, REVIEWING: 3, DONE: 4,
+type Props = TeamWorkflowView & {
+  phase: string; round: number; maxRounds: number; endReason?: string | null; mini?: boolean;
 };
 
-/** The road the team travels (spec 2026-10-05 §6/§8). An ended team shows how it ended. */
-export function PhaseStepper({ phase, round, maxRounds, endReason = null, mini = false }: {
-  phase: string; round: number; maxRounds: number; endReason?: string | null; mini?: boolean;
-}) {
-  const at = INDEX[phase] ?? 1;
-  // A plan adopted with nothing to implement ends after deliberation; an implemented team
-  // walks the whole road (5C adds the review step's own state).
-  const adoptedOnly = phase === "DONE" && endReason === "adopted";
-  const ended = isTerminalTeam(phase) && !(phase === "DONE" && !adoptedOnly);
-  const label = (step: string, i: number) =>
-    i === 1 && at === 1 && !ended
-      ? (phase === "DEADLOCKED" ? `Deadlocked · round ${round} of ${maxRounds}`
-        : phase === "PAUSED" ? "Paused"
-        : phase === "AWAITING_APPROVAL" ? "Awaiting approval"
-        : `Deliberating · round ${round} of ${maxRounds}`)
-      : i === 4 && phase === "DONE" && endReason === "unresolved objections" ? "Done · unresolved"
-      : step;
-  return (
-    <div className={`flex flex-wrap items-center gap-y-1 ${mini ? "text-[10.5px]" : "text-[11px]"}`} aria-label="Phase">
-      {STEPS.map((step, i) => {
-        const done = i < at || (ended && i <= 1);
-        const now = i === at && !ended;
-        if (ended && i > 1) return null;
-        return (
-          <span key={step} className="inline-flex items-center whitespace-nowrap">
-            {i > 0 && <span className={mini ? "mx-1 h-px w-2.5" : "mx-1.5 h-px w-[18px]"} style={{ background: "var(--color-border-strong)" }} />}
-            <span className="mr-1.5 h-2 w-2 rounded-full" style={{
-              background: now ? "var(--color-accent)" : done ? "var(--color-green)" : "transparent",
-              border: `1.5px solid ${now ? "var(--color-accent)" : done ? "var(--color-green)" : "var(--color-text-4)"}`,
-              boxShadow: now ? "0 0 0 3px var(--accent-bg-2)" : undefined }} />
-            <span style={{ color: now ? "var(--color-accent-ink)" : done ? "var(--color-text-2)" : "var(--color-text-4)",
-                           fontWeight: now ? 600 : undefined }}>{label(step, i)}</span>
-          </span>
-        );
-      })}
-      {ended && (
-        <span className="inline-flex items-center whitespace-nowrap">
-          <span className={mini ? "mx-1 h-px w-2.5" : "mx-1.5 h-px w-[18px]"} style={{ background: "var(--color-border-strong)" }} />
-          <span className="mr-1.5 h-2 w-2 rounded-full" style={{ background: phase === "FAILED" ? "var(--color-red)" : phase === "DONE" ? "var(--color-green)" : "var(--color-text-3)" }} />
-          <span style={{ color: phase === "FAILED" ? "var(--color-red)" : phase === "DONE" ? "var(--color-green)" : "var(--color-text-2)", fontWeight: 600 }}>
-            {phase === "FAILED" ? "Failed" : adoptedOnly ? "Plan adopted" : "Disbanded"}
-          </span>
-        </span>
-      )}
-    </div>
-  );
+/** Mode expresses the requested path; phase expresses work actually happening. */
+export function PhaseStepper(props: Props) {
+  const { phase, round, maxRounds, endReason = null, mini = false, mode, resumePhase } = props;
+  const path = mode === "implement"
+    ? ["Kickoff", "Implementing", "Review", "Done"]
+    : mode === "deliberate"
+      ? ["Kickoff", "Deliberating", "Finalizing recommendation", "Done"]
+      : mode === "deliberate_and_implement"
+        ? ["Kickoff", "Deliberating", "Finalizing recommendation", "Implementing", "Review", "Done"]
+        : ["Kickoff", "Deliberating", "Implementing", "Review", "Done"];
+  const phaseStep: Record<string, string> = { DELIBERATING: "Deliberating", DEADLOCKED: "Deliberating",
+    FINALIZING: "Finalizing recommendation", IMPLEMENTING: "Implementing", REVIEWING: "Review", DONE: "Done" };
+  const activePhase = phase === "PAUSED" ? resumePhase ?? "DELIBERATING" : phase;
+  const activeStep = activePhase === "AWAITING_APPROVAL" ? "Implementing" : phaseStep[activePhase] ?? "Deliberating";
+  const at = Math.max(1, path.indexOf(activeStep));
+  const planningDone = phase === "DONE" && (mode === "deliberate" || endReason === "deliberation_complete"
+    || (!mode && endReason === "adopted")
+    || (props.resultSummary?.runId === (props.runId ?? 1) && props.resultSummary.outcome !== "actionable"));
+  const stopped = phase === "FAILED" || phase === "DISBANDED";
+  const visible = planningDone ? path.filter((s) => s !== "Implementing" && s !== "Review") : path;
+  const label = (step: string) => {
+    if (step === "Done" && phase === "DONE") return teamCompletionLabel(props);
+    if (step !== activeStep || isTerminalTeam(phase)) return step;
+    if (phase === "PAUSED") return !mode && !resumePhase ? "Paused" : `Paused · ${step.toLowerCase()}`;
+    if (phase === "AWAITING_APPROVAL") return "Awaiting implementation approval";
+    if (phase === "DEADLOCKED") return `Deadlocked · round ${round} of ${maxRounds}`;
+    if (step === "Deliberating") return `Deliberating · round ${round} of ${maxRounds}`;
+    return step;
+  };
+  return <div className={`flex flex-wrap items-center gap-y-1 ${mini ? "text-[10.5px]" : "text-[11px]"}`} aria-label="Phase">
+    {visible.filter((step) => !stopped || path.indexOf(step) <= at).map((step, i) => {
+      const now = step === activeStep && !isTerminalTeam(phase);
+      const done = phase === "DONE" || path.indexOf(step) < at;
+      return <span key={step} className="inline-flex items-center whitespace-nowrap">
+        {i > 0 && <span className={mini ? "mx-1 h-px w-2.5" : "mx-1.5 h-px w-[18px]"} style={{ background: "var(--color-border-strong)" }} />}
+        <span className="mr-1.5 h-2 w-2 rounded-full" style={{ background: now ? "var(--color-accent)" : done ? "var(--color-green)" : "transparent",
+          border: `1.5px solid ${now ? "var(--color-accent)" : done ? "var(--color-green)" : "var(--color-text-4)"}` }} />
+        <span style={{ color: now ? "var(--color-accent-ink)" : done ? "var(--color-text-2)" : "var(--color-text-4)", fontWeight: now ? 600 : undefined }}>{label(step)}</span>
+      </span>;
+    })}
+    {planningDone && mode === "deliberate_and_implement" && <span className="ml-2 text-text-3">Implementation and review skipped</span>}
+    {stopped && <span className="ml-2 font-semibold" style={{ color: phase === "FAILED" ? "var(--color-red)" : "var(--color-text-3)" }}>{phase === "FAILED" ? "Failed" : "Disbanded"}</span>}
+  </div>;
 }

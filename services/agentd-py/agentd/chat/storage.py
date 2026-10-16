@@ -4,7 +4,7 @@ import json
 import sqlite3
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -268,9 +268,10 @@ class ChatThreadStore:
 
     def create_thread(self, workspace_path: str, title: str = "New Chat") -> ChatThread:
         thread_id = f"chat-{uuid.uuid4().hex[:12]}"
-        created_at = datetime.now(timezone.utc).isoformat()
+        created_at = datetime.now(UTC).isoformat()
         self._conn.execute(
-            "INSERT INTO chat_threads (thread_id, workspace_path, title, created_at) VALUES (?, ?, ?, ?)",
+            "INSERT INTO chat_threads (thread_id, workspace_path, title, created_at) "
+            "VALUES (?, ?, ?, ?)",
             (thread_id, workspace_path, title, created_at),
         )
         self._conn.commit()
@@ -921,14 +922,16 @@ class ChatThreadStore:
             delivered_at=(datetime.fromisoformat(row["delivered_at"])
                           if row["delivered_at"] else None))
 
-    def insert_notice(self, record: NoticeRecord) -> None:
-        self._conn.execute(
-            "INSERT INTO agent_notices (notice_id, thread_id, source_kind, source_id, kind, "
+    def insert_notice(self, record: NoticeRecord) -> bool:
+        inserted = self._conn.execute(
+            "INSERT OR IGNORE INTO agent_notices "
+            "(notice_id, thread_id, source_kind, source_id, kind, "
             "payload_json, delivery, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (record.notice_id, record.thread_id, record.source_kind, record.source_id,
              record.kind, json.dumps(record.payload), record.delivery,
              record.created_at.isoformat()))
         self._conn.commit()
+        return inserted.rowcount > 0
 
     def unclaimed_notices(self, thread_id: str) -> list[NoticeRecord]:
         rows = self._conn.execute(

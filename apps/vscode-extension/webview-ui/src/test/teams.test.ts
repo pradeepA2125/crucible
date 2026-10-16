@@ -164,3 +164,17 @@ describe("5C wording", () => {
       .toBe("team is waiting for your approval");
   });
 });
+
+it("late prior-run live state and phase events cannot replace a reopened run", () => {
+  const current = { ...SUMMARY, phase: "FINALIZING", runId: 3, mode: "deliberate" as const };
+  expect(mergeLiveTeam(current, { ...SUMMARY, phase: "DONE", runId: 2 })).toBe(current);
+  expect(summaryWithEvent(current, { type: "team_phase", phase: "IMPLEMENTING", round: 1,
+    pausedReason: null, runId: 2, mode: "implement" })).toBe(current);
+});
+
+it("report, lead conversation and execution extension pills resolve to the existing team", () => {
+  for (const tool of ["team_report", "message_team_lead", "cancel_team_lead_request", "start_team_implementation", "set_team_mode"]) {
+    expect(teamForPill({ id: 1, tool, args: { team: SUMMARY.teamId }, source: "execution", done: true },
+      { [SUMMARY.teamId]: SUMMARY })).toBe(SUMMARY);
+  }
+});

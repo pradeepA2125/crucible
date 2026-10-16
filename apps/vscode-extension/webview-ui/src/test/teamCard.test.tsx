@@ -134,3 +134,41 @@ describe("team links and the stepper", () => {
     expect(screen.getByText("Paused")).toBeInTheDocument();
   });
 });
+
+describe("mode-aware team workflow", () => {
+  it("finishes deliberate plans without displaying execution stages", () => {
+    render(<PhaseStepper phase="DONE" mode="deliberate" round={2} maxRounds={4}
+      deliverable={{ kind: "plan", description: "Write the rollout" }} endReason="deliberation_complete" />);
+    expect(screen.getByText("Finalizing recommendation")).toBeInTheDocument();
+    expect(screen.getByText("Plan ready")).toBeInTheDocument();
+    expect(screen.queryByText("Implementing")).toBeNull();
+    expect(screen.queryByText("Review")).toBeNull();
+  });
+
+  it("direct implementation does not claim a deliberation ran", () => {
+    render(<PhaseStepper phase="IMPLEMENTING" mode="implement" round={1} maxRounds={3} />);
+    expect(screen.getByText("Implementing")).toBeInTheDocument();
+    expect(screen.queryByText(/Deliberating/)).toBeNull();
+    expect(screen.queryByText("Finalizing recommendation")).toBeNull();
+  });
+
+  it("keeps a pause at its actual phase and marks unused execution skipped", () => {
+    const { rerender } = render(<PhaseStepper phase="PAUSED" mode="deliberate_and_implement"
+      resumePhase="FINALIZING" round={2} maxRounds={4} />);
+    expect(screen.getByText("Paused · finalizing recommendation")).toBeInTheDocument();
+    rerender(<PhaseStepper phase="DONE" mode="deliberate_and_implement" round={2} maxRounds={4}
+      runId={1} deliverable={{ kind: "recommendation", description: "Assess need" }}
+      resultSummary={{ seq: 10, runId: 1, summary: "Already supported", outcome: "no_change" }} />);
+    expect(screen.getByText("Recommendation ready")).toBeInTheDocument();
+    expect(screen.getByText("Implementation and review skipped")).toBeInTheDocument();
+    expect(screen.queryByText("Implementing")).toBeNull();
+  });
+
+  it("displays workflow separately from phase and links all main team tools", () => {
+    wrap(<TeamCard teamId="team-1" agentIds={[]} />, { teams: { "team-1": { ...TEAM,
+      mode: "deliberate", phase: "FINALIZING", deliverable: { kind: "diagnosis", description: "Find the cause" } } } });
+    expect(screen.getByLabelText("Team workflow")).toHaveTextContent("Deliberate");
+    expect(screen.getByLabelText("Team workflow")).toHaveTextContent("Deliverable: diagnosis");
+    expect(screen.getByLabelText("Phase")).toHaveTextContent("Finalizing recommendation");
+  });
+});

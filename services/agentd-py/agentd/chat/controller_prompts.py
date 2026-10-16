@@ -133,6 +133,10 @@ _REPORT_TEAM_FIELDS = {
             "required": ["member", "part", "files"]}},
         "shared_files": {"type": "array", "items": _STR}}, "required": ["text", "assignments"]},
     "waiting_on": {"type": "array", "items": _STR},
+    "final_result": {"type": "object", "properties": {
+        "summary": _STR, "outcome": {"type": "string", "enum": ["actionable", "no_change", "needs_decision"]},
+        "basis_proposal_id": _STR}, "required": ["summary", "outcome", "basis_proposal_id"]},
+    "finalization_feedback": {"type": "object", "properties": {"reason": _STR}, "required": ["reason"]},
 }
 
 # Per-op-type field specs: the op-specific properties + which are required for THAT op.
@@ -1020,10 +1024,18 @@ HOW THE TEAM WORKS
   whom you wait on. A report can carry your stances ("stances": [{proposal_id, stance, note,
   or reason + evidence}]) and, when you are the lead, your proposal ("proposal":
   {text, assignments}) — the same as the separate tool calls, in one action.
-- Until a plan is adopted and approved, change no files — neither with edits nor through
-  run_command (a script that writes a file is an edit). Propose the change instead; it is
-  made in implementation by the member who owns the file.
-- Once a plan is adopted the team implements it, and team_status shows your assignment. Edit only
+- Mode and phase are separate: deliberate stops after the requested deliverable; deliberate_and_implement
+  may execute an actionable finalized recommendation; implement executes a supplied plan.
+  Consensus and proposed assignments never authorize edits. Only phase IMPLEMENTING permits execution,
+  subject to your base permissions. In every other phase change no files, including through run_command.
+- In FINALIZING, only the lead synthesizes the requested plan, review, diagnosis, comparison or
+  recommendation. Finish with report: put the full result in summary and include final_result
+  {summary, outcome: actionable|no_change|needs_decision, basis_proposal_id}. If evidence requires another
+  round, report partial with finalization_feedback {reason}. Result delivery notifies main only.
+- Main can contact the lead privately. The lead uses team_reply_main to reply; neither message changes
+  mode or phase. An attached request still requires your ordinary lifecycle report. A dedicated
+  lead_reply activation only answers main and reports; it does not propose, implement or publish a result.
+- During IMPLEMENTING, team_status shows your authorized assignment. Edit only
   your own files and the shared files: a file another member owns is theirs, so send them the
   change with team_message. Report completed when your part is done and checked, awaiting_peer
   with "waiting_on": [<label>] naming whom you wait on (that member's report wakes you), or
@@ -1055,12 +1067,16 @@ Example — reviewing: run the tests, then state your stance on the closing prop
 # Main-only: appended when create_team is offered (CRUCIBLE_TEAMS_ENABLED).
 _TEAMS_MAIN_BLOCK = tagged("_TEAMS_MAIN_BLOCK", """<<main>>
 
-TEAMS (create_team, post_board, team_status, adopt_proposal, resume_team, disband_team)
+TEAMS (create_team, post_board, team_status, team_report, start_team_implementation, set_team_mode,
+message_team_lead, cancel_team_lead_request, adopt_proposal, resume_team, disband_team)
 create_team starts a team of agents that talk on a shared board: they post findings, propose
 approaches with assignments, and agree or object with evidence. Each member's role is its agent
 definition. It fits work where several perspectives should check one plan before and while it
 is built; dispatch_agents fits independent parts that need no discussion.
-- lead names the member who writes and revises the plan (the only one who proposes). kickoff
+- Every creation requires mode and deliverable {kind, description}. Use deliberate for analysis only;
+  deliberate_and_implement when execution is authorized; implement for a supplied proposal with assignments.
+  In PLAN mode only deliberate is allowed. Deliverable kinds include plan, review, diagnosis, comparison,
+  recommendation and custom. lead names the member who writes and revises the recommendation (the only one who proposes). kickoff
   "proposal" opens with your own plan for the members to check; kickoff "post" asks the lead to
   propose.
 - A full run costs roughly 60–90 requests per member (deliberation, implementation, review):
@@ -1070,9 +1086,14 @@ is built; dispatch_agents fits independent parts that need no discussion.
   blocked, the team stuck, paused or finished) wake you — do not poll team_status. post_board is
   how the user's later requests reach the team; for a DEADLOCKED team it runs one more round,
   and adopt_proposal adopts one of its open proposals.
-- A DONE team reopens with post_board for a follow-up request: its members keep their context
-  of what they built, and it gets a fresh budget. When the user asks for more on work a team
-  finished, post_board to that team rather than creating a new one.
+- A DONE team reopens with post_board into a new deliberate run, preserving context. Follow-up discussion
+  never authorizes implementation. To execute a completed actionable result, call start_team_implementation
+  with its expected_run_id and result_seq. set_team_mode only narrows to deliberate.
+- message_team_lead addresses the lead role directly and privately without waking other members. Replies
+  notify you through existing notices. Include expected_run_id. Retry a blocked exchange using
+  retry_request_seq; cancel_team_lead_request clears an unresolved request before changing runs.
+- team_report retrieves full lifecycle reports and the finalized result. Do not poll it: completion notices
+  already carry the result. Use it when the user asks for details missing from the notice.
 - approval_gate: true makes an adopted plan wait for the user on a card: the user approves it,
   sends feedback (one more round of deliberation), or rejects it (the team ends). Only the user
   approves, on that card; never tell the team a plan is approved.
@@ -1085,9 +1106,9 @@ is built; dispatch_agents fits independent parts that need no discussion.
   in the turn that answers you. A FAILED team (a backend restart) reopens when you post_board to
   it.
 Example — you have a plan and want it checked:
-{"type":"tool_calls","thought":"two reviewers should check my plan","calls":[{"id":"call19","tool":"create_team","args":{"name":"auth","goal":"Add rate-limited login","members":[{"label":"api","agent":"general-purpose"},{"label":"review","agent":"explore"}],"kickoff":{"kind":"proposal","text":"api adds api/limiter.py and wires it into api/routes.py; review checks the callers.","assignments":[{"member":"api","part":"limiter + wiring","files":["api/limiter.py","api/routes.py"]}]}}}]}
+{"type":"tool_calls","thought":"two reviewers should check my plan","calls":[{"id":"call19","tool":"create_team","args":{"name":"auth","goal":"Add rate-limited login","lead":"api","mode":"deliberate_and_implement","deliverable":{"kind":"plan","description":"Produce a checked implementation plan, then implement and verify it."},"members":[{"label":"api","agent":"general-purpose"},{"label":"review","agent":"explore"}],"kickoff":{"kind":"proposal","text":"api adds api/limiter.py and wires it into api/routes.py; review checks the callers.","assignments":[{"member":"api","part":"limiter + wiring","files":["api/limiter.py","api/routes.py"]}]}}}]}
 Example — you want the members to propose:
-{"type":"tool_calls","thought":"let the members propose a design","calls":[{"id":"call20","tool":"create_team","args":{"name":"cache","goal":"Cache user lookups","members":[{"label":"arch","agent":"general-purpose"},{"label":"impl","agent":"general-purpose"}],"kickoff":{"kind":"post","text":"@arch @impl propose how to cache get_user without stale reads.","mentions":["arch","impl"]}}}]}
+{"type":"tool_calls","thought":"let the members propose a design","calls":[{"id":"call20","tool":"create_team","args":{"name":"cache","goal":"Cache user lookups","lead":"arch","mode":"deliberate","deliverable":{"kind":"comparison","description":"Compare cache approaches and recommend one with freshness tradeoffs."},"members":[{"label":"arch","agent":"general-purpose"},{"label":"impl","agent":"general-purpose"}],"kickoff":{"kind":"post","text":"@arch @impl propose how to cache get_user without stale reads.","mentions":["arch","impl"]}}}]}
 {"type":"answer","thought":"it runs in the background","answer":"I started a team for the cache design; you can follow its board in the team window."}
 <</main>>""")
 
@@ -1220,6 +1241,11 @@ def _delegated_hint(delegated: dict[str, object]) -> str:
     teams = [str(t) for t in raw_teams] if isinstance(raw_teams, list) else []
     agents = [str(a) for a in raw_agents] if isinstance(raw_agents, list) else []
     parts: list[str] = []
+    lead_requests = delegated.get("lead_requests")
+    if isinstance(lead_requests, list) and lead_requests:
+        parts.append(f"Your private request reached the lead of {', '.join(str(t) for t in lead_requests)}. "
+                     "Only the lead is handling it; the reply will notify you. Answer the user now "
+                     "(type='answer'); do not repeat the request or poll team_status/team_report.")
     if teams:
         parts.append(
             f"You started team {', '.join(teams)}; it works in the background and the user "
@@ -1400,7 +1426,8 @@ def build_controller_step_payload(
             hint = (
                 "Notices woke you — the agent reports or team milestones above; the user sent "
                 "no new message. The notice already holds the team's state (phase, "
-                "assignments, reports): do not call team_status or team_report for it. Act "
+                "assignments, reports and any finalized result): do not poll team_status or team_report. "
+                "Use team_report only for requested details missing from this notice. Act "
                 "only when the notice asks for an action — restart a blocked member or a "
                 "stuck team with post_board, ask the user about a paused team or a plan "
                 "awaiting approval; "

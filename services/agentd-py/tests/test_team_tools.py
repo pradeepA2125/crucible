@@ -66,7 +66,8 @@ def _catalog():
 
 
 def _args(**over):
-    args = {"name": "auth", "goal": "Add login", "lead": "alice",
+    args = {"mode": "deliberate", "deliverable": {"kind": "plan", "description": "A checked plan"},
+            "name": "auth", "goal": "Add login", "lead": "alice",
             "members": [{"label": "alice", "agent": "explore"},
                         {"label": "bob", "agent": "general-purpose"}],
             "kickoff": {"kind": "post", "text": "Propose a design", "mentions": ["alice"]}}
@@ -153,3 +154,101 @@ async def test_post_board_says_who_it_reached() -> None:
     out = json.loads((await source.execute(
         "post_board", {"team": "t", "text": "@builder continue", "mentions": ["builder"]})).output)
     assert "@builder" in out["note"] and "next milestone" in out["note"]
+
+
+@pytest.mark.parametrize("over, needle", [
+    ({"mode": None}, "mode must"),
+    ({"mode": "plan"}, "mode must"),
+    ({"deliverable": None}, "deliverable must"),
+    ({"deliverable": {"kind": "review", "description": ""}}, "deliverable.description"),
+    ({"mode": "implement"}, "proposal kickoff"),
+    ({"mode": "implement", "kickoff": {"kind": "proposal", "text": "Plan", "assignments": []}}, "nonempty"),
+    ({"members": [{"label": "main", "agent": "explore"}, {"label": "bob", "agent": "explore"}]}, "reserved"),
+    ({"kickoff": {"kind": "proposal", "text": "Plan", "assignments": ["bad"]}}, "contain objects"),
+])
+def test_modern_creation_contract(over, needle) -> None:
+    with pytest.raises(TeamInputError, match=needle):
+        parse_create_team(_args(**over), _catalog())
+
+
+@pytest.mark.asyncio
+async def test_main_plan_authority_and_explicit_execution_callbacks() -> None:
+    invoked = []
+
+    async def create(req):
+        invoked.append(req.mode)
+        return {"team_id": "team-1"}
+
+    async def action(tid, args):
+        invoked.append((tid, args))
+        return {"team_id": tid, "run_id": 2}
+
+    ops = MainTeamOps(create=create, resolve=lambda t: "team-1", post=lambda *a: {},
+                      status=lambda t: {}, disband=action, adopt=lambda *a: {},
+                      start_implementation=action, set_mode=action,
+                      message_lead=action, cancel_lead_request=action, can_execute=lambda: False)
+    source = MainTeamToolSource(_catalog(), ops, first_turn_team_ids=set())
+    denied = await source.execute("create_team", _args(mode="deliberate_and_implement"))
+    assert denied.is_error and "PLAN" in denied.output and invoked == []
+    assert not (await source.execute("create_team", _args())).is_error
+    denied = await source.execute("start_team_implementation", {
+        "team": "t", "expected_run_id": 1, "result_seq": 7})
+    assert denied.is_error and "PLAN" in denied.output
+    assert not (await source.execute("message_team_lead", {
+        "team": "t", "text": "Clarify the tradeoff", "expected_run_id": 1})).is_error
+    assert invoked[-1][0] == "team-1"
+    bad = await source.execute("set_team_mode", {
+        "team": "t", "mode": "implement", "reason": "go", "expected_run_id": 1})
+    assert bad.is_error and "only narrows" in bad.output
+    bad = await source.execute("cancel_team_lead_request", {
+        "team": "t", "expected_run_id": True, "request_seq": 2})
+    assert bad.is_error and "positive integer" in bad.output
+
+
+@pytest.mark.asyncio
+async def test_lead_reply_tool_uses_private_callback(tmp_path: Path) -> None:
+    svc, tid = _service(tmp_path)
+    replies = []
+
+    def reply(text, seq):
+        replies.append((text, seq))
+        return {"reply_to": seq}
+
+    source = TeamToolSource(svc, tid, "alice", ActivationCounters(), reply_main=reply)
+    out = await source.execute("team_reply_main", {"text": "The recommendation stands", "request_seq": 8})
+    assert not out.is_error and replies == [("The recommendation stands", 8)]
+    assert svc._store.posts(tid) == []
+    unavailable = TeamToolSource(svc, tid, "bob", ActivationCounters())
+    assert (await unavailable.execute("team_reply_main", {"text": "x"})).is_error
+
+
+@pytest.mark.asyncio
+async def test_private_lead_reply_obeys_activation_limits(tmp_path: Path) -> None:
+    svc, tid = _service(tmp_path)
+    counters = ActivationCounters()
+    replies = []
+
+    def reply(text, seq):
+        replies.append((text, seq))
+        return {"seq": len(replies)}
+
+    source = TeamToolSource(svc, tid, "alice", counters, reply_main=reply)
+    assert not (await source.execute("team_reply_main", {"text": "One question"})).is_error
+    denied = await source.execute("team_reply_main", {"text": "Another question"})
+    assert denied.is_error and "one unsolicited" in denied.output and counters.posts == 1
+    counters.posts = 6
+    denied = await source.execute("team_reply_main", {"text": "Reply", "request_seq": 7})
+    assert denied.is_error and "limit" in denied.output and len(replies) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_private_reply_does_not_consume_a_post(tmp_path: Path) -> None:
+    svc, tid = _service(tmp_path)
+    counters = ActivationCounters()
+
+    def reply(text, seq):
+        raise TeamInputError("request is stale")
+
+    source = TeamToolSource(svc, tid, "alice", counters, reply_main=reply)
+    result = await source.execute("team_reply_main", {"text": "Reply", "request_seq": 7})
+    assert result.is_error and counters.posts == 0

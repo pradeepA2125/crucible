@@ -14,6 +14,7 @@ export function isTerminalTeam(phase: string): boolean {
 
 /** /live carries slow fields only: keep the loaded summary's goal, proposals and usage. */
 export function mergeLiveTeam(prev: TeamSummaryView | undefined, live: TeamLiveView): TeamSummaryView {
+  if (olderTeamState(live, prev)) return prev!;
   return {
     goal: "", openProposals: [], usage: { requests: 0, budget: 0 }, createdAt: "",
     ...prev,
@@ -42,7 +43,9 @@ export function applyTeamEvent(view: TeamViewState, event: TeamEventView): TeamV
 
 export function summaryWithEvent(team: TeamSummaryView, event: TeamEventView): TeamSummaryView {
   if (event.type !== "team_phase") return team;
-  return { ...team, phase: event.phase, round: event.round, pausedReason: event.pausedReason };
+  if (olderTeamState(event, team)) return team;
+  const { type: _type, ...state } = event;
+  return { ...team, ...state };
 }
 
 /** The running member the team waits on, and for how long (spec §9) — the seconds come
@@ -115,7 +118,7 @@ export function memberPhrase(
 }
 
 const PHASE_WORDS: Record<string, string> = {
-  DELIBERATING: "is deliberating", AWAITING_APPROVAL: "is waiting for your approval",
+  FINALIZING: "is finalizing its recommendation", DELIBERATING: "is deliberating", AWAITING_APPROVAL: "is waiting for your approval",
   IMPLEMENTING: "is implementing", REVIEWING: "is reviewing", DEADLOCKED: "is deadlocked",
   PAUSED: "is paused", DONE: "is done", DISBANDED: "was disbanded", FAILED: "failed",
 };
@@ -126,7 +129,7 @@ export function latestText(latest: TeamLatestView): string {
   return `team ${PHASE_WORDS[latest.text] ?? latest.text.toLowerCase()}`;
 }
 
-export function countsText(counts: TeamCountsView | undefined, budget: number): string {
+export function countsText(counts: TeamCountsView | undefined, budget: number, runRequests?: number): string {
   const parts: string[] = [];
   if (counts) {
     parts.push(`${counts.posts} post${counts.posts === 1 ? "" : "s"}`);
@@ -136,7 +139,7 @@ export function countsText(counts: TeamCountsView | undefined, budget: number): 
       parts.push(`${p.id} ${tally}`.trim());
     }
   }
-  if (budget > 0) parts.push(`budget ${budget} requests`);
+  if (budget > 0) parts.push(runRequests !== undefined ? `${runRequests} of ${budget} run requests` : `budget ${budget} requests`);
   return parts.join(" · ");
 }
 
@@ -163,7 +166,14 @@ export function roundProgressText(
 
 /** A live team's phase in a few words, for when no round is running (the pinned strip). */
 export function teamPhaseText(team: TeamSummaryView): string {
+  if (hasTeamExchange(team)) {
+    const state = team.leadExchangeStatus === "running" ? "lead replying"
+      : team.leadExchangeStatus === "blocked" ? "lead reply blocked" : "lead reply pending";
+    return `${teamCompletionLabel(team)} · ${state}`;
+  }
   switch (team.phase) {
+    case "FINALIZING": return "Finalizing recommendation";
+    case "DONE": return teamCompletionLabel(team);
     case "DELIBERATING": return `Round ${team.round} of ${team.maxRounds}`;
     case "DEADLOCKED": return "Deadlocked — waiting on the main agent";
     case "AWAITING_APPROVAL": return "Waiting for your approval";
@@ -175,7 +185,8 @@ export function teamPhaseText(team: TeamSummaryView): string {
 }
 
 export const TEAM_TOOLS: ReadonlySet<string> = new Set([
-  "create_team", "post_board", "team_status", "adopt_proposal", "resume_team", "disband_team"]);
+  "create_team", "post_board", "team_status", "team_report", "adopt_proposal", "resume_team", "disband_team",
+  "message_team_lead", "cancel_team_lead_request", "start_team_implementation", "set_team_mode"]);
 
 /** The team a main-agent tool pill is about, if the thread knows it. */
 export function teamForPill(
@@ -192,4 +203,48 @@ export function teamForPill(
   const named = Object.values(teams).filter((t) => t.name === ref)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return named[0] ?? null;
+}
+
+export const TEAM_MODE_LABELS = {
+  deliberate: "Deliberate", deliberate_and_implement: "Deliberate and implement", implement: "Implement",
+} as const;
+
+export function hasTeamExchange(team: TeamSummaryView): boolean {
+  return team.phase === "DONE" && (team.pendingLeadRequestSeq != null
+    || ["pending", "running", "blocked"].includes(team.leadExchangeStatus ?? ""));
+}
+
+export function resultReadyLabel(kind?: string | null): string {
+  const labels: Record<string, string> = { plan: "Plan ready", review: "Review ready",
+    diagnosis: "Diagnosis ready", comparison: "Comparison ready", recommendation: "Recommendation ready" };
+  return (kind && labels[kind]) || "Result ready";
+}
+
+export function teamCompletionLabel(team: Pick<TeamSummaryView, "mode" | "deliverable" | "endReason" | "resultSummary" | "runId">): string {
+  const currentResult = team.resultSummary && team.resultSummary.runId === (team.runId ?? 1);
+  if (team.mode === "deliberate" || team.endReason === "deliberation_complete"
+      || (currentResult && team.resultSummary?.outcome !== "actionable")) {
+    return resultReadyLabel(team.deliverable?.kind ?? team.resultSummary?.kind);
+  }
+  if (team.mode) return team.endReason === "unresolved objections"
+    ? "Implementation reviewed · unresolved" : "Implementation reviewed";
+  return team.endReason === "adopted" ? "Plan adopted" : "Done";
+}
+
+export function olderTeamState(incoming: { runId?: number; round: number }, current?: { runId?: number; round: number }): boolean {
+  if (!current) return false;
+  return (incoming.runId ?? 1) < (current.runId ?? 1)
+    || ((incoming.runId ?? 1) === (current.runId ?? 1) && incoming.round < current.round);
+}
+
+/** Backfills may race either stream independently; retain all newer durable rows. */
+export function mergeTeamDetail(view: TeamViewState | undefined, detail: TeamDetailView): TeamViewState {
+  if (!view) return viewFromTeamDetail(detail);
+  const posts = new Map(detail.posts.map((p) => [p.seq, p]));
+  for (const p of view.posts) if (p.seq > detail.lastSeq) posts.set(p.seq, p);
+  const activity = new Map(detail.activity.map((a) => [a.aseq, a]));
+  for (const a of view.activity) if (a.aseq > detail.lastAseq) activity.set(a.aseq, a);
+  return { posts: [...posts.values()].sort((a, b) => a.seq - b.seq),
+    lastSeq: Math.max(view.lastSeq, detail.lastSeq), activity: [...activity.values()].sort((a, b) => a.aseq - b.aseq),
+    lastAseq: Math.max(view.lastAseq, detail.lastAseq) };
 }

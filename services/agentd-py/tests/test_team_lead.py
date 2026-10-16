@@ -16,7 +16,8 @@ from agentd.teams.validation import TeamInputError
 
 
 def _args(**over):  # type: ignore[no-untyped-def]
-    args = {"name": "auth", "goal": "Add login", "lead": "alice",
+    args = {"mode": "deliberate", "deliverable": {"kind": "plan", "description": "A checked plan"},
+            "name": "auth", "goal": "Add login", "lead": "alice",
             "members": [{"label": "alice", "agent": "general-purpose"},
                         {"label": "bob", "agent": "explore"},
                         {"label": "carol", "agent": "explore"}],
@@ -150,7 +151,7 @@ def test_the_lead_keeps_an_unobjected_plan(tmp_path: Path) -> None:
     teams.update_team(tid, round=3, round_cutoff_seq=99)
     with pytest.raises(TeamInputError, match=(
             "P1 is under review and nobody objects to it. Keep it: teammates' notes are "
-            "applied during implementation. Report that you are waiting for the review.")):
+            "included when finalizing the recommendation. Report that you are waiting for the review.")):
         service.propose(tid, "alice", "revised with the note", [])
 
 

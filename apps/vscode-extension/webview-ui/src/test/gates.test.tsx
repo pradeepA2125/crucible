@@ -591,7 +591,7 @@ describe("TeamPlanGate", () => {
 
   it("shows the plan with its assignments", () => {
     render(<TeamPlanGate gateId="g1" taskId="thread-1" payload={payload} />);
-    expect(screen.getByText(/Team auth adopted P3/)).toBeInTheDocument();
+    expect(screen.getByText(/Team auth · P3 — approve implementation/)).toBeInTheDocument();
     expect(screen.getByText("Add a limiter.")).toBeInTheDocument();
     expect(screen.getByText(/alice → limiter/)).toBeInTheDocument();
     expect(screen.getByText(/api\/limiter\.py/)).toBeInTheDocument();
@@ -600,7 +600,7 @@ describe("TeamPlanGate", () => {
 
   it("approves once", () => {
     render(<TeamPlanGate gateId="g1" taskId="thread-1" payload={payload} />);
-    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve implementation" }));
     fireEvent.click(screen.getByText("Approved"));
     expect(postMessage).toHaveBeenCalledTimes(1);
     expect(postMessage).toHaveBeenCalledWith({ type: "teamPlanDecision", threadId: "thread-1",

@@ -119,3 +119,25 @@ def test_notice_turn_input_names_what_arrived() -> None:
     assert "agents finished" in agents and "milestone" not in agents
     assert "finished" not in teams and "milestone" in teams
     assert "agents finished" in both and "milestone" in both
+
+
+def test_modern_report_evidence_filters_run_and_activation_purpose(tmp_path: Path) -> None:
+    service, tid, _, _ = _setup(tmp_path)
+    teams = service._store
+    teams.update_team(tid, mode="deliberate", run_id=2,
+                      deliverable_kind="diagnosis", deliverable_description="Find the cause")
+    teams.append_report(tid, "design", "Old run", "completed", 1, "lifecycle")
+    teams.append_report(tid, "design", "Current evidence", "completed", 2, "lifecycle")
+    teams.append_report(tid, "design", "Private consultation", "completed", 2, "lead_reply")
+    teams.append_report(tid, "ui", "Final synthesis", "completed", 2, "finalization")
+    result = teams.append_post(tid, author="design", kind="result", text="Full diagnosis", payload={
+        "run_id": 2, "summary": "Root cause found", "outcome": "no_change", "kind": "diagnosis"})
+    teams.update_team(tid, result_seq=result.seq)
+    report = service.report(tid)
+    members = {m["label"]: m for m in report["members"]}
+    assert members["design"]["report"] == "Current evidence"
+    assert members["ui"]["report"] == "Final synthesis"
+    assert report["deliverable"] == {"kind": "diagnosis", "description": "Find the cause"}
+    assert report["result_summary"] == {"seq": result.seq, "run_id": 2, "summary": "Root cause found",
+                                        "outcome": "no_change", "kind": "diagnosis"}
+    assert service.summary(tid)["result_summary"] == report["result_summary"]

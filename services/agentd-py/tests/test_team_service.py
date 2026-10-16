@@ -35,6 +35,13 @@ def test_post_mentions_and_callback(tmp_path: Path) -> None:
     assert post.mentions == ["bob", "carol"] and posted == [post]
 
 
+def test_legacy_summary_uses_null_deliverable_for_client_contract(tmp_path: Path) -> None:
+    service, tid, _, _ = _setup(tmp_path)
+    summary = service.summary(tid)
+    assert summary["mode"] is None
+    assert summary["deliverable"] is None
+
+
 def test_activation_limits(tmp_path: Path) -> None:
     service, tid, _, _ = _setup(tmp_path)
     counters = ActivationCounters()
@@ -216,3 +223,28 @@ def test_review_owes_a_stance_on_the_closing_proposal(tmp_path: Path) -> None:
         f"state your stance on {closing.proposal_id} now, in this report's stances field")
     service.agree(tid, "alice", closing.proposal_id)
     assert service.expected_stances(tid, "alice") == []
+
+
+def test_private_lead_posts_do_not_advance_public_member_cursor(tmp_path: Path) -> None:
+    svc, tid, teams, _ = _setup(tmp_path)
+    public = teams.append_post(tid, author="main", kind="post", text="Public")
+    teams.append_post(tid, author="main", kind="post", text="Private", recipient="alice",
+                      payload={"channel": "main_lead", "run_id": 1})
+    text, top, others = svc.render_delta_posts(tid, "alice")
+    assert top == public.seq and [p.text for p in others] == ["Public"]
+    assert "Private" not in text
+    assert [p.text for p in svc.read(tid, "alice")] == ["Public"]
+    assert "0 unread direct messages" in svc.status_text(tid, "alice")
+
+
+def test_deliberate_proposed_owners_do_not_require_edit_permission(tmp_path: Path) -> None:
+    svc, tid, teams, _ = _setup(tmp_path)
+    teams.update_team(tid, mode="deliberate", lead="alice")
+    svc._can_edit = lambda *_: False
+    proposed = svc.propose(tid, "alice", "Recommend the change", [
+        {"member": "bob", "part": "Proposed owner", "files": ["src/auth.py"]}])
+    assert proposed.payload["assignments"][0]["files"] == ["src/auth.py"]
+    teams.close_proposal(tid, proposed.seq, "withdrawn")
+    with pytest.raises(TeamInputError, match="outside"):
+        svc.prepare_propose(tid, "alice", "Unsafe owner", [
+            {"member": "bob", "part": "Proposed owner", "files": ["../escape.py"]}])

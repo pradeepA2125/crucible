@@ -66,6 +66,10 @@ class ChildResult:
     report: str  # the full report, never truncated (D8)
     files_changed: list[str]
     stale_refusals: int = 0
+    team_fields: dict[str, object] | None = None
+    team_run_id: int | None = None
+    team_activation_kind: str = "lifecycle"
+    team_request_seq: int | None = None
 
 
 @dataclass(eq=False)
@@ -95,6 +99,11 @@ class AgentHandle:
     # the round deadline clock pauses for both (spec v2 §8.3).
     gate_wait_s: float = 0.0
     waiting_since: datetime | None = None
+    team_run_id: int | None = None
+    team_activation_kind: str = "lifecycle"
+    team_request_seq: int | None = None
+    team_phase: str | None = None
+    team_fields: dict[str, object] | None = None
 
     @property
     def agent_id(self) -> str:

@@ -8,10 +8,13 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 TEAM_PHASES: tuple[str, ...] = (
-    "DELIBERATING", "AWAITING_APPROVAL", "IMPLEMENTING", "REVIEWING", "DEADLOCKED", "PAUSED",
+    "DELIBERATING", "FINALIZING", "AWAITING_APPROVAL", "IMPLEMENTING", "REVIEWING",
+    "DEADLOCKED", "PAUSED",
     "DONE", "DISBANDED", "FAILED")
-LIVE_TEAM_PHASES = frozenset(TEAM_PHASES[:6])
-POST_KINDS = frozenset({"post", "proposal", "agree", "object", "withdraw", "system"})
+LIVE_TEAM_PHASES = frozenset({"DELIBERATING", "FINALIZING", "AWAITING_APPROVAL",
+                              "IMPLEMENTING", "REVIEWING", "DEADLOCKED", "PAUSED"})
+POST_KINDS = frozenset({
+    "post", "proposal", "agree", "object", "withdraw", "system", "result", "report"})
 
 
 def new_team_id() -> str:
@@ -24,6 +27,16 @@ class TeamRecord(BaseModel):
     name: str
     goal: str
     phase: str = "DELIBERATING"
+    mode: str | None = None  # None preserves historical team behavior
+    deliverable_kind: str | None = None
+    deliverable_description: str | None = None
+    run_id: int = 1
+    run_request_start: int = 0
+    result_seq: int | None = None
+    pending_lead_request_seq: int | None = None
+    lead_exchange_status: str | None = None
+    resume_phase: str | None = None
+    result_notice_pending: bool = False
     paused_reason: str | None = None
     round: int = 1
     max_rounds: int
@@ -58,6 +71,8 @@ class TeamMember(BaseModel):
     label: str
     in_quorum: bool = True
     delivered_seq: int = 0
+    private_delivered_seq: int = 0
+    pending_start_json: dict[str, Any] | None = None
     assignment: dict[str, Any] | None = None
     assignment_done: bool = False
     reprompted: bool = False

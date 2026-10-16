@@ -42,8 +42,8 @@ export function TeamPlanGate({ gateId, taskId, payload }: Props) {
   return (
     <CardShell
       icon="check"
-      title={`Team ${team} adopted ${proposal} — approve the plan?`}
-      subtitle="The members implement it after you approve"
+      title={`Team ${team} · ${proposal} — approve implementation?`}
+      subtitle={`Execute this plan${typeof payload.run_id === "number" ? ` · run ${payload.run_id}` : ""}`}
       borderColor="var(--accent-brd)"
       headerTint="var(--accent-bg)"
     >
@@ -66,7 +66,7 @@ export function TeamPlanGate({ gateId, taskId, payload }: Props) {
             placeholder="What should the team change? (sends the plan back for another round)"
             className="w-full resize-y rounded-control border border-border bg-panel px-2 py-1 text-meta" />
           <div className="flex flex-wrap items-center gap-1.5">
-            <BtnPrimary onClick={() => decide("approve")}>Approve</BtnPrimary>
+            <BtnPrimary onClick={() => decide("approve")}>Approve implementation</BtnPrimary>
             <BtnGhost onClick={() => decide("feedback")}>Send feedback</BtnGhost>
             <BtnDanger onClick={() => decide("reject")}>Reject</BtnDanger>
           </div>

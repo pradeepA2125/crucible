@@ -1,5 +1,5 @@
 import { isTerminalAgent } from "../../agents";
-import { isTerminalTeam, roundProgressText, teamPhaseText } from "../../teams";
+import { hasTeamExchange, isTerminalTeam, roundProgressText, teamPhaseText } from "../../teams";
 import { useAgentsUi } from "../agents/AgentsContext";
 import { useNow } from "../agents/useNow";
 import { Avatar } from "./Avatar";
@@ -10,7 +10,7 @@ import { useTeamsUi } from "./TeamsContext";
 export function TeamStrip() {
   const teamsUi = useTeamsUi();
   const agentsUi = useAgentsUi();
-  const live = Object.values(teamsUi.teams).filter((t) => !isTerminalTeam(t.phase));
+  const live = Object.values(teamsUi.teams).filter((t) => !isTerminalTeam(t.phase) || hasTeamExchange(t));
   const working = live.some((t) => t.members.some(
     (m) => !isTerminalAgent(agentsUi.agents[m.agentId]?.status ?? m.status)));
   const now = useNow(working);

@@ -310,7 +310,7 @@ def test_the_notice_hint_names_the_action_that_ends_the_turn() -> None:
 
 def test_the_notice_hint_says_the_notice_already_has_the_team_state() -> None:
     text = _notice_instruction()
-    assert "do not call team_status" in text
+    assert "do not poll team_status" in text
     assert "only when the notice asks" in text and "post_board" in text
 
 

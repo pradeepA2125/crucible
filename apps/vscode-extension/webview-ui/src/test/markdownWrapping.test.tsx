@@ -14,6 +14,7 @@ import { TeamsContext, type TeamsUi } from "../components/teams/TeamsContext";
 import { HandedPost, MemberView } from "../components/teams/MemberView";
 import type { TeamPostView } from "../types";
 import { PostBody } from "../components/teams/PostBody";
+import { ResultCard } from "../components/teams/ResultCard";
 
 // No browser dependency/download: CI can point CHROME_BIN at installed Chromium.
 const chrome = process.env.CHROME_BIN ?? [
@@ -47,11 +48,17 @@ const memberAgents = {
 } as unknown as AgentsUi;
 
 describe.skipIf(!chrome)("markdown wrapping in a real browser", () => {
-  for (const surface of ["board", "agent", "handed", "member"] as const) {
+  for (const surface of ["board", "agent", "handed", "member", "result"] as const) {
     it(`${surface} wraps prose, paths, and code without widening nested grids or flex boxes`, async () => {
       // Measure the full disclosed post, including long paths and later lines.
       let handedMarkup = "";
-      if (surface === "handed") {
+      if (surface === "result") {
+        const result = render(<ResultCard roster={["design"]} post={{ ...memberPost,
+          kind: "result", author: "design", payload: { deliverable_kind: "plan", outcome: "actionable", run_id: 1 } }} />);
+        fireEvent.click(result.getByRole("button", { name: "Show more of Plan ready by design" }));
+        handedMarkup = result.container.innerHTML;
+        result.unmount();
+      } else if (surface === "handed") {
         const handed = render(<HandedPost reference="#1" roster={["design"]} post={{ author: "main", text: message } as TeamPostView} />);
         fireEvent.click(handed.getByRole("button", { name: "Show more of handed post #1" }));
         handedMarkup = handed.container.innerHTML;
