@@ -31,6 +31,6 @@ Open http://127.0.0.1:4175/. The prior http://127.0.0.1:4175/.impeccable/prototy
 
 Cloudflare Pages deploys the `landing/` build from the repository's production branch. GitHub's tagged extension release workflow is separate and does not promote a prototype into this page.
 
-The build typechecks the shared Axon modules and packages both entry points. TypeScript constructor parameter properties are enabled for the shared renderer. Its lazy WebGL chunk can exceed Vite's 500 kB warning threshold; it is requested only when the visitor activates 3D.
+The build typechecks the shared Axon modules and packages both entry points. TypeScript constructor parameter properties are enabled for the shared renderer. Type paths and Vite's Three.js deduplication resolve the renderer's dependency from `landing/node_modules`, including in Cloudflare's standalone install. Its lazy WebGL chunk can exceed Vite's 500 kB warning threshold; it is requested only when the visitor activates 3D.
 
 Promotion checks covered both built URLs, 1440/390/320 px layouts without horizontal overflow, agent dispatch and team controls, rewind preview/restore, pause/resume, reduced motion with no running animations, local anchors, and Axon file tracing, symbols and recording playback. No page JavaScript errors were observed. These checks are not a cross-browser or physical-device GPU certification.

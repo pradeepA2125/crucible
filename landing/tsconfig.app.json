@@ -7,6 +7,11 @@
     "types": ["vite/client"],
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
+    /* Shared Axon source must resolve types from the standalone landing install. */
+    "paths": {
+      "three": ["./node_modules/@types/three"],
+      "three/addons/*": ["./node_modules/@types/three/examples/jsm/*"]
+    },
 
     /* Bundler mode */
     "moduleResolution": "bundler",

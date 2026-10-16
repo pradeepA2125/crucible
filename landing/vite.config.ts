@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // The shared Axon renderer lives outside landing's dependency tree.
+  resolve: { dedupe: ["three"] },
   build: {
     rolldownOptions: {
       input: {
