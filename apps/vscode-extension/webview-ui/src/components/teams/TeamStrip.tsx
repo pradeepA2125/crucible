@@ -16,7 +16,7 @@ export function TeamStrip() {
   const now = useNow(working);
   if (live.length === 0) return null;
   return (
-    <div className="grid gap-1.5 px-3 pt-2">
+    <div className="mx-auto grid min-w-0 w-full max-w-[760px] flex-shrink-0 gap-1.5 px-4 pt-2">
       {live.map((team) => {
         const roster = team.members.map((m) => m.label);
         const progress = roundProgressText(team.roundProgress, team, agentsUi.agents, now);
@@ -24,8 +24,8 @@ export function TeamStrip() {
           <div key={team.teamId} data-testid={`team-strip-${team.teamId}`}
             className="surface-card flex min-w-0 items-center gap-2 px-2.5 py-1.5 text-[11.5px]">
             <Avatar label="main" roster={roster} size="sm" />
-            <span className="truncate font-semibold text-text">{team.name}</span>
-            <span className="min-w-0 truncate text-text-2">· {progress?.text ?? teamPhaseText(team)}</span>
+            <span className="min-w-0 max-w-[30%] truncate font-semibold text-text" title={team.name}>{team.name}</span>
+            <span className="min-w-0 flex-1 truncate text-text-2">· {progress?.text ?? teamPhaseText(team)}</span>
             <span className="ml-auto flex flex-none items-center gap-0.5">
               {team.members.map((m) => (
                 <Avatar key={m.agentId} label={m.label} roster={roster} size="sm"
