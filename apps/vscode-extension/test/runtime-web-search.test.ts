@@ -12,7 +12,7 @@ describe.each([
   it.each([undefined, true, false])("wires an explicit %s setting into spawn defaults", (value) => {
     getConfiguration.mockReturnValue({
       inspect: (setting: string) => setting === key ? { globalValue: value } : undefined,
-      get: (setting: string) => setting === key ? value : undefined,
+      get: (setting: string, fallback?: unknown) => setting === key ? value : fallback,
     });
     // This pure mapper uses only VS Code configuration; avoid constructing runtime services.
     const mapper = RuntimeManager.prototype as unknown as {

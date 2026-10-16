@@ -13,7 +13,7 @@ describe.each([
   it.each([undefined, true, false])("preserves opt-in setting %s", (value) => {
     getConfiguration.mockReturnValue({
       inspect: (setting: string) => setting === key ? { globalValue: value } : undefined,
-      get: (setting: string) => setting === key ? value : undefined,
+      get: (setting: string, fallback?: unknown) => setting === key ? value : fallback,
     });
     const mapper = RuntimeManager.prototype as unknown as {
       extraEnvFromSettings(): Record<string, string>;

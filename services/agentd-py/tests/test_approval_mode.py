@@ -193,7 +193,10 @@ async def test_child_command_permission_matrix_and_live_policy(
         return ApprovalOutcome.allow()
 
     monkeypatch.setattr(ctrl, "_command_approval_cb", gate)
-    child = SimpleNamespace(thread_id=tid, context=SimpleNamespace(no_ask=permission == "dontAsk"))
+    child = SimpleNamespace(
+        agent_id="child", thread_id=tid,
+        context=SimpleNamespace(no_ask=permission == "dontAsk"),
+    )
     tools = child_tool_names(
         ["run_command"], definition_tools=None, permission=permission, may_dispatch=False
     )
