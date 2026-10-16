@@ -20,7 +20,7 @@ jobs:
           python -m venv .venv && . .venv/bin/activate
           pip install -e .[dev]
           pytest
-      - run: cd services/indexer-rs && cargo test
+      - run: cd services/indexer-rs && cargo test --locked
 
   indexer:
     needs: test
@@ -40,9 +40,9 @@ jobs:
       - if: matrix.target != ''
         run: rustup target add ${{ matrix.target }}
       - if: matrix.target == ''
-        run: cd services/indexer-rs && cargo build --release
+        run: cd services/indexer-rs && cargo build --release --locked
       - if: matrix.target != ''
-        run: cd services/indexer-rs && cargo build --release --target ${{ matrix.target }}
+        run: cd services/indexer-rs && cargo build --release --locked --target ${{ matrix.target }}
       - name: stage binary (posix, native)
         if: runner.os != 'Windows' && matrix.target == ''
         run: |
