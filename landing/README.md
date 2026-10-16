@@ -1,48 +1,36 @@
 # Crucible — landing page
 
-Standalone React/TypeScript/Vite site, outside the `apps/*` workspace.
+Standalone React/TypeScript/Vite site, outside the `apps/*` workspace. Cloudflare Pages builds this directory with `npm run build` and serves `dist/` at https://crucible-ai.pages.dev/.
 
-## Direction: the shape of an edit
+## Production source
 
-An original procedural Three.js sculpture accompanies an editorial scroll story:
-understand the repository, collaborate, then move accepted patches from shadow
-staging into the working tree. Three interwoven tubular forms separate and rotate
-with scroll, then converge. This is a product metaphor, not a live repository graph.
-No third-party template code, models, textures or video were copied.
+`src/experience/` contains the approved product page: the dependency-space hero, illustrated background agents, team room, rewind checkpoints, provider choices, context, and the interactive Axon demonstration. `src/App.tsx` exports this page. The rejected sculpture design is no longer connected to the production entry.
 
-The existing Space Grotesk / Instrument Serif / JetBrains Mono typography and
-violet, cyan and ember accents are retained. A light/dark toggle starts from the
-system preference. Product copy follows the root README, including the experimental
-Claude subscription path and the distinction between patch staging and sandboxing.
+The historical `.impeccable/prototype/` URL imports the same App. Both HTML entries are built, so local previews and production use the same implementation and assets rather than diverging designs.
 
-## Motion and fallback
+## Assets and motion
 
-- Lazy-loaded React Three Fiber scene; demand rendering (no idle animation loop).
-- Three procedural meshes, capped 1.5 device pixel ratio, no shadows or postprocessing.
-- Scroll updates transform the sculpture; the footer can pause/resume updates.
-- Reduced motion skips the Canvas entirely and uses a static CSS sculpture.
-- Missing WebGL2, context loss or a scene error retains the static fallback.
-- Decorative geometry is hidden from assistive technology; all content is HTML.
-- Skip link, visible keyboard focus, native links/select/buttons and narrow layouts.
+Fonts are served locally. The hero graph is illustrative; the Axon section lazy-loads the actual product renderer with a captured, sanitized repository subset. Its poster and recording are renderer demonstrations, not recordings of the editor UI. Graph metadata excludes source bodies, absolute paths, settings and memory data.
 
-## Local preview (existing dependencies)
+Native scrolling drives the illustrations. Pause and reduced-motion controls retain static content. The interactive Axon scene activates explicitly and disposes while offscreen, hidden or paused. Installation, source and documentation use ordinary links; illustrative feature controls do not change a real workspace.
+
+## Local preview
+
+Use Node.js 22.12+ or the configured newer runtime:
 
 ```bash
 cd landing
-npm run lint
+npm ci
 npm run build
-npm run preview -- --host 127.0.0.1 --port 4173 --strictPort
+npm run preview -- --host 127.0.0.1 --port 4175 --strictPort
 ```
 
-Open http://127.0.0.1:4173/ and scroll through the first four chapters. Stop with
-Ctrl-C. For development, use `npm run dev -- --host 127.0.0.1`.
+Open http://127.0.0.1:4175/. The prior http://127.0.0.1:4175/.impeccable/prototype/ URL serves the same page. Stop the preview with Ctrl-C. For development, run `npm run dev -- --host 127.0.0.1`.
 
-## Verification notes
+## Deployment and validation
 
-Production build and lint pass. Lint reports an existing Fast Refresh export warning
-in `src/theme.tsx`; Vite reports a large lazy Three.js chunk (~903 kB / 243 kB gzip).
-Browser smoke checks covered 1440, 390 and 320 px widths without horizontal overflow,
-theme switching, scroll-driven pixel changes, pause/resume labeling, keyboard skip
-navigation, reduced-motion Canvas removal and simulated unavailable WebGL fallback.
-This is not a full screen-reader audit, cross-browser matrix or physical-device GPU
-benchmark. Fonts retain the existing Google Fonts request and system fallbacks.
+Cloudflare Pages deploys the `landing/` build from the repository's production branch. GitHub's tagged extension release workflow is separate and does not promote a prototype into this page.
+
+The build typechecks the shared Axon modules and packages both entry points. TypeScript constructor parameter properties are enabled for the shared renderer. Its lazy WebGL chunk can exceed Vite's 500 kB warning threshold; it is requested only when the visitor activates 3D.
+
+Promotion checks covered both built URLs, 1440/390/320 px layouts without horizontal overflow, agent dispatch and team controls, rewind preview/restore, pause/resume, reduced motion with no running animations, local anchors, and Axon file tracing, symbols and recording playback. No page JavaScript errors were observed. These checks are not a cross-browser or physical-device GPU certification.

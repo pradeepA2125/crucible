@@ -1,5 +1,7 @@
 # Axon and repository intelligence: review-only addition
 
+Promotion status (2026-10-16): this demonstration now ships in the production landing page from `landing/src/experience/`. The prototype URL loads the same component. The review-only scope below describes the earlier implementation stage.
+
 Owner explicitly wants the Rust indexer and Axon celebrated, preserving the accepted original-inspired page and its motion. Axon is an established capability, not relabeled a post-v0.5.4 addition.
 
 ## Verified product truth

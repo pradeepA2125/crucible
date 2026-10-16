@@ -1,5 +1,7 @@
 # Motion pass: one intention travels through the work
 
+Promotion status (2026-10-16): the approved motion now ships from `landing/src/experience/`. The production boundary described below is historical; the prototype entry and public landing page use the same implementation.
+
 Owner asks for ambitious scroll animations and block-end transitions; do not reduce scope based on unverified token estimates. Keep the original-inspired typography, illustrated feature scenes, actual feature claims and review-only production boundary.
 
 FOCAL MOMENT: a brief reaches the specialist characters; their perspectives converge into the shared team office. The room assembles over a short desktop scroll runway; desks resolve around a shared proposal, connection lines trace the handoff, and a checkpoint ticket leads into rewind. Rewind reverses a cursor across captured checkpoints and draws its return arrow. No fictional live session or actual file restoration is implied.

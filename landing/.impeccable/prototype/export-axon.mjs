@@ -32,7 +32,7 @@ for (const star of model.stars) {
 // Internal source IDs can contain absolute paths. Replace with stable demo-local ids.
 for (const detail of Object.values(details)) detail.symbols.forEach((s, i) => { s.id = detail.fileId + '#symbol-' + i; });
 const output = { model, details, provenance: { source: 'Existing Rust-indexer snapshot of tracked Crucible source files', capturedAt: new Date(snapshot.generated_at_ms).toISOString(), excludes: 'Tests, fixtures, untracked files, source text, diagnostics, absolute paths and all memory data', note: 'Captured subset, not a live index or a performance benchmark' } };
-const out = path.join(root, 'landing/.impeccable/prototype/assets/axon-capture.json');
+const out = path.join(root, 'landing/src/experience/assets/axon-capture.json');
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, JSON.stringify(output));
 console.log(JSON.stringify({ output: path.relative(root, out), files: model.stars.length, packages: model.packages.length, bundles: model.bundles.length, bytes: fs.statSync(out).size }));

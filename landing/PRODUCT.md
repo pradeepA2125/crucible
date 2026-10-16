@@ -39,14 +39,15 @@ Existing React/Vite code and dependencies establish the website stack. Preserve 
 
 ## Brand Commitments
 
-The product name is Crucible. Existing logo assets are available in `public/crucible.svg` and `../docs/media/`. The rejected procedural ring composition is not an approved brand asset. The owner requested fluidic, cinematic 3D/scroll motion, then rejected the current ring design; visual direction remains to be chosen before implementation.
+The product name is Crucible. Existing logo assets are available in `public/crucible.svg` and `../docs/media/`. The approved direction uses the dependency-space hero, illustrated specialists and team room, rewind story, and actual Axon renderer demonstration. The owner requested its promotion to the public landing page on 2026-10-16. Preserve that composition and motion; the rejected procedural ring design is not an approved brand asset.
 
 ## Evidence on Hand
 
 - `../README.md`: current feature and installation descriptions.
 - `../docs/media/`: actual product captures, logo assets and Axon recording. The README identifies earlier captures as historical; do not present them as verified screenshots of the current interface.
 - `../apps/vscode-extension/` and `../services/`: implementation evidence.
-- `src/`: incumbent landing implementation, which the owner rejected.
+- `src/experience/`: canonical approved landing page and its locally served fonts, graph capture, poster and recording.
+- `.impeccable/prototype/`: compatibility entry for the same production page, plus historical design notes. Do not maintain a separate design here.
 
 No verified testimonials, customer logos, speed multipliers, user counts or comparative benchmark results have been supplied for this website.
 

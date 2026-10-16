@@ -1,5 +1,7 @@
 # Feature story since v0.5.4
 
+Promotion status (2026-10-16): the owner requested this completed design as the public landing page. Its canonical implementation is now `landing/src/experience/`; earlier review-only constraints below describe the historical design stage.
+
 Baseline: actual tag v0.5.4 peels to dfd083abb321e1592066a5c356c8f4ad368a6adb. Current HEAD is 0137929. This compares source capabilities, not published release entitlement. No new release is announced. Owner likes the original-inspired visual direction; requests newer feature emphasis, character illustrations, office-like teamwork, rewind and better on-page destinations. Production replacement remains unapproved.
 
 ## Lead stories and visual treatments

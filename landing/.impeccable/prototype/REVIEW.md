@@ -1,6 +1,6 @@
 # Review-only proposal: A world behind every edit
 
-Status: awaiting owner review. All five prior directions were rejected. This prototype does not approve or replace landing/src/App.tsx. Original reference is HEAD 0137929, not the ring backup. Task-local reference, not a standing preference.
+Status: promoted to the production landing page on 2026-10-16 at the owner's request. The canonical implementation is `landing/src/experience/`, loaded by both the root page and this compatibility entry. The review-only constraints below record the earlier design stage and are superseded by this promotion.
 
 ## Direction contract
 THESIS: Recover the original immersive Crucible experience and make the dependency space reveal repository evidence, delegation and a checked patch. Refuse a generic card grid, flat architecture slide or detached sculpture.
