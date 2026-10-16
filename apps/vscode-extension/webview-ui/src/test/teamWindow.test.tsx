@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
@@ -204,21 +204,27 @@ describe("TeamWindow board", () => {
 });
 
 describe("ThreadView team wiring", () => {
-  it("Open board opens the window, reports the open team, and a member tab joins the open agents", () => {
+  it("keeps expansion after main ends, opens the board, and subscribes to its member tab", () => {
     const state = {
       view: "thread", threads: [], activeThreadId: "t", streaming: null, thinkingStatus: null,
       inputEnabled: true, liveGates: [], livePlan: null, liveReview: null, liveError: null,
       contextUsage: null, contextUsageStale: false,
       liveTodos: null, providerAccess: null, threadUsage: null, liveSessions: null, sessionTranscripts: {}, workbar: null,
       retryStatus: null, tokenProgress: null, editFailure: null, liveStatus: null,
-      turnActive: false, turnKind: null, queuedIds: [], agentsRunning: 0, planMode: false, stepReview: true,
+      turnActive: true, turnKind: null, queuedIds: [], agentsRunning: 0, planMode: false, stepReview: true,
       agents: {}, agentViews: {}, teams: { "team-1": TEAM }, teamViews: {},
       messages: [{ role: "agent", content: "", type: "team_created", timestamp: "t",
                    metadata: { team_id: "team-1", name: "auth", agent_ids: ["agent-r", "agent-i"] } }],
     } as AppState;
-    render(<ThreadView state={state} onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+    const view = render(<ThreadView state={state} onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Expand auth" }));
+    view.rerender(<ThreadView state={{ ...state, turnActive: false }} onBack={() => {}}
+      dismissedErrorTaskId={null} onDismissError={() => {}} />);
+    const inline = within(screen.getByTestId("team-strip-team-1"));
+    expect(inline.getByTestId("team-card")).toBeInTheDocument();
+    expect(inline.getByRole("button", { name: "Minimize auth" })).toHaveAttribute("aria-expanded", "true");
     expect(postMessage).toHaveBeenCalledWith({ type: "setOpenTeams", teamIds: [] });
-    act(() => { screen.getByRole("button", { name: "Open board" }).click(); });
+    act(() => { inline.getByRole("button", { name: "Open board" }).click(); });
     expect(screen.getByRole("dialog", { name: "Team auth" })).toBeInTheDocument();
     expect(postMessage).toHaveBeenCalledWith({ type: "setOpenTeams", teamIds: ["team-1"] });
     act(() => { screen.getByRole("tab", { name: /review/ }).click(); });

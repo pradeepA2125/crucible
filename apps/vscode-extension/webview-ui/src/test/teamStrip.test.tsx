@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -6,6 +6,7 @@ vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
 
 import { AgentsContext, type AgentsUi } from "../components/agents/AgentsContext";
 import { TeamStrip } from "../components/teams/TeamStrip";
+import { TeamCard } from "../components/teams/TeamCard";
 import { TeamsContext, type TeamsUi } from "../components/teams/TeamsContext";
 import { teamPhaseText } from "../teams";
 import type { AgentSummaryView, TeamSummaryView } from "../types";
@@ -29,8 +30,13 @@ function wrap(node: ReactNode, teams: Record<string, TeamSummaryView>) {
     views: {}, expanded: new Set(), toggleExpanded: vi.fn(), openWindow: vi.fn(),
   };
   const teamsUi: TeamsUi = { teams, views: {}, openTeam: vi.fn() };
-  render(<AgentsContext.Provider value={agentsUi}><TeamsContext.Provider value={teamsUi}>{node}</TeamsContext.Provider></AgentsContext.Provider>);
-  return teamsUi;
+  const tree = (nextTeams = teams, nextAgents = agentsUi.agents) => (
+    <AgentsContext.Provider value={{ ...agentsUi, agents: nextAgents }}>
+      <TeamsContext.Provider value={{ ...teamsUi, teams: nextTeams }}>{node}</TeamsContext.Provider>
+    </AgentsContext.Provider>);
+  const view = render(tree());
+  return { ...teamsUi, update: (nextTeams: Record<string, TeamSummaryView>, nextAgents = agentsUi.agents) =>
+    view.rerender(tree(nextTeams, nextAgents)) };
 }
 
 describe("the pinned team strip", () => {
@@ -54,6 +60,50 @@ describe("the pinned team strip", () => {
   it("renders nothing without a live team", () => {
     const { container } = render(<TeamStrip />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("expands into the live card, keeps updating and opens the board without minimizing", () => {
+    const ui = wrap(<TeamStrip />, { "team-1": TEAM });
+    expect(screen.queryByTestId("team-card")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Expand deadlock-check" }));
+    expect(screen.getByTestId("team-card")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Minimize deadlock-check" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Minimize deadlock-check" })).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Open board" }));
+    expect(ui.openTeam).toHaveBeenCalledExactlyOnceWith("team-1");
+    expect(screen.getByTestId("team-card")).toBeInTheDocument();
+
+    ui.update({ "team-1": { ...TEAM, phase: "FINALIZING", roundProgress: null,
+      mode: "deliberate", deliverable: { kind: "diagnosis", description: "Investigate" },
+      latest: { kind: "post", label: "impl", text: "Found the cause", at: new Date().toISOString() } } },
+      { a: row("a", "review", "completed"), b: { ...row("b", "impl", "running"), now: "Reading source" } });
+    expect(screen.getByTestId("team-card")).toHaveTextContent("Finalizing recommendation");
+    expect(screen.getByTestId("team-card")).toHaveTextContent("Reading source");
+    expect(screen.getByTestId("team-card")).toHaveTextContent("Found the cause");
+    fireEvent.click(screen.getByRole("button", { name: "Minimize deadlock-check" }));
+    expect(screen.queryByTestId("team-card")).toBeNull();
+    expect(screen.getByRole("button", { name: "Expand deadlock-check" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Expand deadlock-check" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps teams' expansion independent", () => {
+    wrap(<TeamStrip />, { "team-1": TEAM,
+      "team-2": { ...TEAM, teamId: "team-2", name: "other" } });
+    fireEvent.click(screen.getByRole("button", { name: "Expand deadlock-check" }));
+    expect(within(screen.getByTestId("team-strip-team-1")).getByTestId("team-card")).toBeInTheDocument();
+    expect(within(screen.getByTestId("team-strip-team-2")).queryByTestId("team-card")).toBeNull();
+    expect(screen.getByRole("button", { name: "Expand other" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("retains expanded paused work, then removes only the pinned card on Done", () => {
+    const ui = wrap(<><TeamCard teamId="team-1" agentIds={["a", "b"]} /><TeamStrip /></>, { "team-1": TEAM });
+    fireEvent.click(screen.getByRole("button", { name: "Expand deadlock-check" }));
+    expect(screen.getAllByTestId("team-card")).toHaveLength(2);
+    ui.update({ "team-1": { ...TEAM, phase: "PAUSED", pausedReason: "budget", roundProgress: null } });
+    expect(within(screen.getByTestId("team-strip-team-1")).getByTestId("team-card")).toHaveTextContent("budget");
+    ui.update({ "team-1": { ...TEAM, phase: "DONE", roundProgress: null } });
+    expect(screen.queryByTestId("team-strip-team-1")).toBeNull();
+    expect(screen.getAllByTestId("team-card")).toHaveLength(1);
   });
 
   it("phase wording", () => {

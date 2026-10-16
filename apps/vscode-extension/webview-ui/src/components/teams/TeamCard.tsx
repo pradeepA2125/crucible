@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { isTerminalAgent } from "../../agents";
 import { countsText, latestText, memberPhrase, roundProgressText } from "../../teams";
 import { identityFor } from "../../teamIdentity";
@@ -23,8 +24,8 @@ function placeholder(teamId: string, name: string, agentIds: string[], labels: s
 }
 
 /** A team in the transcript (spec 2026-10-05 §8), anchored by its team_created message. */
-export function TeamCard({ teamId, agentIds, name = "team" }: {
-  teamId: string; agentIds: string[]; name?: string;
+export function TeamCard({ teamId, agentIds, name = "team", headerActions }: {
+  teamId: string; agentIds: string[]; name?: string; headerActions?: ReactNode;
 }) {
   const teamsUi = useTeamsUi();
   const agentsUi = useAgentsUi();
@@ -39,14 +40,15 @@ export function TeamCard({ teamId, agentIds, name = "team" }: {
   return (
     <div className="surface-card overflow-hidden" data-testid="team-card">
       <div className="accent-wash grid gap-2 px-3 py-2.5" style={{ borderBottom: "1px solid var(--color-border)" }}>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <Avatar label="main" roster={roster} size="sm" />
-          <span className="truncate text-[13px] font-semibold text-text">{team.name}</span>
+          <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-text">{team.name}</span>
           <button type="button" onClick={() => teamsUi.openTeam(teamId)}
-            className="ml-auto h-6 cursor-pointer whitespace-nowrap rounded-md border px-2.5 text-[11px] transition-transform duration-150 hover:-translate-y-px"
+            className="ml-auto h-6 flex-none cursor-pointer whitespace-nowrap rounded-md border px-2.5 text-[11px] transition-transform duration-150 hover:-translate-y-px"
             style={{ borderColor: "var(--accent-brd)", color: "var(--color-accent-ink)", background: "var(--accent-bg)" }}>
             Open board
           </button>
+          {headerActions}
         </div>
         <WorkflowBadges team={team} />
         {team.maxRounds > 0 && <PhaseStepper {...team} mini />}

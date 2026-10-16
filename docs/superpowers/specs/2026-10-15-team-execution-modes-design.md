@@ -834,3 +834,15 @@ Resuming finalization without scope changes uses `resume_team` alone. A public b
 after adoption intentionally requests reconsideration and prevents acceptance of the pending
 result; main must not send redundant post-resume closeout reminders. Send necessary scope
 updates before resuming, and use the private lead channel for non-revising questions.
+
+## 16. Inline expansion of the live team strip
+
+The existing strip above the composer starts as a single line per active team. Expand
+replaces that line with the existing rich TeamCard, including live member activity,
+workflow progress and usage. Minimize restores the line; Open board retains the same
+window behavior in either presentation. Expansion is local to each mounted team and
+survives main finishing its turn or the transcript's Worked section collapsing. The
+pinned area has bounded, scrollable height so expanded teams leave the composer usable.
+The normal terminal-team filter removes both presentations on completion; an outstanding
+private lead exchange retains the existing visibility exception until it resolves.
+The original transcript card remains in history. Expansion starts no agent/model calls.
