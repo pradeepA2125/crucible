@@ -226,10 +226,10 @@ These defaults describe the managed VS Code experience; saved settings and expli
 | Controller, skills and MCP | Enabled by managed-runtime environment wiring; a directly launched backend has different defaults |
 | Sub-agents / teams | Enabled in controller config; `CRUCIBLE_SUBAGENTS_ENABLED`, `CRUCIBLE_TEAMS_ENABLED`; teams require sub-agents |
 | Native web fetch / prototype search | Enabled; `crucible.webFetch.enabled`, `crucible.webSearch.enabled` |
-| Scoped durable recall | **Off**; `crucible.memory.experimental.recall` / `CRUCIBLE_MEMORY_RECALL_V2` |
-| Background memory curator | **Off**; `crucible.memory.experimental.curator` / `CRUCIBLE_MEMORY_CURATOR_V2`; requires experimental recall |
-| Capped evidence/sequential compaction | **Off**; `crucible.memory.experimental.compaction` / `CRUCIBLE_MEMORY_COMPACT_EVIDENCE` |
-| Tool batching, adaptive reads, compact context | **Off**; `crucible.performance.toolBatching`, `.adaptiveReads`, `.compactContext` |
+| Scoped durable recall | Enabled; `crucible.memory.experimental.recall` / `CRUCIBLE_MEMORY_RECALL_V2` |
+| Background memory curator | Enabled; `crucible.memory.experimental.curator` / `CRUCIBLE_MEMORY_CURATOR_V2`; requires recall |
+| Capped evidence/sequential compaction | Enabled; `crucible.memory.experimental.compaction` / `CRUCIBLE_MEMORY_COMPACT_EVIDENCE` |
+| Tool batching, adaptive reads, compact context | Enabled; `crucible.performance.toolBatching`, `.adaptiveReads`, `.compactContext` |
 | Separate task subsystem | **Off**; `CRUCIBLE_TASK_SUBSYSTEM`; inline chat is the primary editing path |
 
 Memory/performance/web setting changes require a backend restart as described in Settings. The experimental memory store-path option can select a separate store; enabling experiments is not a migration or quality guarantee.

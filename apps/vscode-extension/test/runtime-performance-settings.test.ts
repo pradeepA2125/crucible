@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { RuntimeManager } from "../src/runtime/vscode-runtime.js";
 import { buildBackendEnv } from "../src/runtime/backend-process.js";
@@ -5,12 +6,21 @@ import { buildBackendEnv } from "../src/runtime/backend-process.js";
 const { getConfiguration } = vi.hoisted(() => ({ getConfiguration: vi.fn() }));
 vi.mock("vscode", () => ({ workspace: { getConfiguration } }));
 
+const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+
 describe.each([
   ["crucible.performance.toolBatching", "CRUCIBLE_TOOL_BATCHING_ENABLED"],
   ["crucible.performance.adaptiveReads", "CRUCIBLE_ADAPTIVE_READS_ENABLED"],
   ["crucible.performance.compactContext", "CRUCIBLE_COMPACT_CONTEXT_ENABLED"],
+  ["crucible.memory.experimental.recall", "CRUCIBLE_MEMORY_RECALL_V2"],
+  ["crucible.memory.experimental.curator", "CRUCIBLE_MEMORY_CURATOR_V2"],
+  ["crucible.memory.experimental.compaction", "CRUCIBLE_MEMORY_COMPACT_EVIDENCE"],
 ])("%s to managed backend", (key, envKey) => {
-  it.each([undefined, true, false])("preserves opt-in setting %s", (value) => {
+  it("advertises the enabled default in VS Code settings", () => {
+    expect(manifest.contributes.configuration.properties[key].default).toBe(true);
+  });
+
+  it.each([undefined, true, false])("enables fresh installs and honors explicit setting %s", (value) => {
     getConfiguration.mockReturnValue({
       inspect: (setting: string) => setting === key ? { globalValue: value } : undefined,
       get: (setting: string, fallback?: unknown) => setting === key ? value : fallback,
@@ -20,6 +30,6 @@ describe.each([
     };
     const extraEnv = mapper.extraEnvFromSettings();
     const env = buildBackendEnv("/ws", { backend: "gemini", model: "m", extraEnv }, "/rt", "darwin-arm64");
-    expect(env[envKey]).toBe(value === undefined ? undefined : String(value));
+    expect(env[envKey]).toBe(value === undefined ? "1" : String(value));
   });
 });

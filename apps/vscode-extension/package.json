@@ -2,7 +2,7 @@
   "name": "crucible-vscode-extension",
   "displayName": "Crucible",
   "description": "Agentic AI pair programmer: spec-first task planning, shadow-workspace patch review, and an inline chat controller — with a managed local runtime (no separate backend setup required).",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "publisher": "crucible-editor",
   "icon": "resources/icon.png",
   "categories": [
@@ -176,19 +176,19 @@
         },
         "crucible.performance.toolBatching": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "machine",
           "description": "Enable multiple tool calls with dependency-aware command/network scheduling. Requires a backend restart."
         },
         "crucible.performance.adaptiveReads": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "machine",
           "description": "Enable larger bounded file reads and request-local result budgets. Requires a backend restart."
         },
         "crucible.performance.compactContext": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "machine",
           "description": "Compact tool catalog JSON and bound repository trees for new chats. Requires a backend restart."
         },
@@ -217,21 +217,21 @@
         },
         "crucible.memory.experimental.recall": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "window",
-          "description": "Enable experimental scoped memory recall and tools for local testing. Requires a backend restart."
+          "description": "Enable experimental scoped memory recall and tools. Enabled by default; requires a backend restart to change."
         },
         "crucible.memory.experimental.curator": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "window",
-          "description": "Enable experimental background memory curation for local testing. Requires experimental recall and a backend restart."
+          "description": "Enable experimental background memory curation. Enabled by default; requires experimental recall and a backend restart to change."
         },
         "crucible.memory.experimental.compaction": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "window",
-          "description": "Enable experimental capped evidence and sequential compaction folds for local testing. Requires a backend restart."
+          "description": "Enable experimental capped evidence and sequential compaction folds. Enabled by default; requires a backend restart to change."
         },
         "crucible.memory.experimental.storePath": {
           "type": "string",

@@ -78,6 +78,10 @@ describe("buildBackendEnv", () => {
     expect(env.GEMINI_API_KEY).toBe("sk-secret");
     expect(env.CRUCIBLE_RIPGREP_CMD).toBe("/rt/bin/rg");
     expect(env.CRUCIBLE_CHAT_CONTROLLER).toBe("1");
+    expect(env.CRUCIBLE_TASK_SUBSYSTEM).toBe("0");
+    expect(env.CRUCIBLE_SHELL_POLICY).toBe("ask");
+    expect(env.CRUCIBLE_SCOPE_POLICY).toBe("ask");
+    expect(env.CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT).toBe("false");
     expect(env.CRUCIBLE_EXEC_SESSIONS_ENABLED).toBe("1");
     expect(env.CRUCIBLE_PROVIDER_MAX_RPM).toBe("35");
     expect(env.CRUCIBLE_DB_PATH).toBe(join("/ws", ".crucible/state", "agentd.sqlite3"));
