@@ -375,8 +375,24 @@ export const TeamWorkflowSchema = z.object({
 });
 export type TeamWorkflow = z.infer<typeof TeamWorkflowSchema>;
 
+const TeamPresentationSchema = z.object({
+  latest: z.object({
+    kind: z.enum(["post", "activity"]), label: z.string(), text: z.string(), at: z.string(),
+    event: z.string().optional(), status: z.string().nullable().optional(),
+  }).nullable().default(null),
+  counts: z.object({
+    posts: z.number(),
+    proposals: z.array(z.object({ id: z.string(), agree: z.number(), object: z.number(),
+                                  pending: z.number() })),
+  }).default({ posts: 0, proposals: [] }),
+  roundProgress: z.object({
+    round: z.number(), members: z.array(z.string()), reported: z.array(z.string()),
+  }).nullable().default(null),
+});
+
 export const TeamSummarySchema = z.object({
   ...TeamWorkflowSchema.shape,
+  ...TeamPresentationSchema.shape,
   teamId: z.string(),
   name: z.string(),
   // The member who alone proposes (spec 2026-10-07 lead proposer); null for older teams.
@@ -418,6 +434,7 @@ export type TeamDetail = z.infer<typeof TeamDetailSchema>;
 // /live carries only slow-changing team fields (the dedup signature must not churn).
 export const TeamLiveSchema = z.object({
   ...TeamWorkflowSchema.shape,
+  ...TeamPresentationSchema.shape,
   teamId: z.string(),
   name: z.string(),
   lead: z.string().nullable().default(null),
@@ -429,19 +446,6 @@ export const TeamLiveSchema = z.object({
     label: z.string(), agentId: z.string(), status: z.string(),
     last: TeamMemberLastSchema.nullable().default(null),
   })),
-  latest: z.object({
-    kind: z.enum(["post", "activity"]), label: z.string(), text: z.string(), at: z.string(),
-    event: z.string().optional(), status: z.string().nullable().optional(),
-  }).nullable().default(null),
-  counts: z.object({
-    posts: z.number(),
-    proposals: z.array(z.object({ id: z.string(), agree: z.number(), object: z.number(),
-                                  pending: z.number() })),
-  }).default({ posts: 0, proposals: [] }),
-  // Who the current round started and who has its final report in (spec 2026-10-05 §9).
-  roundProgress: z.object({
-    round: z.number(), members: z.array(z.string()), reported: z.array(z.string()),
-  }).nullable().default(null),
 });
 export type TeamLive = z.infer<typeof TeamLiveSchema>;
 

@@ -2240,9 +2240,7 @@ class ChatController:
                              "last": _last_view(self._store.teams.latest_activity_for(
                                  team.team_id, m.label))}
                             for m in members],
-                "latest": self._team_latest(team.team_id, posts),
-                "counts": _team_counts(posts, [m.label for m in members]),
-                "round_progress": _round_progress(team, self._store.teams.activity(team.team_id)),
+                **self._team_presentation(team, posts),
             })
         return out
 
@@ -2253,7 +2251,8 @@ class ChatController:
                 "history_revision")
         return {key: summary.get(key) for key in keys}
 
-    def _team_latest(self, team_id: str, posts: list[TeamPost]) -> dict[str, object] | None:
+    def _team_latest(self, team_id: str, posts: list[TeamPost],
+                     activity: list[TeamActivity] | None = None) -> dict[str, object] | None:
         """The card's 'latest' line: the newer of the last board post and the last
         wrapped_up / phase event (spec 2026-10-05 §5.3)."""
         board = [p for p in posts if p.recipient is None]
@@ -2262,7 +2261,8 @@ class ChatController:
             p = board[-1]
             candidates.append({"kind": "post", "label": p.author, "text": p.text[:140],
                                "at": p.created_at.isoformat()})
-        events = [e for e in self._store.teams.activity(team_id)
+        events = [e for e in (activity if activity is not None
+                             else self._store.teams.activity(team_id))
                   if e.kind in ("wrapped_up", "phase")]
         if events:
             e = events[-1]
@@ -2273,6 +2273,21 @@ class ChatController:
                                "status": e.payload.get("status")})
         return max(candidates, key=lambda c: str(c["at"])) if candidates else None
 
+    def _team_presentation(
+        self, team: TeamRecord, posts: list[TeamPost] | None = None,
+        activity: list[TeamActivity] | None = None,
+    ) -> dict[str, object]:
+        """Current card facts for both live updates and durable terminal reads."""
+        posts = posts if posts is not None else self._store.teams.posts(team.team_id)
+        activity = (activity if activity is not None
+                    else self._store.teams.activity(team.team_id))
+        return {
+            "latest": self._team_latest(team.team_id, posts, activity),
+            "counts": _team_counts(
+                posts, [m.label for m in self._store.teams.members(team.team_id)]),
+            "round_progress": _round_progress(team, activity),
+        }
+
     def _member_row_status(self, agent_id: str) -> str:
         record = self._store.get_agent(agent_id)
         return record.status if record is not None else "unknown"
@@ -2280,7 +2295,8 @@ class ChatController:
     def team_summaries(self, thread_id: str) -> list[dict[str, object]]:
         if self._teams is None:
             return []
-        return [{**self._teams.summary(t.team_id), "created_at": t.created_at.isoformat()}
+        return [{**self._teams.summary(t.team_id), **self._team_presentation(t),
+                 "created_at": t.created_at.isoformat()}
                 for t in self._store.teams.list_teams(thread_id)]
 
     def team_detail(self, thread_id: str, team_id: str) -> dict[str, object] | None:
@@ -2290,6 +2306,7 @@ class ChatController:
         posts = self._store.teams.posts(team_id)   # viewer=None: the user sees every post
         activity = self._store.teams.activity(team_id)
         return {**self._teams.summary(team_id), "created_at": team.created_at.isoformat(),
+                **self._team_presentation(team, posts, activity),
                 "posts": [p.model_dump(mode="json") for p in posts],
                 "last_seq": max((p.seq for p in posts), default=0),
                 "activity": [e.model_dump(mode="json") for e in activity],

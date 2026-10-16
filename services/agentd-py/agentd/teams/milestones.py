@@ -11,7 +11,12 @@ from agentd.teams.models import TeamRecord
 def milestone_text(team: TeamRecord, kind: str, data: dict[str, object]) -> tuple[str, str]:
     name = repr(team.name)
     if kind == "recommendation_ready":
-        headline = f"Team {name}: {team.deliverable_kind or 'recommendation'} ready"
+        # A discussion-only follow-up retains its earlier deliverable metadata.
+        # Match the UI's generic result label rather than implying execution is ready.
+        display_kind = ("result" if team.mode == "deliberate"
+                        and team.deliverable_kind == "implementation"
+                        else team.deliverable_kind or "recommendation")
+        headline = f"Team {name}: {display_kind} ready"
         details = [str(data.get("summary", "")), str(data.get("text", "")),
                    f"Outcome: {data.get('outcome')}; "
                    f"selected by: {data.get('selected_by', 'team')}; "

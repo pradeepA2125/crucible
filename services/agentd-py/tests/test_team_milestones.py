@@ -19,6 +19,16 @@ def _team(**over) -> TeamRecord:  # type: ignore[no-untyped-def]
     return TeamRecord(**base)
 
 
+def test_discussion_after_implementation_does_not_announce_execution_ready() -> None:
+    headline, body = milestone_text(
+        _team(mode="deliberate", phase="DONE", deliverable_kind="implementation"),
+        "recommendation_ready", {"summary": "Keep the exact-byte requirement unchanged",
+                                 "outcome": "no_change", "result_seq": 24})
+    assert headline == "Team 'auth': result ready"
+    assert "Keep the exact-byte requirement unchanged" in body
+    assert "Do not implement" in body
+
+
 def test_deadlock_body_lists_counts_and_next_steps() -> None:
     headline, body = milestone_text(_team(), "deadlock", {
         "round": 3, "proposals": [{"id": "P1", "stances": {"alice": "agree", "bob": "none"}}]})

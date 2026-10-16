@@ -835,6 +835,7 @@ export class HttpBackendClient implements BackendTaskClient {
       ? t["open_proposals"] as Record<string, unknown>[] : [];
     return {
       ...HttpBackendClient.toTeamCore(t),
+      ...HttpBackendClient.toTeamPresentation(t),
       goal: t["goal"] ?? "",
       members: members.map((m) => ({ label: m["label"], agentId: m["agent_id"],
                                      status: m["status"] ?? "", name: m["name"] ?? "",
@@ -857,11 +858,9 @@ export class HttpBackendClient implements BackendTaskClient {
 
   private static toTeamLive(t: Record<string, unknown>): Record<string, unknown> {
     const members = Array.isArray(t["members"]) ? t["members"] as Record<string, unknown>[] : [];
-    const latest = t["latest"] as Record<string, unknown> | null | undefined;
-    const counts = t["counts"] as Record<string, unknown> | undefined;
-    const rp = t["round_progress"] as Record<string, unknown> | null | undefined;
     return {
       ...HttpBackendClient.toTeamCore(t),
+      ...HttpBackendClient.toTeamPresentation(t),
       members: members.map((m) => {
         const last = m["last"] as Record<string, unknown> | null | undefined;
         return {
@@ -874,10 +873,16 @@ export class HttpBackendClient implements BackendTaskClient {
           } : null,
         };
       }),
-      latest: latest ?? null,
-      counts: counts ?? { posts: 0, proposals: [] },
+    };
+  }
+
+  private static toTeamPresentation(t: Record<string, unknown>): Record<string, unknown> {
+    const rp = t["round_progress"] as Record<string, unknown> | null | undefined;
+    return {
+      latest: t["latest"] ?? null,
+      counts: t["counts"] ?? { posts: 0, proposals: [] },
       roundProgress: rp ? { round: rp["round"], members: rp["members"] ?? [],
-                            reported: rp["reported"] ?? [] } : null,
+        reported: rp["reported"] ?? [] } : null,
     };
   }
 

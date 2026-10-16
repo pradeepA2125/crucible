@@ -43,6 +43,19 @@ describe("team contracts", () => {
     expect(fetchFn.mock.calls[2][1]).toMatchObject({ method: "POST" });
   });
 
+  it("preserves terminal card facts on summary and detail reads", async () => {
+    const terminal = { ...SUMMARY, phase: "DONE",
+      latest: { kind: "activity", label: "system", text: "DONE", event: "phase", at: "now" },
+      counts: { posts: 10, proposals: [] }, round_progress: null };
+    const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ teams: [terminal] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...terminal, posts: [], last_seq: 10 }) }) });
+    for (const team of [(await c.listTeams("t"))[0], await c.getTeam("t", "team-1")]) {
+      expect(team).toMatchObject({ phase: "DONE", latest: terminal.latest,
+        counts: terminal.counts, roundProgress: null });
+    }
+  });
+
   it("parses a wire post and maps /live teams and the config flag", async () => {
     expect(parseWireTeamPost(POST)).toMatchObject({ teamId: "team-1", seq: 3, refId: "P1" });
     const live = new HttpBackendClient({ baseUrl: "http://x", fetchFn: respond({

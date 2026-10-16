@@ -574,6 +574,21 @@ describe("useAppState", () => {
     expect(result.current.state.teamViews).toEqual({});
   });
 
+  it("replaces stale live card facts when a terminal summary arrives", () => {
+    const { result } = renderHook(() => useAppState());
+    const team = { teamId: "team-1", name: "plan", goal: "g", phase: "FINALIZING", round: 2,
+      maxRounds: 3, pausedReason: null, members: [], openProposals: [],
+      workflowRevision: 7, usage: { requests: 8, budget: 120 }, createdAt: "now",
+      latest: { kind: "activity" as const, label: "system", text: "FINALIZING", at: "before" },
+      counts: { posts: 8, proposals: [] }, roundProgress: { round: 2, members: ["lead"], reported: [] } };
+    act(() => { fireMessage({ type: "renderLiveTeams", teams: [team] }); });
+    act(() => { fireMessage({ type: "renderTeams", teams: [{ ...team, phase: "DONE",
+      workflowRevision: 8, latest: { ...team.latest, text: "DONE", at: "after" },
+      counts: { posts: 10, proposals: [] }, roundProgress: null }] }); });
+    expect(result.current.state.teams["team-1"]).toMatchObject({ phase: "DONE",
+      latest: { text: "DONE" }, counts: { posts: 10 }, roundProgress: null });
+  });
+
   it("appends a roster message once even when it is delivered twice", () => {
     const { result } = renderHook(() => useAppState());
     const message = { role: "agent" as const, content: "", type: "agent_dispatch" as const,

@@ -121,6 +121,27 @@ async def test_detail_carries_activity_and_live_carries_state(tmp_path: Path, mo
 
 
 @pytest.mark.asyncio
+async def test_terminal_reads_replace_live_card_presentation(tmp_path: Path, monkeypatch) -> None:
+    store, ctrl, tid, _ = _seed(tmp_path, monkeypatch)
+    ctrl._teams.record("team-1", "system", "phase", payload={"phase": "FINALIZING"})
+    before = ctrl.live_teams(tid)[0]
+    assert before["latest"]["text"] == "FINALIZING"
+    store.teams.append_post("team-1", author="alice", kind="result", text="Final plan")
+    store.teams.update_team("team-1", phase="DONE")
+    ctrl._teams.record("team-1", "system", "phase", payload={"phase": "DONE"})
+    async with _client(tmp_path, ctrl) as client:
+        listed = (await client.get(f"/v1/chat/threads/{tid}/teams")).json()["teams"][0]
+        detail = (await client.get(f"/v1/chat/threads/{tid}/teams/team-1")).json()
+        live = (await client.get(f"/v1/chat/threads/{tid}/live")).json()
+    assert live["teams"] is None
+    for row in (listed, detail):
+        assert row["phase"] == "DONE"
+        assert row["latest"]["text"] == "DONE"
+        assert row["counts"]["posts"] == before["counts"]["posts"] + 1
+        assert row["round_progress"] is None
+
+
+@pytest.mark.asyncio
 async def test_rewind_refused_while_a_team_is_live(tmp_path: Path, monkeypatch) -> None:
     from types import SimpleNamespace
 

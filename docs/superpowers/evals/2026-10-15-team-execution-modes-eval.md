@@ -19,6 +19,10 @@ Post-implementation independent code review and subsequent fixes are recorded in
 [the review evidence](2026-10-16-team-execution-modes-review.md). The counts below describe
 the initial implementation; that review records the final regression run.
 
+Subsequent real-model testing through the native VS Code UI is recorded in
+[the live UI smoke report](2026-10-16-team-execution-modes-live-ui.md), including the
+completed deliberate-only result, private lead reply, and same-team execution extension.
+
 ## Implemented behavior
 
 - Explicit deliberate, combined and direct-implement modes, plus arbitrary requested
