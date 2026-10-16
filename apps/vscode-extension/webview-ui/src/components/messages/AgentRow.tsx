@@ -1,10 +1,10 @@
-import { useState } from "react";
 import type { ToolEventView } from "../../types";
 import { MarkdownContent } from "../shared/MarkdownContent";
 import { ThinkingBlock } from "../shared/ThinkingBlock";
 import { ActivityLine } from "../activity/ActivityLine";
 import { TeamLinks } from "../teams/TeamLinks";
 import { Icon } from "../Icon";
+import { CopyButton } from "../shared/CopyButton";
 
 interface Props {
   content: string;
@@ -27,7 +27,7 @@ interface Props {
  * progress: a non-terminal mid-turn narration note, rendered as answer prose
  *   (markdown, body size) so it reads as the agent talking between activity lines.
  * normal: plain text, optional streaming caret.
- * Copy button on hover (not while streaming).
+ * Copy below nonempty prose, never over tool rows or streaming content.
  */
 export function AgentRow({
   content,
@@ -40,25 +40,11 @@ export function AgentRow({
   streamingThinkingChunk,
   hideThinkingBlock = false,
 }: Props) {
-  const [copyLabel, setCopyLabel] = useState<"Copy" | "Copied ✓">("Copy");
-
   const thinkEntries = thinkingLog ?? streamingThinkingEntries ?? [];
   const steps = toolEvents ?? [];
 
-  function handleCopy() {
-    const parts = [
-      ...steps.map((t) => t.tool + (t.done ? " ok" : " pending")),
-      content,
-    ].join("\n");
-    navigator.clipboard.writeText(parts).catch(() => {
-      // Clipboard denied; fail silently.
-    });
-    setCopyLabel("Copied ✓");
-    setTimeout(() => setCopyLabel("Copy"), 1200);
-  }
-
   return (
-    <div className="group relative flex flex-col items-stretch">
+    <div className="group/message flex min-w-0 flex-col items-stretch">
       <div className="flex-1 min-w-0 flex flex-col gap-2">
         {/* Thinking block */}
         {!hideThinkingBlock && (thinkEntries.length > 0 || !!streamingThinkingChunk || streaming) && (
@@ -95,24 +81,9 @@ export function AgentRow({
         ) : null}
       </div>
 
-      {/* Copy button on hover — hidden while streaming */}
-      {!streaming && (
-        <button
-          type="button"
-          onClick={handleCopy}
-          className={[
-            "absolute top-0 right-0",
-            "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity duration-150",
-            "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-control text-caption text-text-3 cursor-pointer",
-            "bg-surface-2 border border-border-strong",
-            "hover:text-text hover:border-[var(--accent-brd)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]",
-          ].join(" ")}
-          aria-label="Copy message"
-        >
-          <Icon name="copy" size={10} />
-          {copyLabel}
-        </button>
-      )}
+      {!streaming && content.trim() && <div className="mt-1 flex opacity-0 transition-opacity group-hover/message:opacity-100 group-focus-within/message:opacity-100 [@media(hover:none)]:opacity-100">
+        <CopyButton text={content} ariaLabel="Copy message" />
+      </div>}
     </div>
   );
 }

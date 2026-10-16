@@ -12,6 +12,7 @@ import { ActivityLine } from "../components/activity/ActivityLine";
 import { TransientActivity } from "../components/activity/TransientActivity";
 import { TurnChanges } from "../components/activity/TurnChanges";
 import { AgentRow } from "../components/messages/AgentRow";
+import { QAMessage } from "../components/messages/QAMessage";
 import { UserMessage } from "../components/messages/UserMessage";
 import { MarkdownContent } from "../components/shared/MarkdownContent";
 
@@ -37,6 +38,9 @@ for (const theme of ["vscode", "dark", "light", "hc"] as const) {
               <UserMessage content={`Inspect @${token} and \`retry()\`.`} mentionedFiles={[token]} queued />
               <div data-open-detail dangerouslySetInnerHTML={{ __html: detailMarkup }} />
               <MarkdownContent content={`A plain answer.\n\n${token}\n\nUse \`retry()\`.`} />
+              <div data-copy-message><QAMessage content={`# Answer heading\n\n${token}`} /></div>
+              <div data-copy-message><AgentRow content={`## Answer with tools\n\n${token}`} toolEvents={[event]} /></div>
+              <div data-copy-message><AgentRow content="A short progress message." progress /></div>
               <ActivityLine event={event} />
               <ActivityLine event={{ ...event, id: 2, tool: token }} />
               <TransientActivity startedAt={Date.now()} bubble={{ text: "", thinkingEntries: [], activeThinkingChunk: "", toolEvents: [event] }} />
@@ -72,7 +76,15 @@ for (const theme of ["vscode", "dark", "light", "hc"] as const) {
             const bs = getComputedStyle(bubble), us = getComputedStyle(bubble.querySelector('code')), qs = getComputedStyle(bubble.querySelector('[data-testid="queued-tag"]'));
             const bg = painted(bs.backgroundColor, bs.backgroundColor), codeBg = painted(us.backgroundColor, bs.backgroundColor);
             const detail = panel.querySelector('[data-open-detail]');
+            const copyPlacement = [...panel.querySelectorAll('[data-copy-message]')].map(message => {
+              const prose = message.querySelector('.message-markdown').getBoundingClientRect();
+              const button = message.querySelector('[aria-label="Copy message"]');
+              const r = button.getBoundingClientRect();
+              return r.top >= prose.bottom && r.left >= rect.left && r.right <= rect.right
+                && getComputedStyle(button).position !== 'absolute';
+            });
             return {
+              copyPlacement,
               accent, width: panel.clientWidth, detailOverflow: detail.scrollWidth - detail.clientWidth,
               bubbleContrast: contrast(painted(bs.color, bs.backgroundColor), bg),
               userCodeContrast: contrast(painted(us.color, 'rgb(' + codeBg.join(',') + ')'), codeBg),
@@ -103,6 +115,7 @@ for (const theme of ["vscode", "dark", "light", "hc"] as const) {
             expect(result.bubbleBg).not.toBe("rgba(0, 0, 0, 0)");
             expect(result.bubbleBg).not.toBe(result.bubbleFg);
             expect(result.detailOverflow, `${theme}/${result.accent}, expanded tool details at ${result.width}px`).toBeLessThanOrEqual(1);
+            expect(result.copyPlacement, `copy buttons below prose at ${result.width}px`).toEqual([true, true, true]);
             expect(result.bubbleContrast, `${theme}/${result.accent} bubble`).toBeGreaterThanOrEqual(4.5);
             expect(result.userCodeContrast, `${theme}/${result.accent} inline code`).toBeGreaterThanOrEqual(4.5);
             expect(result.queuedContrast, `${theme}/${result.accent} queued tag`).toBeGreaterThanOrEqual(4.5);

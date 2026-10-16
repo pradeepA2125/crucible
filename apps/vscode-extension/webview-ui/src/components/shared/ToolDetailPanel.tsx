@@ -1,6 +1,7 @@
 import type { ToolEventView } from "../../types";
 import { Icon } from "../Icon";
 import { toolIcon } from "./tool-icon";
+import { CopyButton } from "./CopyButton";
 
 interface Props {
   event: ToolEventView;
@@ -15,6 +16,10 @@ export function ToolDetailPanel({ event }: Props) {
   const icon = toolIcon(event.tool);
   const isError = event.isError === true;
   const outputLineCount = event.output ? event.output.split("\n").length : 0;
+  const args = event.args ?? {};
+  const command = event.tool === "run_command" && typeof args.command === "string"
+    ? args.command : null;
+  const input = command ?? (Object.keys(args).length ? JSON.stringify(args, null, 2) : "");
 
   return (
     <div
@@ -48,11 +53,12 @@ export function ToolDetailPanel({ event }: Props) {
       </div>
 
       <div className="px-[11px] py-2 border-b border-border">
-        <div className="text-caption font-semibold uppercase tracking-widest text-text-4 mb-1.5">
-          INPUT
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1">
+          <span className="text-caption font-semibold uppercase tracking-widest text-text-4">INPUT</span>
+          {input.trim() && <CopyButton text={input} label={command !== null ? "Copy command" : "Copy input"} />}
         </div>
         <div className="min-w-0 [overflow-wrap:anywhere] mono text-caption leading-[1.8]">
-          {Object.entries(event.args ?? {}).map(([k, v]) => (
+          {Object.entries(args).map(([k, v]) => (
             <div key={k}>
               <span className="text-text-3">{k}:</span>{" "}
               <span className="text-accent-ink">
@@ -64,8 +70,9 @@ export function ToolDetailPanel({ event }: Props) {
       </div>
 
       <div className="px-[11px] py-2">
-        <div className="text-caption font-semibold uppercase tracking-widest text-text-4 mb-1.5">
-          OUTPUT
+        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-1">
+          <span className="text-caption font-semibold uppercase tracking-widest text-text-4">OUTPUT</span>
+          {event.output?.trim() && <CopyButton text={event.output} label="Copy output" />}
         </div>
         <pre
           className={[

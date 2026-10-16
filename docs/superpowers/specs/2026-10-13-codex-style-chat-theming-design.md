@@ -214,6 +214,13 @@ The existing Tailwind `@theme` names (`--color-surface`, `--color-text-2` and so
   - The queued tag stays.
 - **Agent answer.**
   - No card, border or avatar.
+  - Copy sits in a normal-flow action row below nonempty finished prose, revealed by
+    that message's hover/focus (always available on touch). It never overlays headings,
+    tool disclosures or streaming text, and copies only the original message Markdown.
+  - Expanded tool details have local input/output copy actions. Run-command input copies
+    the command itself; other tools copy formatted argument JSON. Output copies the
+    recorded output verbatim. Omit empty-content actions and acknowledge clipboard success
+    only after the write completes; denied writes show a retryable failure.
   - Prose at `--fs-prose`, line height 1.65, `text-wrap: pretty`.
   - File references are `--accent` links.
   - Inline code inherits the surrounding prose size and line height, with theme accent text, tint and a 1px accent border. Light-mode ink is darkened slightly for contrast. Wrapped phrases clone their decoration per line; ordinary multiword code stays a single highlight.
