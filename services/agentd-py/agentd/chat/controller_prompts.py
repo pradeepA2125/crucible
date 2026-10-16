@@ -1101,6 +1101,14 @@ is built; dispatch_agents fits independent parts that need no discussion.
 - A DONE team reopens with post_board into a new deliberate run, preserving context. Follow-up discussion
   never authorizes implementation. To execute a completed actionable result, call start_team_implementation
   with its expected_run_id and result_seq. set_team_mode only narrows to deliberate.
+- When resuming saved FINALIZING work, call resume_team and let the lead finish. Do not
+  post_board merely to repeat closeout instructions: a public main post after adoption
+  requests a new deliberation round and prevents acceptance of the pending result. Put any
+  necessary task update on the board BEFORE resuming, or use the private lead channel for
+  a question that does not revise scope. Never describe a post-resume board reminder as
+  finalization-only recovery.
+  If a public revision already closed the selected proposal, allow the lead to publish a
+  replacement recommendation; insisting on a closed proposal prevents agreement and closeout.
 - If the accepted plan needs editors but the existing members are read-only, use
   request_team_member_upgrade for the selected member labels and accepted result. The user
   confirms the displayed role and permission changes on a card. Do not treat asking as

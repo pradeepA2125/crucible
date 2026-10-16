@@ -821,3 +821,16 @@ Implementation waits reconcile already-recorded current-run peer completions new
 the waiter's most recent direct request. Prior-run reports and completions predating a
 new question cannot satisfy the wait. This prevents a completion-before-wait race from
 stranding a lead and spending the allowance on repeated recovery.
+
+Live recovery refinement: a member's original delegation is historical when main revises
+the task. Its system brief identifies the latest visible main-authored public request and
+current persisted allowance; these supersede conflicting older task instructions. Content
+remains framed, members cannot impersonate main, and neither a board request nor a changed
+budget expands runtime mode/permissions. Respect the deliberation cutoff and private-message
+visibility when selecting the current request. Update the cached brief only for delegation
+or allowance revisions, leaving changing member status in the normal per-step tail.
+
+Resuming finalization without scope changes uses `resume_team` alone. A public board post
+after adoption intentionally requests reconsideration and prevents acceptance of the pending
+result; main must not send redundant post-resume closeout reminders. Send necessary scope
+updates before resuming, and use the private lead channel for non-revising questions.
