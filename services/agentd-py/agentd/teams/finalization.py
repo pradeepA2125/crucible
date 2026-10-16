@@ -57,7 +57,11 @@ def fingerprint_files(workspace: Path, paths: list[str]) -> dict[str, str | None
 
 def changed_fingerprints(workspace: Path, snapshot: dict[str, str | None]) -> list[str]:
     current = fingerprint_files(workspace, list(snapshot))
-    return [path for path, value in snapshot.items() if current[path] != value]
+    # Resolving a replaced symlink can change the canonical key itself. That is
+    # file drift, including when the new target has identical contents.
+    return [
+        path for path, value in snapshot.items() if path not in current or current[path] != value
+    ]
 
 
 def validate_execution(service: TeamService, team: TeamRecord, proposal: TeamPost | None) -> None:
@@ -120,6 +124,7 @@ def finalization_input(store: TeamStore, team: TeamRecord) -> str:
     lines.append(
         "End with report(status=completed, summary=<full Markdown>, final_result={summary, "
         "outcome: actionable|no_change|needs_decision, basis_proposal_id}). "
-        "For material revisions use report with finalization_feedback={reason} instead."
+        "For material revisions use report(status=completed, finalization_feedback={reason}) "
+        "instead of final_result. Report partial only if blocked; that pauses finalization."
     )
     return "\n\n".join(lines)

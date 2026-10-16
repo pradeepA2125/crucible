@@ -226,7 +226,8 @@ Steps:
 - [x] Validate `final_result` metadata against phase/purpose/run/basis proposal. Full text
   is the existing report `summary`; bounds are explicit and never silently truncate.
 - [x] Specify the material-revision response concretely as a team report with
-  `finalization_feedback: {reason: string}` and no `final_result`. Only lead/finalization
+  `status: completed`, `finalization_feedback: {reason: string}` and no `final_result`.
+  `partial` pauses finalization. Only lead/finalization
   can use it. It transitions back to debate without accepting a result.
 - [x] Persist accepted result and pointer atomically; attach underlying executable proposal
   and planned file fingerprints. Result acceptance never schedules peers.
@@ -569,3 +570,18 @@ The scripted end-to-end controller case drives actual tool creation, result publ
 explicit extension, `/live`, HTTP approval, team-channel events, file edits and review.
 Independent boundary cases cover ordinary follow-up, private exchanges, narrowing,
 restart and rewind rather than requiring one model script to exercise every branch.
+
+
+## 18. Post-implementation independent review
+
+Root and three independent agents reviewed the implementation at `8bfe7aa` across backend
+storage/coordinator, controller/tool recovery, and client/host/webview boundaries. Confirmed
+findings were reproduced and fixed on the same branch. Evidence and final regression results:
+`../evals/2026-10-16-team-execution-modes-review.md`.
+
+The final implementation adds monotonic workflow revisions and a separate rewind history
+generation to all workflow contracts. Rewind clears discarded replay, resets UI cursors and
+rows, blocks restored pending exchanges for explicit retry, and puts restored live teams into
+FAILED with their resumable phase preserved. Replies/cancellations now checkpoint resolution;
+revival reuses an admission slot already held by a pending exchange. Material finalization
+feedback explicitly uses completed reports, and canonical path changes refuse stale approval.

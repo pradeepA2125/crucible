@@ -24,7 +24,9 @@ export function mergeLiveTeam(prev: TeamSummaryView | undefined, live: TeamLiveV
 
 export function viewFromTeamDetail(detail: TeamDetailView): TeamViewState {
   return { posts: detail.posts, lastSeq: detail.lastSeq,
-           activity: detail.activity ?? [], lastAseq: detail.lastAseq ?? 0 };
+           activity: detail.activity ?? [], lastAseq: detail.lastAseq ?? 0,
+           runId: detail.runId, round: detail.round, workflowRevision: detail.workflowRevision,
+           historyRevision: detail.historyRevision };
 }
 
 /** A post or event the backfill already holds (a live broadcast racing it) is dropped. */
@@ -38,7 +40,12 @@ export function applyTeamEvent(view: TeamViewState, event: TeamEventView): TeamV
     const activity = [...view.activity, event.activity].sort((a, b) => a.aseq - b.aseq);
     return { ...view, activity, lastAseq: event.activity.aseq };
   }
-  return view;
+  if (olderTeamState(event, view)) return view;
+  const restored = isTeamRewind(event, view)
+    ? { posts: [], lastSeq: 0, activity: [], lastAseq: 0 } : view;
+  return { ...restored, runId: event.runId ?? view.runId, round: event.round,
+    workflowRevision: event.workflowRevision ?? view.workflowRevision,
+    historyRevision: event.historyRevision ?? view.historyRevision };
 }
 
 export function summaryWithEvent(team: TeamSummaryView, event: TeamEventView): TeamSummaryView {
@@ -231,20 +238,50 @@ export function teamCompletionLabel(team: Pick<TeamSummaryView, "mode" | "delive
   return team.endReason === "adopted" ? "Plan adopted" : "Done";
 }
 
-export function olderTeamState(incoming: { runId?: number; round: number }, current?: { runId?: number; round: number }): boolean {
+export function olderTeamState(
+  incoming: { runId?: number; workflowRevision?: number; historyRevision?: number; round?: number },
+  current?: { runId?: number; workflowRevision?: number; historyRevision?: number; round?: number },
+): boolean {
   if (!current) return false;
-  return (incoming.runId ?? 1) < (current.runId ?? 1)
-    || ((incoming.runId ?? 1) === (current.runId ?? 1) && incoming.round < current.round);
+  if ((incoming.historyRevision ?? 0) !== (current.historyRevision ?? 0)) {
+    return (incoming.historyRevision ?? 0) < (current.historyRevision ?? 0);
+  }
+  const revision = incoming.workflowRevision ?? 0;
+  const currentRevision = current.workflowRevision ?? 0;
+  // Server-side rewind can restore a lower run/round at a newer revision.
+  if (revision > 0 && currentRevision > 0 && revision !== currentRevision) {
+    return revision < currentRevision;
+  }
+  const run = incoming.runId ?? 1;
+  const currentRun = current.runId ?? 1;
+  if (run !== currentRun) return run < currentRun;
+  if (revision !== currentRevision) return revision < currentRevision;
+  return (incoming.round ?? 0) < (current.round ?? 0);
 }
 
 /** Backfills may race either stream independently; retain all newer durable rows. */
 export function mergeTeamDetail(view: TeamViewState | undefined, detail: TeamDetailView): TeamViewState {
-  if (!view) return viewFromTeamDetail(detail);
+  if (view && olderTeamState(detail, view)) return view;
+  if (!view || isTeamRewind(detail, view)) return viewFromTeamDetail(detail);
   const posts = new Map(detail.posts.map((p) => [p.seq, p]));
   for (const p of view.posts) if (p.seq > detail.lastSeq) posts.set(p.seq, p);
   const activity = new Map(detail.activity.map((a) => [a.aseq, a]));
   for (const a of view.activity) if (a.aseq > detail.lastAseq) activity.set(a.aseq, a);
   return { posts: [...posts.values()].sort((a, b) => a.seq - b.seq),
     lastSeq: Math.max(view.lastSeq, detail.lastSeq), activity: [...activity.values()].sort((a, b) => a.aseq - b.aseq),
-    lastAseq: Math.max(view.lastAseq, detail.lastAseq) };
+    lastAseq: Math.max(view.lastAseq, detail.lastAseq),
+    runId: detail.runId, round: detail.round, workflowRevision: detail.workflowRevision,
+    historyRevision: detail.historyRevision };
+}
+
+/** A newer server snapshot may intentionally discard a future run after rewind. */
+export function isTeamRewind(
+  incoming: { runId?: number; round?: number; workflowRevision?: number; historyRevision?: number },
+  current?: { runId?: number; round?: number; workflowRevision?: number; historyRevision?: number },
+): boolean {
+  if (current && (incoming.historyRevision ?? 0) > (current.historyRevision ?? 0)) return true;
+  return !!current && (incoming.workflowRevision ?? 0) > (current.workflowRevision ?? 0)
+    && (current.workflowRevision ?? 0) > 0
+    && ((incoming.runId ?? 1) < (current.runId ?? 1)
+      || ((incoming.runId ?? 1) === (current.runId ?? 1) && (incoming.round ?? 0) < (current.round ?? 0)));
 }

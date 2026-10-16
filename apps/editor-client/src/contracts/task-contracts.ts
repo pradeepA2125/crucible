@@ -215,7 +215,7 @@ export type StreamEvent =
   // Team channel (chat:{thread}:team:{team}); seq = the post's seq.
   | { type: "team_post"; payload: { post: Record<string, unknown> } }
   | { type: "team_activity"; payload: { event: Record<string, unknown> } }
-  | { type: "team_phase"; payload: { phase: string; round: number; paused_reason: string | null; mode?: string | null; run_id?: number; resume_phase?: string | null; result_seq?: number | null; result_summary?: Record<string, unknown> | null; deliverable?: { kind: string; description: string } | null; pending_lead_request_seq?: number | null; lead_exchange_status?: string | null } }
+  | { type: "team_phase"; payload: { phase: string; round: number; paused_reason: string | null; mode?: string | null; run_id?: number; workflow_revision?: number; history_revision?: number; resume_phase?: string | null; result_seq?: number | null; result_summary?: Record<string, unknown> | null; deliverable?: { kind: string; description: string } | null; pending_lead_request_seq?: number | null; lead_exchange_status?: string | null } }
   | { type: "retry_status"; payload: { attempt: number; max_attempts: number; reason: string; message: string } }
   // Live token counts DURING a model call, ~6/sec. `thinking` climbs during
   // reasoning, then `output` climbs — the transition that otherwise looks like
@@ -362,6 +362,8 @@ export const TeamWorkflowSchema = z.object({
   mode: z.enum(["deliberate", "deliberate_and_implement", "implement"]).nullable().catch(null).default(null),
   deliverable: z.object({ kind: z.string(), description: z.string() }).nullable().default(null),
   runId: z.number().int().positive().default(1),
+  workflowRevision: z.number().int().nonnegative().default(0),
+  historyRevision: z.number().int().nonnegative().default(0),
   resultSeq: z.number().int().nullable().default(null),
   resultSummary: z.object({
     seq: z.number(), runId: z.number(), summary: z.string(), outcome: z.string(),

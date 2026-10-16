@@ -1753,6 +1753,8 @@ export function mapTeamWorkflow(t: Record<string, unknown>): Record<string, unkn
     deliverable: t.deliverable ?? (typeof t.deliverable_kind === "string"
       ? { kind: t.deliverable_kind, description: t.deliverable_description ?? "" } : null),
     runId: t.run_id ?? 1,
+    workflowRevision: t.workflow_revision ?? 0,
+    historyRevision: t.history_revision ?? 0,
     resultSeq: t.result_seq ?? null,
     resultSummary: result ? { seq: result.seq, runId: result.run_id ?? t.run_id ?? 1,
       summary: result.summary ?? "", outcome: result.outcome ?? "", kind: result.kind ?? result.deliverable_kind ?? null } : null,

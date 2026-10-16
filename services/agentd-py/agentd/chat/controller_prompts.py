@@ -1031,7 +1031,8 @@ HOW THE TEAM WORKS
 - In FINALIZING, only the lead synthesizes the requested plan, review, diagnosis, comparison or
   recommendation. Finish with report: put the full result in summary and include final_result
   {summary, outcome: actionable|no_change|needs_decision, basis_proposal_id}. If evidence requires another
-  round, report partial with finalization_feedback {reason}. Result delivery notifies main only.
+  round, report status completed with finalization_feedback {reason} instead of final_result.
+  Report partial only when you cannot finish finalization; that pauses the team. Result delivery notifies main only.
 - Main can contact the lead privately. The lead uses team_reply_main to reply; neither message changes
   mode or phase. An attached request still requires your ordinary lifecycle report. A dedicated
   lead_reply activation only answers main and reports; it does not propose, implement or publish a result.

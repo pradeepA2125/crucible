@@ -107,6 +107,8 @@ class TeamStore:
         modern_columns = {
             "mode": "TEXT", "deliverable_kind": "TEXT", "deliverable_description": "TEXT",
             "run_id": "INTEGER NOT NULL DEFAULT 1",
+            "workflow_revision": "INTEGER NOT NULL DEFAULT 0",
+            "history_revision": "INTEGER NOT NULL DEFAULT 0",
             "run_request_start": "INTEGER NOT NULL DEFAULT 0",
             "result_seq": "INTEGER", "pending_lead_request_seq": "INTEGER",
             "lead_exchange_status": "TEXT", "resume_phase": "TEXT",
@@ -157,9 +159,16 @@ class TeamStore:
         unknown = set(fields) - set(_TEAM_COLUMNS)
         if unknown:
             raise ValueError(f"unknown team fields: {sorted(unknown)}")
-        sets = ", ".join(f"{k} = ?" for k in fields)
+        if not fields:
+            return
+        requested_revision = fields.pop("workflow_revision", None)
+        if requested_revision is not None and type(requested_revision) is not int:
+            raise ValueError("workflow_revision must be an integer")
+        sets = [f"{k} = ?" for k in fields]
         values = [v.isoformat() if isinstance(v, datetime) else v for v in fields.values()]
-        self._conn.execute(f"UPDATE teams SET {sets} WHERE team_id = ?",  # noqa: S608
+        sets.append("workflow_revision = MAX(workflow_revision + 1, ?)")
+        values.append(requested_revision if requested_revision is not None else 0)
+        self._conn.execute(f"UPDATE teams SET {', '.join(sets)} WHERE team_id = ?",  # noqa: S608
                            [*values, team_id])
         self._commit()
 
@@ -186,7 +195,8 @@ class TeamStore:
             tuple(sorted(LIVE_TEAM_PHASES))).fetchall()]
         now = datetime.now(UTC).isoformat()
         self._conn.executemany(
-            "UPDATE teams SET phase = 'FAILED', end_reason = ?, ended_at = ? WHERE team_id = ?",
+            "UPDATE teams SET phase = 'FAILED', end_reason = ?, ended_at = ?, "
+            "workflow_revision = workflow_revision + 1 WHERE team_id = ?",
             [(reason, now, i) for i in ids])
         self._commit()
         return ids
@@ -459,6 +469,8 @@ class TeamStore:
                 # provider calls already made remain part of lifetime accounting.
                 current = self.get_team(tid)
                 if current:
+                    data["team"]["workflow_revision"] = current.workflow_revision + 1
+                    data["team"]["history_revision"] = current.history_revision + 1
                     for field in (
                             "requests", "prompt_tokens", "completion_tokens", "cached_tokens"):
                         data["team"][field] = getattr(current, field)

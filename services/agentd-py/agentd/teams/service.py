@@ -782,7 +782,9 @@ class TeamService:
                 "deliverable": ({"kind": team.deliverable_kind,
                                  "description": team.deliverable_description or ""}
                                 if team.deliverable_kind else None),
-                "run_id": team.run_id, "resume_phase": team.resume_phase,
+                "run_id": team.run_id, "workflow_revision": team.workflow_revision,
+                "history_revision": team.history_revision,
+                "resume_phase": team.resume_phase,
                 "result_seq": team.result_seq, "result_summary": result_summary,
                 "pending_lead_request_seq": team.pending_lead_request_seq,
                 "lead_exchange_status": team.lead_exchange_status}

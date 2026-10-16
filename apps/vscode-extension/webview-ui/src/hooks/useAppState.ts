@@ -2,7 +2,7 @@ import { useReducer, useEffect, useCallback } from "react";
 import type { AppState, ExtensionMessage, ChatMsg, StreamingBubble, ToolEventView } from "../types";
 import { vscode } from "../vscodeApi";
 import { appendDurable, applyAgentEvent, viewFromDetail } from "../agents";
-import { applyTeamEvent, mergeLiveTeam, summaryWithEvent, mergeTeamDetail, olderTeamState } from "../teams";
+import { applyTeamEvent, mergeLiveTeam, summaryWithEvent, mergeTeamDetail, olderTeamState, isTeamRewind } from "../teams";
 
 // ── Stable content signatures ────────────────────────────────────────────────
 
@@ -510,7 +510,8 @@ function reducer(state: AppState, action: Action): AppState {
     case "teamDetail": {
       const priorView = state.teamViews[msg.teamId];
       const stale = olderTeamState(msg.detail, state.teams[msg.teamId])
-        || (priorView && (msg.detail.lastSeq < priorView.lastSeq || msg.detail.lastAseq < priorView.lastAseq));
+        || (priorView && !isTeamRewind(msg.detail, priorView)
+          && (msg.detail.lastSeq < priorView.lastSeq || msg.detail.lastAseq < priorView.lastAseq));
       const { posts: _posts, lastSeq: _lastSeq, activity: _activity, lastAseq: _lastAseq,
               ...summary } = msg.detail;
       return {

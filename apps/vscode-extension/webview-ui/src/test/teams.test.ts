@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyTeamEvent, countsText, isTerminalTeam, latestText, memberPhrase, mergeLiveTeam,
   roundProgressText, stanceOf, summaryWithEvent, TEAM_TOOLS, teamForPill, viewFromTeamDetail,
-  waitingOn,
+  waitingOn, mergeTeamDetail,
 } from "../teams";
 import type { AgentSummaryView, TeamDetailView, TeamPostView, TeamSummaryView } from "../types";
 
@@ -170,6 +170,70 @@ it("late prior-run live state and phase events cannot replace a reopened run", (
   expect(mergeLiveTeam(current, { ...SUMMARY, phase: "DONE", runId: 2 })).toBe(current);
   expect(summaryWithEvent(current, { type: "team_phase", phase: "IMPLEMENTING", round: 1,
     pausedReason: null, runId: 2, mode: "implement" })).toBe(current);
+});
+
+it("same-run stale workflow state cannot clear or revive a lead exchange", () => {
+  const current = { ...SUMMARY, phase: "DONE", runId: 3, workflowRevision: 9,
+    pendingLeadRequestSeq: 14, leadExchangeStatus: "running" };
+  const older = { ...current, workflowRevision: 8, pendingLeadRequestSeq: null, leadExchangeStatus: null };
+  expect(mergeLiveTeam(current, older)).toBe(current);
+  expect(summaryWithEvent(current, { type: "team_phase", ...older })).toBe(current);
+  const done = summaryWithEvent(current, { type: "team_phase", ...older, workflowRevision: 10 });
+  expect(done).toMatchObject({ workflowRevision: 10, pendingLeadRequestSeq: null, leadExchangeStatus: null });
+  expect(mergeLiveTeam(done, current)).toBe(done);
+  // Old backends have no revision; their existing run/round behavior remains usable.
+  expect(mergeLiveTeam(SUMMARY, { ...SUMMARY, phase: "FINALIZING" }).phase).toBe("FINALIZING");
+  expect(mergeLiveTeam(done, { ...older, runId: 4, workflowRevision: 0 }).runId).toBe(4);
+});
+
+it("a newer authoritative revision can rewind to an earlier run and round", () => {
+  const future = { ...SUMMARY, phase: "DONE", runId: 3, round: 4, workflowRevision: 12 };
+  const rewound = { ...SUMMARY, runId: 2, round: 2, workflowRevision: 13 };
+  const merged = mergeLiveTeam(future, rewound);
+  expect(merged).toMatchObject({ phase: "DELIBERATING", runId: 2, round: 2, workflowRevision: 13 });
+  expect(summaryWithEvent(future, { type: "team_phase", ...rewound })).toMatchObject({ runId: 2, workflowRevision: 13 });
+  expect(mergeLiveTeam(merged, future)).toBe(merged);
+  expect(summaryWithEvent(merged, { type: "team_phase", ...future })).toBe(merged);
+  const futureDetail = { ...future, posts: [post(1), post(7)], lastSeq: 7, activity: [], lastAseq: 8 };
+  const restoredDetail = { ...rewound, posts: [post(1)], lastSeq: 1, activity: [], lastAseq: 2 };
+  const board = mergeTeamDetail(viewFromTeamDetail(futureDetail), restoredDetail);
+  expect(board).toMatchObject({ lastSeq: 1, lastAseq: 2, runId: 2, workflowRevision: 13 });
+  expect(board.posts.map((p) => p.seq)).toEqual([1]);
+  expect(mergeTeamDetail(board, futureDetail)).toBe(board);
+});
+
+it("streamed run advancement tracks board history before an authoritative rewind", () => {
+  const initial = { ...SUMMARY, runId: 1, workflowRevision: 4,
+    posts: [post(1)], lastSeq: 1, activity: [], lastAseq: 2 };
+  let board = applyTeamEvent(viewFromTeamDetail(initial), {
+    type: "team_phase", phase: "IMPLEMENTING", round: 2, pausedReason: null,
+    runId: 2, workflowRevision: 6,
+  });
+  board = applyTeamEvent(board, { type: "team_post", post: post(7) });
+  expect(board).toMatchObject({ runId: 2, workflowRevision: 6, lastSeq: 7 });
+  board = applyTeamEvent(board, { type: "team_phase", phase: "DONE", round: 1,
+    pausedReason: null, runId: 1, workflowRevision: 7 });
+  expect(board).toMatchObject({ runId: 1, workflowRevision: 7, lastSeq: 0, lastAseq: 0, posts: [], activity: [] });
+  board = mergeTeamDetail(board, { ...initial, workflowRevision: 7 });
+  expect(board.posts.map((p) => p.seq)).toEqual([1]);
+  expect(board).toMatchObject({ runId: 1, workflowRevision: 7, lastSeq: 1, lastAseq: 2 });
+});
+
+it("a history generation clears discarded posts even in the same run and round", () => {
+  const future = { ...SUMMARY, runId: 2, workflowRevision: 12, historyRevision: 0,
+    posts: [post(1), post(7)], lastSeq: 7, activity: [], lastAseq: 8 };
+  const restored = { ...future, workflowRevision: 13, historyRevision: 1,
+    posts: [post(1)], lastSeq: 1, lastAseq: 2 };
+  const summary = mergeLiveTeam(future, restored);
+  expect(summary).toMatchObject({ runId: 2, historyRevision: 1 });
+  const board = mergeTeamDetail(viewFromTeamDetail(future), restored);
+  expect(board.posts.map((p) => p.seq)).toEqual([1]);
+  expect(board).toMatchObject({ historyRevision: 1, lastSeq: 1, lastAseq: 2 });
+  expect(mergeTeamDetail(board, future)).toBe(board);
+  const phase = { type: "team_phase" as const, phase: "DONE", round: future.round,
+    pausedReason: null, runId: 2, workflowRevision: 13, historyRevision: 1 };
+  expect(applyTeamEvent(viewFromTeamDetail(future), phase)).toMatchObject({ posts: [], activity: [], historyRevision: 1 });
+  expect(mergeLiveTeam(summary, { ...future, runId: 3, workflowRevision: 14 })).toBe(summary);
 });
 
 it("report, lead conversation and execution extension pills resolve to the existing team", () => {

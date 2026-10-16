@@ -51,8 +51,34 @@ export function shouldFollowTeam(state: TeamState): boolean {
 }
 
 function stateKey(state: TeamState): string {
-  return JSON.stringify([state.runId ?? 1, state.phase, state.round, state.resultSeq,
+  return JSON.stringify([state.runId ?? 1, state.historyRevision ?? 0, state.workflowRevision ?? 0, state.phase, state.round, state.resultSeq,
     state.pendingLeadRequestSeq, state.leadExchangeStatus, state.resumePhase]);
+}
+
+function olderState(incoming: TeamState, current?: TeamState): boolean {
+  if (!current) return false;
+  if ((incoming.historyRevision ?? 0) !== (current.historyRevision ?? 0)) {
+    return (incoming.historyRevision ?? 0) < (current.historyRevision ?? 0);
+  }
+  const revision = incoming.workflowRevision ?? 0;
+  const currentRevision = current.workflowRevision ?? 0;
+  // A rewind restores an earlier run with a newer durable revision.
+  if (revision > 0 && currentRevision > 0 && revision !== currentRevision) {
+    return revision < currentRevision;
+  }
+  const run = incoming.runId ?? current.runId ?? 1;
+  const currentRun = current.runId ?? 1;
+  if (run !== currentRun) return run < currentRun;
+  if (revision !== currentRevision) return revision < currentRevision;
+  return incoming.round < current.round;
+}
+
+function rewoundState(incoming: TeamState, current?: TeamState): boolean {
+  if (current && (incoming.historyRevision ?? 0) > (current.historyRevision ?? 0)) return true;
+  return !!current && (incoming.workflowRevision ?? 0) > (current.workflowRevision ?? 0)
+    && (current.workflowRevision ?? 0) > 0
+    && ((incoming.runId ?? 1) < (current.runId ?? 1)
+      || ((incoming.runId ?? 1) === (current.runId ?? 1) && incoming.round < current.round));
 }
 
 /** Follow only open boards. Dormant open entries retain their identity and cursors so
@@ -83,10 +109,9 @@ export class TeamViewManager {
   noteState(threadId: string, teamId: string, state: TeamState): void {
     const view = this.views.get(teamId);
     if (!view || view.closed || view.threadId !== threadId) return;
-    if ((state.runId ?? 1) < (view.state?.runId ?? 1)) return;
-    if ((state.runId ?? 1) === (view.state?.runId ?? 1)
-        && state.round < (view.state?.round ?? 0)) return;
+    if (olderState(state, view.state)) return;
     if (view.state && stateKey(view.state) === stateKey(state)) return;
+    if (rewoundState(state, view.state)) view.lastSeq = view.lastAseq = 0;
     view.state = state;
     // Invalidate an in-flight terminal backfill/stream before starting the fresh one.
     view.generation++;
@@ -128,9 +153,10 @@ export class TeamViewManager {
         continue;
       }
       if (!current()) return;
+      if (rewoundState(detail, view.state)) view.lastSeq = view.lastAseq = 0;
       // Posts and activity have independent clocks. Never let stale backfill erase a
       // streamed result or end a newer run, including a still-open reopened board.
-      if ((detail.runId ?? 1) < (view.state?.runId ?? 1)
+      if (olderState(detail, view.state)
           || detail.lastSeq < view.lastSeq || detail.lastAseq < view.lastAseq) {
         await delay(this.retryDelayMs);
         continue;
@@ -155,7 +181,19 @@ export class TeamViewManager {
             if (event.activity.aseq <= view.lastAseq) continue;
             view.lastAseq = event.activity.aseq;
           } else {
-            if ((event.runId ?? view.state?.runId ?? 1) < (view.state?.runId ?? 1)) continue;
+            if (olderState(event, view.state)) continue;
+            // Backfill already represents this revision. Replaying an earlier DONE
+            // must not close a newer consultation in the same run.
+            if ((event.workflowRevision ?? 0) > 0
+                && event.workflowRevision === view.state?.workflowRevision
+                && (event.historyRevision ?? 0) === (view.state?.historyRevision ?? 0)
+                && (event.runId ?? view.state?.runId) === view.state?.runId) continue;
+            if (rewoundState(event, view.state)) {
+              view.lastSeq = view.lastAseq = 0;
+              view.state = { ...view.state, ...event };
+              this.sink.event(teamId, event);
+              break; // Re-backfill the restored board before following its new history.
+            }
             view.state = { ...view.state, ...event };
           }
           this.sink.event(teamId, event);
@@ -181,6 +219,7 @@ function toViewEvent(event: SequencedStreamEvent): TeamViewEvent | null {
   }
   if (event.type === "team_phase") {
     const workflow = "run_id" in event.payload || "mode" in event.payload
+      || "workflow_revision" in event.payload || "history_revision" in event.payload
       ? TeamWorkflowSchema.parse(mapTeamWorkflow(event.payload)) : {};
     return { type: "team_phase", phase: event.payload.phase, round: event.payload.round,
       pausedReason: event.payload.paused_reason, ...workflow };

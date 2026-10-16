@@ -11,7 +11,12 @@ from test_team_coordinator import _Host
 
 from agentd.teams import state_machine as sm
 from agentd.teams.coordinator import TeamCoordinator
-from agentd.teams.finalization import finalization_input, validate_final_result
+from agentd.teams.finalization import (
+    changed_fingerprints,
+    finalization_input,
+    fingerprint_files,
+    validate_final_result,
+)
 from agentd.teams.models import TeamMember, TeamRecord
 from agentd.teams.service import AgentInfo, TeamService
 from agentd.teams.store import TeamStore
@@ -235,3 +240,97 @@ def test_done_pending_exchange_counts_for_admission_and_rewind(tmp_path):
     assert store.count_live_teams("thread") == 1
     assert store.live_team_names("thread") == ["review"]
     coord.close()
+
+
+def test_workflow_revision_migrates_existing_teams_and_advances_on_updates(tmp_path):
+    store, svc, _, coord, _ = setup(tmp_path)
+    store._conn.execute("ALTER TABLE teams DROP COLUMN workflow_revision")
+    store._conn.execute("ALTER TABLE teams DROP COLUMN history_revision")
+    store._conn.commit()
+    reopened = TeamStore(store._conn)
+    assert reopened.get_team("t").workflow_revision == 0
+    assert reopened.get_team("t").history_revision == 0
+    reopened.update_team("t", phase="FINALIZING")
+    assert reopened.get_team("t").workflow_revision == 1
+    assert svc.summary("t")["workflow_revision"] == 1
+    assert svc.summary("t")["history_revision"] == 0
+    reopened.update_team("t", workflow_revision=0, phase="DONE")
+    assert reopened.get_team("t").workflow_revision == 2
+    reopened.update_team("t", workflow_revision=20)
+    assert reopened.get_team("t").workflow_revision == 20
+    reopened.update_team("t", pending_lead_request_seq=9)
+    assert reopened.get_team("t").workflow_revision == 21
+    assert reopened.get_team("t").history_revision == 0
+    coord.close()
+
+
+def test_rewind_and_restart_keep_workflow_revision_monotonic(tmp_path):
+    store, _, _, coord, _ = setup(tmp_path)
+    store.save_snapshot("t", 4)
+    store.update_team("t", run_id=2, phase="FINALIZING")
+    revision = store.get_team("t").workflow_revision
+    store.restore_snapshots("thread", 4)
+    restored = store.get_team("t")
+    assert restored.run_id == 1 and restored.phase == "DELIBERATING"
+    assert restored.workflow_revision > revision
+    assert restored.history_revision == 1
+    store.save_snapshot("t", 5)
+    store.update_team("t", phase="DONE")
+    store.restore_snapshots("thread", 5)
+    assert store.get_team("t").history_revision == 2
+    assert store.get_team("t").phase == "DELIBERATING"
+    store.fail_live_teams("restart")
+    assert store.get_team("t").workflow_revision > restored.workflow_revision
+    assert store.get_team("t").history_revision == 2
+    coord.close()
+
+
+def test_fingerprints_treat_retargeted_symlink_as_changed(tmp_path):
+    planned = tmp_path / "a.py"
+    planned.write_text("old content\n")
+    (tmp_path / "b.py").write_text("new content\n")
+    snapshot = fingerprint_files(tmp_path, ["a.py"])
+    planned.unlink()
+    planned.symlink_to("b.py")
+    assert changed_fingerprints(tmp_path, snapshot) == ["a.py"]
+
+
+@pytest.mark.asyncio
+async def test_http_approval_rejects_symlink_drift_without_consuming_gate(tmp_path, monkeypatch):
+    from tests.test_team_routes import _client
+    from tests.test_team_workflow_controller import (
+        AGREE,
+        PARTS,
+        _make,
+        _settle,
+        final,
+        quiet,
+        request,
+    )
+
+    ctrl, store, tid, _ = _make(
+        tmp_path, monkeypatch, {"alice": [AGREE, final()], "bob": [AGREE]}
+    )
+    quiet(ctrl, monkeypatch)
+    planned = tmp_path / "ws" / "a.py"
+    planned.write_text("same content\n")
+    created = await ctrl._create_team(
+        tid,
+        "u1",
+        request("deliberate_and_implement", kickoff_assignments=PARTS, approval_gate=True),
+    )
+    await _settle(ctrl)
+    gate = store.get_thread(tid).pending_controller_gates[0]
+    (tmp_path / "ws" / "replacement.py").write_text("same content\n")
+    planned.unlink()
+    planned.symlink_to("replacement.py")
+    async with _client(tmp_path, ctrl) as client:
+        response = await client.post(
+            f"/v1/chat/threads/{tid}/team-plan-decision",
+            json={"gate_id": gate.gate_id, "decision": "approve"},
+        )
+    assert response.status_code == 409
+    assert "stale_plan" in response.text
+    assert store.get_thread(tid).pending_controller_gates[0].gate_id == gate.gate_id
+    assert store.teams.get_team(created["team_id"]).phase == "AWAITING_APPROVAL"
+    await ctrl.disband_team(tid, created["team_id"])

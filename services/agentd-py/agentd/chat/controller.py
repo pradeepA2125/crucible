@@ -1963,6 +1963,7 @@ class ChatController:
             coordinator = self._coordinators.pop(team_id, None)
             if coordinator is not None:
                 coordinator.close()
+            self._broadcaster.clear_replay(team_channel(thread_id, team_id))
         self._store.teams.delete_teams(team_ids)
         self._store.delete_notices_for_sources(thread_id, team_ids)
         if from_seq is not None:
@@ -1971,6 +1972,28 @@ class ChatController:
                 coordinator = self._coordinators.pop(team_id, None)
                 if coordinator:
                     coordinator.close()
+                # A fresh view backfills the restored database before subscribing.
+                # Replaying discarded future posts would otherwise resurrect them.
+                self._broadcaster.clear_replay(team_channel(thread_id, team_id))
+                team = TeamWorkflowOps(self).current(team_id)
+                recovery: dict[str, object] = {}
+                if team.pending_lead_request_seq:
+                    recovery["lead_exchange_status"] = "blocked"
+                if team.phase in LIVE_TEAM_PHASES:
+                    # Restored records have no surviving tasks/coordinator. Reuse
+                    # explicit restart recovery instead of leaving an inert live
+                    # team or automatically resuming execution after a rewind.
+                    origin = (team.resume_phase or "DELIBERATING"
+                              if team.phase == "PAUSED" else team.phase)
+                    recovery.update(phase="FAILED", resume_phase=origin,
+                                    end_reason="rewound; lifecycle recovery required",
+                                    ended_at=datetime.now(UTC))
+                if recovery:
+                    self._store.teams.update_team(team_id, **recovery)
+                for member in self._store.teams.members(team_id):
+                    self._store.teams.update_member(team_id, member.label, pending_start_json=None)
+                    self._broadcaster.clear_replay(agent_channel(thread_id, member.agent_id))
+                self.team_phase_changed(TeamWorkflowOps(self).current(team_id))
             # A run started inside the span answered a request that no longer exists:
             # its report goes, and the agent itself rolls back to before it.
             self._store.delete_notices_from_activation_seq(thread_id, from_seq)
@@ -2226,7 +2249,8 @@ class ChatController:
     def _team_workflow_metadata(self, team: TeamRecord) -> dict[str, object]:
         summary = self._teams.summary(team.team_id) if self._teams is not None else {}
         keys = ("mode", "deliverable", "run_id", "resume_phase", "result_seq", "result_summary",
-                "pending_lead_request_seq", "lead_exchange_status")
+                "pending_lead_request_seq", "lead_exchange_status", "workflow_revision",
+                "history_revision")
         return {key: summary.get(key) for key in keys}
 
     def _team_latest(self, team_id: str, posts: list[TeamPost]) -> dict[str, object] | None:
@@ -3121,7 +3145,7 @@ class ChatController:
         throw the team away). The post lands first, so the revived round carries it."""
         assert self._teams is not None
         live = self._store.teams.count_live_teams(thread_id)
-        if live >= team_max_live_per_thread():
+        if not team.pending_lead_request_seq and live >= team_max_live_per_thread():
             raise TeamInputError(f"this thread already has {live} live teams (limit "
                                  f"{team_max_live_per_thread()}) — disband one first")
         from_phase = self._failed_from(team.team_id)

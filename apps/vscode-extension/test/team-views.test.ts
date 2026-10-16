@@ -127,6 +127,94 @@ describe("TeamViewManager", () => {
 });
 
 describe("team workflow subscription boundaries", () => {
+  test("a history generation resets cursors after same-run same-round rewind", async () => {
+    let current = { ...detail("DONE", 7), lastAseq: 8,
+      runId: 2, workflowRevision: 12, historyRevision: 0 };
+    const seen: number[] = [];
+    const client = { getTeam: async () => current, streamChannel: channel([], true) };
+    const m = new TeamViewManager(() => client, { detail: (_id, d) => seen.push(d.lastSeq), event: () => {} }, 0);
+    m.setOpen("t", ["team-1"]);
+    await flush();
+    current = { ...current, lastSeq: 2, lastAseq: 3, workflowRevision: 13, historyRevision: 1 };
+    m.noteState("t", "team-1", current);
+    await flush();
+    expect(seen).toEqual([7, 2]);
+    // Discarded history never wins even if a late response has a higher run.
+    m.noteState("t", "team-1", { ...current, runId: 3, workflowRevision: 14, historyRevision: 0 });
+    await flush();
+    expect(seen).toEqual([7, 2]);
+    m.closeAll();
+  });
+
+  test("a newer rewind revision may restore a lower run and round", async () => {
+    let current = { ...detail("DONE", 7), lastAseq: 8, runId: 3, round: 4, workflowRevision: 12 };
+    const states: string[] = [];
+    const client = { getTeam: async () => current, streamChannel: channel([], true) };
+    const m = new TeamViewManager(() => client, {
+      detail: (_id, d) => states.push(`${d.workflowRevision}:${d.runId}:${d.round}:${d.lastSeq}:${d.lastAseq}`), event: () => {},
+    }, 0);
+    m.setOpen("t", ["team-1"]);
+    await flush();
+    current = { ...current, phase: "DELIBERATING", lastSeq: 2, lastAseq: 3,
+      runId: 2, round: 2, workflowRevision: 13 };
+    m.noteState("t", "team-1", current);
+    await flush();
+    expect(states).toEqual(["12:3:4:7:8", "13:2:2:2:3"]);
+    // A response from before rewind cannot restore the discarded future run.
+    m.noteState("t", "team-1", { ...current, runId: 3, round: 4, workflowRevision: 12 });
+    await flush();
+    expect(states).toHaveLength(2);
+    m.closeAll();
+  });
+
+  test("same-run phase replay cannot hide a running DONE consultation or drop its live reply", async () => {
+    const running = { ...detail("DONE", 11), runId: 1, workflowRevision: 6,
+      pendingLeadRequestSeq: 11, leadExchangeStatus: "running" };
+    const completed = { ...detail("DONE", 12), runId: 1, workflowRevision: 7,
+      pendingLeadRequestSeq: null, leadExchangeStatus: null };
+    let reads = 0;
+    const seen: Array<string | number> = [];
+    const phase = (revision: number, pending: number | null, status: string | null) => ({
+      type: "team_phase", payload: { phase: "DONE", round: 1, paused_reason: null,
+        run_id: 1, workflow_revision: revision, pending_lead_request_seq: pending,
+        lead_exchange_status: status },
+    } as SequencedStreamEvent);
+    const client = {
+      getTeam: async () => reads++ === 0 ? running : completed,
+      // Real subscriptions replay older buffered phases before newer events.
+      streamChannel: channel([
+        phase(3, null, null), phase(6, 11, "running"),
+        { type: "team_post", payload: { post: post(12) }, seq: 12 },
+        phase(7, null, null),
+      ] as SequencedStreamEvent[], true),
+    };
+    const m = new TeamViewManager(() => client, {
+      detail: (_id, d) => seen.push(`detail:${d.workflowRevision}`),
+      event: (_id, e) => seen.push(e.type === "team_post" ? e.post.seq
+        : e.type === "team_phase" ? `phase:${e.workflowRevision}` : "activity"),
+    }, 0);
+    m.setOpen("t", ["team-1"]);
+    for (let i = 0; i < 6; i++) await flush();
+    expect(seen).toEqual(["detail:6", 12, "phase:7", "detail:7"]);
+    expect(reads).toBe(2);
+    m.closeAll();
+  });
+
+  test("a late same-run summary cannot rearm a completed consultation", async () => {
+    let reads = 0;
+    const current = { ...detail("DONE", 12), runId: 2, workflowRevision: 8,
+      pendingLeadRequestSeq: null, leadExchangeStatus: null };
+    const client = { getTeam: async () => { reads++; return current; }, streamChannel: channel([], false) };
+    const m = new TeamViewManager(() => client, { detail: () => {}, event: () => {} }, 0);
+    m.setOpen("t", ["team-1"]);
+    await flush();
+    m.noteState("t", "team-1", { ...current, workflowRevision: 7,
+      pendingLeadRequestSeq: 11, leadExchangeStatus: "running" });
+    await flush();
+    expect(reads).toBe(1);
+    m.closeAll();
+  });
+
   test("an open dormant DONE board rearms for a new run without reopening the window", async () => {
     let current = { ...detail("DONE", 7), runId: 1 };
     let subscriptions = 0;

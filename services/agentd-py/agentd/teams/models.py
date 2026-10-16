@@ -31,6 +31,8 @@ class TeamRecord(BaseModel):
     deliverable_kind: str | None = None
     deliverable_description: str | None = None
     run_id: int = 1
+    workflow_revision: int = 0
+    history_revision: int = 0
     run_request_start: int = 0
     result_seq: int | None = None
     pending_lead_request_seq: int | None = None

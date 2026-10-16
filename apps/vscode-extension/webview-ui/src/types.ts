@@ -324,6 +324,8 @@ export interface TeamWorkflowView {
   mode?: "deliberate" | "deliberate_and_implement" | "implement" | null;
   deliverable?: { kind: string; description: string } | null;
   runId?: number;
+  workflowRevision?: number;
+  historyRevision?: number;
   resultSeq?: number | null;
   resultSummary?: { seq: number; runId: number; summary: string; outcome: string; kind?: string | null } | null;
   pendingLeadRequestSeq?: number | null;
@@ -379,6 +381,10 @@ export type TeamEventView =
 
 /** An open team's board. */
 export interface TeamViewState {
+  runId?: number;
+  round?: number;
+  workflowRevision?: number;
+  historyRevision?: number;
   posts: TeamPostView[];
   lastSeq: number;
   activity: TeamActivityView[];

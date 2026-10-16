@@ -15,6 +15,10 @@ evidence aggregation filters run and purpose; publication intent commits with th
 busy lead lifecycle starts queue durably; request and pointer commit together; full build
 precedes UI inspection.
 
+Post-implementation independent code review and subsequent fixes are recorded in
+[the review evidence](2026-10-16-team-execution-modes-review.md). The counts below describe
+the initial implementation; that review records the final regression run.
+
 ## Implemented behavior
 
 - Explicit deliberate, combined and direct-implement modes, plus arbitrary requested

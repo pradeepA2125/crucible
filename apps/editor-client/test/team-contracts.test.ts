@@ -125,14 +125,14 @@ describe("named waits and fix assignments", () => {
 describe("team execution workflow contracts", () => {
   const workflow = {
     mode: "deliberate", deliverable_kind: "diagnosis", deliverable_description: "Find the cause",
-    run_id: 3, result_seq: 12, resume_phase: "FINALIZING", pending_lead_request_seq: 15,
+    run_id: 3, workflow_revision: 21, history_revision: 2, result_seq: 12, resume_phase: "FINALIZING", pending_lead_request_seq: 15,
     lead_exchange_status: "running",
     result_summary: { seq: 12, run_id: 3, summary: "Cause identified", outcome: "actionable", deliverable_kind: "diagnosis" },
   };
 
   it("maps workflow on summaries, detail and live without returning full result in live", async () => {
     const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: respond({ teams: [{ ...SUMMARY, ...workflow }] }) });
-    const expected = { mode: "deliberate", runId: 3,
+    const expected = { mode: "deliberate", runId: 3, workflowRevision: 21, historyRevision: 2,
       deliverable: { kind: "diagnosis", description: "Find the cause" },
       resultSeq: 12, pendingLeadRequestSeq: 15, leadExchangeStatus: "running", resumePhase: "FINALIZING",
       resultSummary: { seq: 12, runId: 3, summary: "Cause identified", outcome: "actionable", kind: "diagnosis" } };
@@ -151,7 +151,7 @@ describe("team execution workflow contracts", () => {
     const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: respond({ teams: [SUMMARY, { ...SUMMARY, mode: "future_mode" }] }) });
     const teams = await c.listTeams("t");
     expect(teams.map((team) => team.mode)).toEqual([null, null]);
-    expect(teams[0]).toMatchObject({ runId: 1, resultSeq: null, deliverable: null });
+    expect(teams[0]).toMatchObject({ runId: 1, workflowRevision: 0, historyRevision: 0, resultSeq: null, deliverable: null });
   });
 
   it("preserves private role-channel posts independently of ordinary member messages", () => {

@@ -315,7 +315,8 @@ unobjected-plan revision guard. It cannot silently alter execution assignments/f
 The result links to the selected immutable proposal so the exact execution scope is known.
 Use a dedicated result validator rather than globally increasing the existing 8,000-character
 board-post limit. A revision request is a report with
-`finalization_feedback: {reason: string}` and no `final_result`; `needs_deliberation` names
+`status: completed`, `finalization_feedback: {reason: string}` and no `final_result`.
+`partial` pauses finalization; it does not request another debate. `needs_deliberation` names
 the internal transition, not an additional successful-result outcome.
 
 Carry this structured report metadata from `ControllerOutcome.payload` through the child
@@ -524,7 +525,7 @@ and commands already in flight are documented separately from the enforced plann
 
 | Record | Additions |
 |---|---|
-| Team | `mode`, `deliverable_kind`, `deliverable_description`, `run_id`, `run_request_start`, `result_seq`, `pending_lead_request_seq`, `resume_phase` (durable phase for pause/restart recovery) |
+| Team | `mode`, `deliverable_kind`, `deliverable_description`, `run_id`, `workflow_revision`, `history_revision`, `run_request_start`, `result_seq`, `pending_lead_request_seq`, `resume_phase` (durable phase for pause/restart recovery) |
 | Member activation correlation | `activation_kind` (`lifecycle`, `finalization`, `lead_reply`), `activation_run_id`, optional `activation_request_seq`, `private_delivered_seq`; persist queued starts as member `pending_start_json` (run/phase/input), record purpose/run in activation activity and report payloads, and restore in snapshots |
 | Post payload | `run_id`, result metadata or main–lead channel/reply reference; execution source result, file fingerprints and selection metadata as applicable |
 | Phase/gate/notice | Run/mode/result references sufficient to reject stale decisions and duplicate delivery |
@@ -532,6 +533,14 @@ and commands already in flight are documented separately from the enforced plann
 Add fields through additive SQLite migrations. Explicitly define live phase membership;
 do not rely on enum tuple position. A new `result` post kind is passive, and result/lead
 requests are durable posts/team fields rather than diagnostic activity.
+
+`workflow_revision` increases on team updates, startup failure and snapshot restoration.
+Expose it on summary/detail/live/phase contracts so replayed terminal phases cannot hide a
+newer consultation in the same run. `history_revision` increases only when restoring a
+snapshot. A newer history generation resets post/activity cursors and replaces board rows,
+even when run and round are unchanged; reject late snapshots from discarded generations.
+Both fields default to zero for legacy payloads. Clear restored/deleted team channel replay
+and restored member channel replay before publishing the restored state.
 
 New rows have explicit mode. Existing rows retain nullable legacy mode to preserve
 their historical workflow, with nullable deliverable/result information and
@@ -675,7 +684,7 @@ avoid depending solely on a main-turn end that may occur before the lead finishe
 | Approval feedback/rejection | Validate run/plan, close the old instruction, and preserve historical result references |
 | Disband | Stop members/helpers and pending consultation; remove gates; reject further direct requests |
 | Rewind | Treat pending consultation as active work for existing rewind blockers; delete result/request/reply posts with their team when rewinding before creation |
-| Rewind across a later run | Snapshot/restore new team fields, assignments, result pointers and activation correlation alongside existing agent snapshots; no future-run authority survives the rewind |
+| Rewind across a later run | Snapshot/restore new team fields, assignments, result pointers and activation correlation alongside existing agent snapshots; no future-run authority survives the rewind. Checkpoint replies and cancellations before resolving a request. Restored pending exchanges become blocked/retryable; restored live lifecycles become FAILED with their resumable phase preserved, queued starts cleared and gates removed. Explicit recovery recreates the coordinator and any required approval |
 
 Phase/purpose restoration cannot depend solely on the current `_failed_from` scan through
 best-effort phase activity. Persist the resumable lifecycle phase where necessary. Preserve

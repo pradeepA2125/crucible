@@ -418,6 +418,7 @@ class TeamWorkflowOps:
             raise TeamInputError("request_seq does not match the pending request")
         if request_seq is None and team.pending_lead_request_seq:
             raise TeamInputError("reference the pending request_seq when replying")
+        self.checkpoint(team)
         with self.store.transaction():
             post = self.store.append_post(
                 team_id,
@@ -452,6 +453,7 @@ class TeamWorkflowOps:
             or not team.pending_lead_request_seq
         ):
             raise TeamInputError("request_seq does not match the pending request")
+        self.checkpoint(team)
         with self.store.transaction():
             post = self.store.append_post(
                 team_id,
