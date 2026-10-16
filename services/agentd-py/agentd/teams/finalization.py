@@ -123,9 +123,17 @@ def finalization_input(store: TeamStore, team: TeamRecord) -> str:
     selected = team.adopted_proposal_id
     lines = [
         "Finalize the requested deliverable. Do not implement or silently change its scope.",
+        f"Original request: {team.goal}",
         f"Deliverable: {team.deliverable_kind or 'recommendation'}: "
         f"{team.deliverable_description or team.goal}",
         f"Selected basis: {selected}; mode: {team.mode}; run: {team.run_id}.",
+        "If the original request asks for documents, write and save them in the workspace "
+        "using ordinary edits before reporting. Save a spec when requested, and a plan if "
+        "requested or needed. Use requested paths or suitable project documentation paths. "
+        "Include saved file paths in your report so main can read them. This finalization "
+        "permission is for requested documents; do not implement the proposed feature or fix. "
+        "If an edit is blocked or rejected, report that accurately instead of claiming "
+        "it was saved.",
     ]
     for post in store.posts(team.team_id):
         if post.kind in ("report", "result") or post.recipient is not None:

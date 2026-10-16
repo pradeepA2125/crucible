@@ -189,7 +189,9 @@ def test_members_are_told_not_to_write_files_before_implementation() -> None:
         [{"name": "team_post"}], task_subsystem_enabled=False, memory_enabled=False,
         render_ctx=_ctx("Team 'auth'. Goal: add login."), persona="")
     assert "Only phase IMPLEMENTING permits execution" in member
-    assert "In every other phase change no files, including through run_command" in member
+    assert "Other phases are read-only except for the lead's document" in member
+    assert "edits during FINALIZING" in member
+    assert "Include saved paths in the report so main can inspect the files" in member
 
 
 def test_report_proposal_assignments_survive_the_strict_codec() -> None:

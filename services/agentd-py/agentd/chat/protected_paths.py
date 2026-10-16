@@ -50,15 +50,15 @@ class TeamScopeError(PatchPreflightFailed):
 
 class TeamProtection(AgentProtection):
     """A team member or its helper (spec v2 §3.9, §8.6): protected paths first, then the
-    team's phase and plan, checked at Check 1 before any edit gate. One per activation, so
+    team's phase and plan, checked before and after any edit gate. One per activation, so
     a repeated ownership refusal for the same path can say so."""
 
     def __init__(self, rule: Callable[[str], str | None]) -> None:
         self._rule = rule
         self._told: set[str] = set()
 
-    def check_apply(self, keys: list[str]) -> None:
-        super().check_apply(keys)
+    def check_accept(self, keys: list[str]) -> None:
+        super().check_accept(keys)
         for key in keys:
             message = self._rule(key)
             if message is None:

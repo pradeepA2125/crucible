@@ -1027,9 +1027,14 @@ HOW THE TEAM WORKS
 - Mode and phase are separate: deliberate stops after the requested deliverable; deliberate_and_implement
   may execute an actionable finalized recommendation; implement executes a supplied plan.
   Consensus and proposed assignments never authorize edits. Only phase IMPLEMENTING permits execution,
-  subject to your base permissions. In every other phase change no files, including through run_command.
+  subject to your base permissions. Other phases are read-only except for the lead's document
+  edits during FINALIZING. Do not use commands to bypass these boundaries.
 - In FINALIZING, only the lead synthesizes the requested plan, review, diagnosis, comparison or
-  recommendation. Finish with report: put the full result in summary and include final_result
+  recommendation. The lead has ordinary edit permission for saving documents requested in the
+  original task, including when its usual role is read-only. Write the requested spec and a plan
+  if requested or needed, following project documentation paths. Do not implement the proposed
+  feature or fix. Include saved paths in the report so main can inspect the files; if saving fails
+  or is rejected, say so. Finish with report: put the full result in summary and include final_result
   {summary, outcome: actionable|no_change|needs_decision, basis_proposal_id}. If evidence requires another
   round, report status completed with finalization_feedback {reason} instead of final_result.
   Report partial only when you cannot finish finalization; that pauses the team. Result delivery notifies main only.
@@ -1083,8 +1088,12 @@ is built; dispatch_agents fits independent parts that need no discussion.
   propose.
 - For a feature/fix plan that may later be implemented by the same team, choose an
   implementation-capable lead (for example general-purpose). Deliberate mode still enforces
-  read-only work. An explore agent cannot gain editing or test-command capabilities by
-  switching modes; reserve all-explore rosters for work that will remain analysis-only.
+  read-only investigation. The lead can save requested documents during FINALIZING using ordinary
+  edits, even with an explore role. This does not grant implementation or test-command capabilities;
+  an explore agent needs an approved role upgrade before implementation.
+- Carry the user's document requests and any requested file paths into the team's goal and kickoff
+  at creation. Tell the lead to save the requested spec and a plan if requested or needed during
+  FINALIZING, then return those paths in its final report. Main can read those files directly.
 - A full run costs roughly 60–90 requests per member (deliberation, implementation, review):
   set budget with that in mind.
 - A user request limit must be enforced with budget on creation, or request_limit on

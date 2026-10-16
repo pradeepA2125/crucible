@@ -274,6 +274,21 @@ Clear the active cutoff on leaving deliberation while retaining historical round
 Use durable agent report/transcript records with run/activation correlation for this input;
 do not require the best-effort `wrapped_up` activity write to have succeeded.
 
+Main carries requested documents and file paths into the goal and kickoff at creation.
+During FINALIZING, the lead has ordinary edit permission to save those documents, including
+when its usual role is `explore`. Its instructions require saving a requested spec and a
+plan when requested or needed, using the requested paths or project documentation locations.
+It includes saved paths in the existing final report so main can inspect the files, and
+reports blocked or rejected writes accurately. No additional tool, output contract or
+publication receipt is introduced. Document scope is enforced by instructions; the normal
+edit action itself grants file writes, not a document-specific sandbox.
+
+The grant lasts only for the lead's finalization activation in the current run. It does
+not extend to helpers, peers or private lead consultation, and does not authorize feature
+implementation. Normal edit review, protected paths, write accounting and rewind apply;
+inherited read-only restrictions and required review remain binding. Recheck the team
+phase/run when accepting an edit after a review wait.
+
 The lead completes using the existing `report` action with an optional team-only field:
 
 ```json
@@ -506,6 +521,7 @@ The execution boundary has three layers:
 
 For deliberation, finalization, and standalone lead consultation, permit local read/search,
 retrieval, team discussion, bounded helper investigation, and existing permitted web reads.
+Finalization additionally permits the lead's ordinary document edits described in §5.
 Exclude arbitrary `run_command` and MCP tools from the team investigation surface in this
 version. Shell commands are arbitrary code, and MCP effects are not currently classified
 reliably; a textual “read-only command” promise is insufficient. Network reads retain
@@ -520,7 +536,9 @@ disable verification by applying the stricter investigation policy to all non-ed
 Do not persist phase narrowing into the agent's underlying definition permission. A
 general-purpose member must regain its base allowed edit/tools when entering an authorized
 implementation activation. Conversely, an `explore` or explicit-plan definition never gains
-edit capability. Helpers inherit investigation restrictions even if they have no team tools.
+implementation capability without an approved upgrade. The lead's temporary FINALIZING
+document edits are the exception described in §5; they do not change its saved definition.
+Helpers inherit investigation restrictions even if they have no team tools.
 
 `_main_team_rule` must reserve files only for active executable assignments. Proposed
 planning files do not reserve product files or instruct main to implement them. Main's
@@ -714,7 +732,7 @@ must exercise the boundaries below, with model-free scripted controller tests wh
 
 | Scenario | Acceptance |
 |---|---|
-| Plan-only with proposed assignments and unanimous agreement | Lead finalizes; no assignment activation, edit, command mutation or implementation gate |
+| Plan-only with proposed assignments and unanimous agreement | Lead finalizes and saves requested documents; no implementation assignment activation, command mutation or implementation gate |
 | Diagnosis/review/comparison/no-change | Useful accepted result; correct labels; no required implementation plan |
 | Small agree-notes | Lead includes them without repeatedly superseding the unobjected proposal |
 | Material finalization change | Reenters debate with bounded rounds; no silent execution-scope expansion |

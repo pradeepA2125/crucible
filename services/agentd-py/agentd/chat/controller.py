@@ -3431,12 +3431,17 @@ class ChatController:
 
     def _team_edit_rule(self, team_id: str, label: str, key: str, *,
                         expected_run_id: int | None = None,
-                        activation_kind: str = "lifecycle") -> str | None:
+                        activation_kind: str = "lifecycle",
+                        agent_id: str | None = None) -> str | None:
         team = self._store.teams.get_team(team_id)
         if team is None:
             return "the team no longer exists"
         if expected_run_id is not None and expected_run_id != team.run_id:
             return "this activation belongs to an earlier team run"
+        member = self._store.teams.member(team_id, label)
+        if (team.phase == "FINALIZING" and activation_kind == "finalization"
+                and label == team.lead and member is not None and member.agent_id == agent_id):
+            return None  # The lead saves requested documents with ordinary edits.
         if team.mode == "deliberate" or activation_kind == "lead_reply":
             return "deliberation and lead consultation do not allow implementation edits"
         shared: set[str] = set()
@@ -3869,6 +3874,7 @@ class ChatController:
         shadow, channel and transcript, on the shared workspace guarded by the thread's
         write log."""
         ctx = handle.context
+        tool_permission = ctx.permission  # Finalization grants edits, not additional tools.
         # Runs inside this activation's own task: the context changes stay local to it.
         CALL_PRIORITY.set("agent")  # the user's turn is served first (spec §3.11)
         USAGE_OWNER.set(handle.context.agent_id)
@@ -3927,7 +3933,17 @@ class ChatController:
                    else 40 if deliberating or team_row.phase == "FINALIZING"
                    else 25 if reviewing
                    else ctx.max_iters)
-            ctx = replace(ctx, allowed_types=tuple(t for t in ctx.allowed_types if t != "edit"),
+            finalizing_lead = (
+                membership is not None and membership.label == team_row.lead
+                and team_row.phase == "FINALIZING"
+                and handle.team_activation_kind == "finalization"
+                and not handle.inherited.get("read_only"))
+            allowed = tuple(t for t in ctx.allowed_types if t != "edit")
+            if finalizing_lead:
+                allowed = (*allowed, "edit")
+            ctx = replace(ctx, allowed_types=allowed,
+                          permission=("default" if finalizing_lead and ctx.permission == "plan"
+                                      else ctx.permission),
                           max_iters=min(ctx.max_iters, cap))
             handle.context = ctx
         if membership is not None and activation_input.startswith(TEAM_DELTA):
@@ -4052,7 +4068,7 @@ class ChatController:
 
         available = [d.name for d in AggregatingToolRegistry(sources(None)).definitions()]
         names = child_tool_names(available, definition_tools=handle.definition.tools,
-                                 permission=ctx.permission, may_dispatch=may_dispatch,
+                                 permission=tool_permission, may_dispatch=may_dispatch,
                                  definition_disallowed=handle.definition.disallowed_tools)
         if membership is not None:
             # Members can always take part (spec §7.3): only the team tools are exempt from
@@ -4075,7 +4091,8 @@ class ChatController:
             execution_guard=partial(self._team_tool_refusal, handle) if team_of else None)
         protection = (TeamProtection(partial(self._team_edit_rule, team_of.team_id,
                                              team_of.label, expected_run_id=handle.team_run_id,
-                                             activation_kind=handle.team_activation_kind))
+                                             activation_kind=handle.team_activation_kind,
+                                             agent_id=ctx.agent_id))
                       if team_of is not None else AgentProtection())
         edit_session_factory = (
             (lambda: TurnEditSession(
