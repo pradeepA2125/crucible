@@ -104,6 +104,15 @@ impl LanguageParser for TreeSitterParser {
     }
 
     fn parse_file(&self, file_path: &Path, source: &str, graph: &mut SymbolGraph) -> Result<()> {
+        let mut staged = SymbolGraph::default();
+        self.parse_into(file_path, source, &mut staged)?;
+        graph.replace_file(file_path, staged);
+        Ok(())
+    }
+}
+
+impl TreeSitterParser {
+    fn parse_into(&self, file_path: &Path, source: &str, graph: &mut SymbolGraph) -> Result<()> {
         let file_id = upsert_file_node(graph, file_path);
 
         if file_path.extension().and_then(|e| e.to_str()) == Some("py") {

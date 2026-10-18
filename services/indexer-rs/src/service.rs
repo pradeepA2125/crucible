@@ -43,6 +43,7 @@ pub struct IndexerService {
     parser: Box<dyn LanguageParser>,
     lsp: LspAdapter,
     tracked_files: HashSet<PathBuf>,
+    canonical_workspace_root: PathBuf,
     ignore_rules: IgnoreRules,
     diagnostics_snapshot: Vec<LspDiagnostic>,
     index_warnings: Vec<LspDiagnostic>,
@@ -54,6 +55,8 @@ impl IndexerService {
     pub fn new(config: IndexerConfig) -> Result<Self> {
         let lsp = LspAdapter::new(&config);
         let workspace_root = config.workspace_root.clone();
+        let canonical_workspace_root = workspace_root.canonicalize()
+            .unwrap_or_else(|_| workspace_root.clone());
         #[allow(deprecated)] // home_dir is correct on Windows from Rust 1.86; toolchain is 1.93
         let notifier = match (&config.backend_url, std::env::home_dir()) {
             (Some(_), Some(home)) => Some(std::sync::Arc::new(
@@ -66,6 +69,7 @@ impl IndexerService {
             parser: Box::new(TreeSitterParser::new(workspace_root.clone())),
             lsp,
             tracked_files: HashSet::new(),
+            canonical_workspace_root,
             ignore_rules: IgnoreRules::new(&workspace_root),
             diagnostics_snapshot: Vec::new(),
             index_warnings: Vec::new(),
@@ -224,8 +228,39 @@ impl IndexerService {
         // forever and flooding the backend with `/v1/index/build` POSTs.
         let mut processed_any = false;
         for path in event.paths {
+            // FSEvents reports canonical paths even when bootstrap walked an
+            // alias (/var vs /private/var, or a symlinked workspace). Use the
+            // bootstrap namespace for identity, including already-deleted paths.
+            let path = match path.strip_prefix(&self.canonical_workspace_root) {
+                Ok(relative) => self.config.workspace_root.join(relative),
+                Err(_) => path,
+            };
             // An edited .gitignore changes what is ignored from here on.
             self.ignore_rules.invalidate(&path);
+            // Deletion and the old side of a rename must bypass both extension
+            // filtering (directory removals) and debounce (rapid save/delete).
+            if matches!(event.kind, EventKind::Remove(_)) || !path.exists() {
+                // Include imported stubs and failed-bootstrap warnings: those
+                // files need cleanup even when they were never tracked as parsed.
+                let removed: HashSet<PathBuf> = self
+                    .tracked_files
+                    .iter()
+                    .cloned()
+                    .chain(self.graph.file_paths().map(PathBuf::from))
+                    .chain(self.index_warnings.iter().map(|w| PathBuf::from(&w.file)))
+                    .filter(|file| file.starts_with(&path))
+                    .collect();
+                for file in removed {
+                    self.tracked_files.remove(&file);
+                    self.graph.remove_file(&file);
+                    self.index_warnings
+                        .retain(|warning| warning.file != file.display().to_string());
+                    self.last_watch_event.remove(&file);
+                    self.lsp.close_file(&file).await?;
+                    processed_any = true;
+                }
+                continue;
+            }
             if !is_supported_source_path(&path) || self.ignore_rules.is_ignored(&path, false) {
                 continue;
             }
@@ -239,11 +274,6 @@ impl IndexerService {
             self.last_watch_event.insert(path.clone(), now);
 
             match event.kind {
-                EventKind::Remove(_) => {
-                    self.tracked_files.remove(&path);
-                    self.lsp.close_file(&path).await?;
-                    processed_any = true;
-                }
                 EventKind::Modify(_) | EventKind::Create(_) | EventKind::Any => {
                     if !path.exists() || !path.is_file() {
                         continue;
@@ -251,19 +281,18 @@ impl IndexerService {
 
                     match std::fs::read_to_string(&path) {
                         Ok(source) => {
-                            // Wipe stale Calls/Implements edges originating
-                            // from this file before re-parsing. The resolver
-                            // will re-emit them from the fresh placeholders.
-                            // Without this, edges that no longer match the
-                            // new source would linger as orphans.
-                            self.graph.prune_resolved_calls_from_file(&path);
+                            // The parser stages a whole-file replacement: failed
+                            // parses preserve last-good nodes AND resolved edges.
                             if let Err(error) = self.parser.parse_file(&path, &source, &mut self.graph) {
                                 self.push_index_warning(
                                     &path,
                                     format!("parser failed for changed file: {error}"),
                                 );
+                                processed_any = true; // publish the degradation warning
                                 continue;
                             }
+                            self.index_warnings
+                                .retain(|warning| warning.file != path.display().to_string());
                             self.tracked_files.insert(path.clone());
                             self.lsp.upsert_file(&path, source).await?;
                             if self.config.lsp_enabled {
@@ -429,5 +458,191 @@ fn language_for_path(path: &Path) -> &'static str {
         Some("go") => "go",
         Some("java") => "java",
         _ => "unknown",
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
+
+    async fn fixture() -> (tempfile::TempDir, IndexerService) {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("src")).unwrap();
+        std::fs::write(
+            temp.path().join("src/a.ts"),
+            "export function original() { return fetch(); }",
+        )
+        .unwrap();
+        let mut config = IndexerConfig::from_env();
+        config.workspace_root = temp.path().to_path_buf();
+        config.snapshot_output_path = temp.path().join(".crucible/index-snapshot.json");
+        config.lsp_enabled = false;
+        config.backend_url = None;
+        let mut service = IndexerService::new(config).unwrap();
+        service.bootstrap().await.unwrap();
+        (temp, service)
+    }
+
+    #[tokio::test]
+    async fn deletion_after_a_recent_event_removes_nodes_and_incident_edges() {
+        let (temp, mut service) = fixture().await;
+        let path = temp.path().join("src/a.ts");
+        service
+            .last_watch_event
+            .insert(path.clone(), Instant::now());
+        std::fs::remove_file(&path).unwrap();
+        service
+            .handle_watch_event(Event::new(EventKind::Remove(RemoveKind::File)).add_path(path))
+            .await
+            .unwrap();
+        let snapshot: IndexSnapshot =
+            serde_json::from_slice(&std::fs::read(&service.config.snapshot_output_path).unwrap())
+                .unwrap();
+        assert!(
+            snapshot.graph.nodes.is_empty(),
+            "deleted source must disappear from the published graph"
+        );
+        assert!(snapshot.graph.edges.is_empty());
+        assert!(service.tracked_files.is_empty());
+    }
+
+    #[tokio::test]
+    async fn directory_deletion_removes_descendant_source() {
+        let (temp, mut service) = fixture().await;
+        let path = temp.path().join("src");
+        std::fs::remove_dir_all(&path).unwrap();
+        service
+            .handle_watch_event(Event::new(EventKind::Remove(RemoveKind::Folder)).add_path(path))
+            .await
+            .unwrap();
+        assert!(service.graph.all_nodes().is_empty());
+        assert!(service.tracked_files.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn canonical_watcher_paths_replace_and_delete_configured_alias_paths() {
+        let (temp, service) = fixture().await;
+        let alias_parent = tempfile::tempdir().unwrap();
+        let alias = alias_parent.path().join("workspace");
+        std::os::unix::fs::symlink(temp.path(), &alias).unwrap();
+        let mut config = service.config.clone();
+        config.workspace_root = alias.clone();
+        config.snapshot_output_path = alias.join(".crucible/index-snapshot.json");
+        let mut service = IndexerService::new(config).unwrap();
+        service.bootstrap().await.unwrap();
+        let physical = temp.path().canonicalize().unwrap().join("src/a.ts");
+        std::fs::write(&physical, "export function replacement() {}").unwrap();
+        service
+            .handle_watch_event(
+                Event::new(EventKind::Modify(ModifyKind::Any)).add_path(physical.clone()),
+            )
+            .await
+            .unwrap();
+        assert!(!service
+            .graph
+            .all_nodes()
+            .iter()
+            .any(|n| n.name == "original"));
+        assert_eq!(service.tracked_files.len(), 1);
+        std::fs::remove_file(&physical).unwrap();
+        service
+            .handle_watch_event(Event::new(EventKind::Remove(RemoveKind::File)).add_path(physical))
+            .await
+            .unwrap();
+        assert!(service.graph.all_nodes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn rename_removes_old_path_and_indexes_new_path() {
+        let (temp, mut service) = fixture().await;
+        let old = temp.path().join("src/a.ts");
+        let new = temp.path().join("src/b.ts");
+        std::fs::rename(&old, &new).unwrap();
+        service
+            .handle_watch_event(
+                Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+                    .add_path(old.clone())
+                    .add_path(new.clone()),
+            )
+            .await
+            .unwrap();
+        assert!(service
+            .graph
+            .nodes_in_file(&old.display().to_string())
+            .is_empty());
+        assert!(!service
+            .graph
+            .nodes_in_file(&new.display().to_string())
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn deletion_cleans_an_import_stub_even_when_target_never_parsed() {
+        let (temp, mut service) = fixture().await;
+        let target = temp.path().join("broken.py");
+        let importer = temp.path().join("importer.py");
+        std::fs::write(&target, "def invalid(:").unwrap();
+        std::fs::write(&importer, "import broken\n").unwrap();
+        service.index_file(&target).unwrap();
+        service.index_file(&importer).unwrap();
+        assert!(!service.tracked_files.contains(&target));
+        assert!(!service
+            .graph
+            .nodes_in_file(&target.display().to_string())
+            .is_empty());
+        std::fs::remove_file(&target).unwrap();
+        service
+            .handle_watch_event(
+                Event::new(EventKind::Remove(RemoveKind::File)).add_path(target.clone()),
+            )
+            .await
+            .unwrap();
+        assert!(service
+            .graph
+            .nodes_in_file(&target.display().to_string())
+            .is_empty());
+        assert!(!service
+            .index_warnings
+            .iter()
+            .any(|w| w.file == target.display().to_string()));
+    }
+
+    #[tokio::test]
+    async fn failed_watch_parse_publishes_warning_and_preserves_resolved_graph() {
+        let (temp, mut service) = fixture().await;
+        let path = temp.path().join("src/a.ts");
+        let before_nodes = service.graph.all_nodes();
+        let before_edges = service.graph.all_edges();
+        std::fs::write(&path, "export function partial() { broken(;").unwrap();
+        service
+            .handle_watch_event(
+                Event::new(EventKind::Modify(ModifyKind::Any)).add_path(path.clone()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(service.graph.all_nodes(), before_nodes);
+        assert_eq!(service.graph.all_edges(), before_edges);
+        let snapshot: IndexSnapshot =
+            serde_json::from_slice(&std::fs::read(&service.config.snapshot_output_path).unwrap())
+                .unwrap();
+        assert!(snapshot
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("parser failed")));
+        // The next valid parse removes both obsolete data and the resolved warning.
+        service.last_watch_event.remove(&path);
+        std::fs::write(&path, "export function replacement() {}").unwrap();
+        service
+            .handle_watch_event(Event::new(EventKind::Create(CreateKind::File)).add_path(path))
+            .await
+            .unwrap();
+        assert!(!service
+            .graph
+            .all_nodes()
+            .iter()
+            .any(|n| n.name == "original" || n.name == "partial"));
+        assert!(service.index_warnings.is_empty());
     }
 }

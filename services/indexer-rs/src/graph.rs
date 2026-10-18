@@ -181,6 +181,83 @@ impl SymbolGraph {
         ids.iter().filter_map(|id| self.nodes.get(id)).collect()
     }
 
+    pub fn file_paths(&self) -> impl Iterator<Item = &str> {
+        self.file_path_index.keys().map(String::as_str)
+    }
+
+    /// Replace one file only after its parser has succeeded. Keep incoming
+    /// relationships to IDs that survive; remove incident edges to deleted IDs.
+    /// External placeholders are shared across files, so collect them only when
+    /// no remaining edge uses them.
+    pub fn replace_file(&mut self, file_path: &std::path::Path, mut replacement: Self) {
+        let path = file_path.to_string_lossy();
+        let owned: HashSet<String> = self
+            .file_path_index
+            .get(path.as_ref())
+            .into_iter()
+            .flatten()
+            .filter(|id| !id.starts_with("external:"))
+            .cloned()
+            .collect();
+        let mut victims = HashSet::new();
+        let mut external_candidates: HashSet<String> = self
+            .file_path_index
+            .get(path.as_ref())
+            .into_iter()
+            .flatten()
+            .filter(|id| id.starts_with("external:"))
+            .cloned()
+            .collect();
+        for id in &owned {
+            for (to, kind) in self.adjacency.get(id).into_iter().flatten() {
+                victims.insert((id.clone(), to.clone(), kind.clone()));
+                if to.starts_with("external:") {
+                    external_candidates.insert(to.clone());
+                }
+            }
+            if !replacement.nodes.contains_key(id) {
+                for (from, kind) in self.reverse_adjacency.get(id).into_iter().flatten() {
+                    victims.insert((from.clone(), id.clone(), kind.clone()));
+                }
+            }
+        }
+        for (from, to, kind) in victims {
+            self.remove_edge(&SymbolEdge { from, to, kind });
+        }
+        for id in owned {
+            if let Some(node) = self.nodes.remove(&id) {
+                remove_index_entry(&mut self.symbol_name_index, &node.name.to_lowercase(), &id);
+                remove_index_entry(&mut self.file_path_index, &node.path, &id);
+            }
+        }
+        self.placeholder_edges.retain(|p| p.file_path != file_path);
+        self.placeholder_edges
+            .append(&mut replacement.placeholder_edges);
+        for node in replacement.nodes.into_values() {
+            // A parser may emit a stub for a different workspace file (imports
+            // and Go receiver owners). Do not overwrite that file's known node.
+            if node.path != path && self.nodes.contains_key(&node.id) {
+                continue;
+            }
+            self.upsert_node(node);
+        }
+        for (from, to, kind) in replacement.edges {
+            self.add_edge(SymbolEdge { from, to, kind });
+        }
+        for id in external_candidates {
+            if !self.adjacency.contains_key(&id) && !self.reverse_adjacency.contains_key(&id) {
+                if let Some(node) = self.nodes.remove(&id) {
+                    remove_index_entry(&mut self.symbol_name_index, &node.name.to_lowercase(), &id);
+                    remove_index_entry(&mut self.file_path_index, &node.path, &id);
+                }
+            }
+        }
+    }
+
+    pub fn remove_file(&mut self, file_path: &std::path::Path) {
+        self.replace_file(file_path, Self::default());
+    }
+
     /// Park a placeholder for the resolver. Parsers call this at every call
     /// site they couldn't statically resolve to a workspace target. The edge
     /// itself (pointing at the `external_to_id` fallback) must be added via
