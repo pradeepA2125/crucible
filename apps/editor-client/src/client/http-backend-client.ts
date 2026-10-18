@@ -1337,6 +1337,16 @@ export class HttpBackendClient implements BackendTaskClient {
     return HttpBackendClient.mapMcpList(raw);
   }
 
+  async setMcpServerTools(
+    name: string, enabledTools: string[] | null, disabledTools: string[], disabled: string[],
+  ): Promise<McpServerList> {
+    const raw = await this.fetchJson(`/v1/mcp/servers/${encodeURIComponent(name)}/tools`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled_tools: enabledTools, disabled_tools: disabledTools, disabled }),
+    });
+    return HttpBackendClient.mapMcpList(raw);
+  }
+
   private static mapMcpList(raw: unknown): McpServerList {
     const wire = raw as {
       enabled?: boolean;
@@ -1351,6 +1361,9 @@ export class HttpBackendClient implements BackendTaskClient {
         state: s["state"],
         detail: s["detail"] ?? null,
         toolCount: s["tool_count"] ?? 0,
+        tools: s["tools"] ?? [],
+        enabledTools: s["enabled_tools"] ?? null,
+        disabledTools: s["disabled_tools"] ?? [],
       })),
     });
   }

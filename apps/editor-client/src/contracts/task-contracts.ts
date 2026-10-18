@@ -833,18 +833,28 @@ export const ContextTestResultSchema = z.object({
 });
 export type ContextTestResult = z.infer<typeof ContextTestResultSchema>;
 
+export const McpToolViewSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  enabled: z.boolean(),
+});
 export const McpServerViewSchema = z.object({
   name: z.string(),
   transport: z.string(),
   enabledInFile: z.boolean(),
   state: z.string(),
   detail: z.string().nullable(),
+  // Visible tools only; `tools` lists every tool the server offers.
   toolCount: z.number(),
+  tools: z.array(McpToolViewSchema),
+  enabledTools: z.array(z.string()).nullable(),
+  disabledTools: z.array(z.string()),
 });
 export const McpServerListSchema = z.object({
   enabled: z.boolean(),
   servers: z.array(McpServerViewSchema),
 });
+export type McpToolView = z.infer<typeof McpToolViewSchema>;
 export type McpServerView = z.infer<typeof McpServerViewSchema>;
 export type McpServerList = z.infer<typeof McpServerListSchema>;
 
@@ -1021,6 +1031,9 @@ export interface BackendTaskClient {
   upsertMcpServer(name: string, entry: Record<string, unknown>, disabled: string[]): Promise<McpServerList>;
   deleteMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
   reconnectMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
+  setMcpServerTools(
+    name: string, enabledTools: string[] | null, disabledTools: string[], disabled: string[],
+  ): Promise<McpServerList>;
   sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: SendChatOptions): Promise<SendChatResult>;
   getAttention(workspacePath: string): Promise<ThreadAttention[]>;
   stopAllAgents(threadId: string): Promise<number>;

@@ -57,9 +57,34 @@ describe("settings client methods", () => {
     const res = await clientWith({ enabled: true, servers: [{
       name: "web", transport: "stdio", enabled_in_file: true,
       state: "connected", detail: null, tool_count: 2 }] }).listMcpServers();
+    // An older backend sends no tool fields: they default.
     expect(res.servers[0]).toEqual({
       name: "web", transport: "stdio", enabledInFile: true,
-      state: "connected", detail: null, toolCount: 2 });
+      state: "connected", detail: null, toolCount: 2,
+      tools: [], enabledTools: null, disabledTools: [] });
+  });
+
+  test("listMcpServers maps tool filters and the tool inventory", async () => {
+    const res = await clientWith({ enabled: true, servers: [{
+      name: "web", transport: "stdio", enabled_in_file: true, state: "connected",
+      detail: null, tool_count: 1,
+      tools: [{ name: "a", description: "does a", enabled: true },
+              { name: "b", description: "does b", enabled: false }],
+      enabled_tools: ["a", "b"], disabled_tools: ["b"] }] }).listMcpServers();
+    expect(res.servers[0].tools).toEqual([
+      { name: "a", description: "does a", enabled: true },
+      { name: "b", description: "does b", enabled: false }]);
+    expect(res.servers[0].enabledTools).toEqual(["a", "b"]);
+    expect(res.servers[0].disabledTools).toEqual(["b"]);
+  });
+
+  test("setMcpServerTools PUTs the two lists and the disabled servers", async () => {
+    const sent: Sent[] = [];
+    await clientWith({ enabled: true, servers: [] }, sent)
+      .setMcpServerTools("web", null, ["b"], ["gh"]);
+    expect(sent[0].url).toContain("/v1/mcp/servers/web/tools");
+    expect(sent[0].method).toBe("PUT");
+    expect(sent[0].body).toEqual({ enabled_tools: null, disabled_tools: ["b"], disabled: ["gh"] });
   });
 
   test("upsertMcpServer PUTs entry + disabled", async () => {
