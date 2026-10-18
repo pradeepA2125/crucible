@@ -25,11 +25,25 @@ async def _stub_factory(cfg):
     yield _StubSession()
 
 
-def _client(tmp_path: Path, with_manager: bool = True) -> TestClient:
+class _TwoToolSession:
+    async def list_tools(self):
+        class _R:
+            tools = [type("T", (), {"name": n, "description": f"does {n}", "inputSchema": {}})()
+                     for n in ("a", "b")]
+
+        return _R()
+
+
+@asynccontextmanager
+async def _two_tool_factory(cfg):
+    yield _TwoToolSession()
+
+
+def _client(tmp_path: Path, with_manager: bool = True, factory=_stub_factory) -> TestClient:
     manager = None
     if with_manager:
         manager = McpConnectionManager(
-            McpConfigLoader(tmp_path), session_factory=_stub_factory
+            McpConfigLoader(tmp_path), session_factory=factory
         )
     app = FastAPI()
     app.include_router(
@@ -90,3 +104,44 @@ def test_delete_and_reconnect(tmp_path: Path) -> None:
         body = client.request("DELETE", "/v1/mcp/servers/web", json={}).json()
         assert all(s["name"] != "web" for s in body["servers"])
         assert client.request("DELETE", "/v1/mcp/servers/web", json={}).status_code == 404
+
+
+def _seed_web(tmp_path: Path) -> None:
+    path = tmp_path / ".crucible" / "mcp.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"mcpServers": {"web": {"command": "x", "enabled": True}}}))
+
+
+def test_put_tools_filters_and_lists_every_tool(tmp_path: Path) -> None:
+    _seed_web(tmp_path)
+    # One event loop for both requests: the PUT's reconcile awaits serve tasks the
+    # reconnect spawned (same reason as test_delete_and_reconnect).
+    with _client(tmp_path, factory=_two_tool_factory) as client:
+        client.post("/v1/mcp/servers/web/reconnect", json={"disabled": []})
+        resp = client.put("/v1/mcp/servers/web/tools",
+                          json={"disabled_tools": ["b"], "disabled": []})
+    assert resp.status_code == 200
+    (web,) = [s for s in resp.json()["servers"] if s["name"] == "web"]
+    assert web["tools"] == [{"name": "a", "description": "does a", "enabled": True},
+                            {"name": "b", "description": "does b", "enabled": False}]
+    assert web["tool_count"] == 1
+    assert web["enabled_tools"] is None and web["disabled_tools"] == ["b"]
+
+
+def test_listing_shows_no_tools_for_unconnected_server(tmp_path: Path) -> None:
+    _seed_web(tmp_path)
+    (web,) = _client(tmp_path, factory=_two_tool_factory).get("/v1/mcp/servers").json()["servers"]
+    assert web["tools"] == [] and web["enabled_tools"] is None and web["disabled_tools"] == []
+
+
+def test_put_tools_unknown_server_404(tmp_path: Path) -> None:
+    _seed_web(tmp_path)
+    resp = _client(tmp_path).put("/v1/mcp/servers/nope/tools", json={"disabled_tools": []})
+    # The route's own 404, not FastAPI's "Not Found" for a missing route.
+    assert resp.status_code == 404 and resp.json()["detail"] == "no MCP server named 'nope'"
+
+
+def test_put_tools_when_mcp_disabled_409(tmp_path: Path) -> None:
+    resp = _client(tmp_path, with_manager=False).put(
+        "/v1/mcp/servers/web/tools", json={"disabled_tools": []})
+    assert resp.status_code == 409

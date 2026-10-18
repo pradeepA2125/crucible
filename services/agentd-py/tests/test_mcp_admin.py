@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from agentd.mcp.admin import read_raw_servers, remove_server, upsert_server
+from agentd.mcp.admin import read_raw_servers, remove_server, set_tool_filters, upsert_server
 from agentd.mcp.client import McpConnectionManager
 from agentd.mcp.config import McpConfigLoader
 
@@ -92,3 +92,19 @@ async def test_reconcile_disabled_filters_and_reconnect(tmp_path: Path) -> None:
     await manager.reconnect("web")
     assert {s.name for s in manager.statuses()} >= {"web"}
     await manager.shutdown()
+
+
+def test_set_tool_filters_writes_only_the_two_lists(tmp_path: Path) -> None:
+    path = tmp_path / "mcp.json"
+    entry = {"command": "uv", "args": ["run", "x.py"], "env": {"K": "${K}"},
+             "enabled": True, "note": "keep me"}
+    path.write_text(json.dumps({"mcpServers": {"web": entry}, "other": 1}))
+    assert set_tool_filters(path, "web", None, ["b"]) is True
+    raw = json.loads(path.read_text())
+    assert raw["other"] == 1
+    assert raw["mcpServers"]["web"] == {**entry, "disabled_tools": ["b"]}
+    assert set_tool_filters(path, "web", ["a"], []) is True
+    assert json.loads(path.read_text())["mcpServers"]["web"] == {**entry, "enabled_tools": ["a"]}
+    before = path.read_text()
+    assert set_tool_filters(path, "missing", None, []) is False
+    assert path.read_text() == before

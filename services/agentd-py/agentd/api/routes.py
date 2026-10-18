@@ -104,6 +104,12 @@ class McpDisabledRequest(BaseModel):
     disabled: list[str] = []
 
 
+class McpToolFiltersRequest(BaseModel):
+    enabled_tools: list[str] | None = None
+    disabled_tools: list[str] = []
+    disabled: list[str] = []
+
+
 def _effort_support_payload(support: object) -> dict[str, object]:
     """EffortSupport to JSON. Sorted so the payload is stable across restarts and
     the frontend's dedup/diffing never sees spurious churn."""
@@ -441,6 +447,7 @@ def build_router(
         if mcp_manager is None:
             return {"enabled": False, "servers": []}
         statuses = {s.name: s for s in mcp_manager.statuses()}  # type: ignore[attr-defined]
+        inventory = mcp_manager.tool_inventory()  # type: ignore[attr-defined]
         servers = []
         for name, entry in read_raw_servers(
             mcp_manager.loader.config_path  # type: ignore[attr-defined]
@@ -457,6 +464,9 @@ def build_router(
                     "state": status.state if status else "not_connected",
                     "detail": getattr(status, "detail", None) if status else None,
                     "tool_count": getattr(status, "tool_count", 0) if status else 0,
+                    "tools": [t.model_dump() for t in inventory.get(name, [])],
+                    "enabled_tools": entry.get("enabled_tools"),
+                    "disabled_tools": entry.get("disabled_tools") or [],
                 }
             )
         return {"enabled": True, "servers": servers}
@@ -490,6 +500,23 @@ def build_router(
         if mcp_manager is None:
             raise HTTPException(status_code=409, detail="MCP is disabled")
         if not remove_server(mcp_manager.loader.config_path, name):  # type: ignore[attr-defined]
+            raise HTTPException(status_code=404, detail=f"no MCP server named {name!r}")
+        await mcp_manager.reconcile(  # type: ignore[attr-defined]
+            mcp_manager.loader.load(),  # type: ignore[attr-defined]
+            disabled=frozenset(body.disabled),
+        )
+        return _mcp_server_listing()
+
+    @router.put("/mcp/servers/{name}/tools")
+    async def put_mcp_server_tools(name: str, body: McpToolFiltersRequest) -> dict[str, object]:
+        from agentd.mcp.admin import set_tool_filters
+
+        if mcp_manager is None:
+            raise HTTPException(status_code=409, detail="MCP is disabled")
+        if not set_tool_filters(
+            mcp_manager.loader.config_path,  # type: ignore[attr-defined]
+            name, body.enabled_tools, body.disabled_tools,
+        ):
             raise HTTPException(status_code=404, detail=f"no MCP server named {name!r}")
         await mcp_manager.reconcile(  # type: ignore[attr-defined]
             mcp_manager.loader.load(),  # type: ignore[attr-defined]

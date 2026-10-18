@@ -51,3 +51,22 @@ def remove_server(path: Path, name: str) -> bool:
     del servers[name]
     path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
     return True
+
+
+def set_tool_filters(
+    path: Path, name: str, enabled_tools: list[str] | None, disabled_tools: list[str],
+) -> bool:
+    """Set one server's tool filters, leaving every other key verbatim. An unset filter
+    (None allowlist, empty blocklist) removes its key. False when the server is absent."""
+    raw = _read_raw(path)
+    servers = raw.get("mcpServers")
+    entry = servers.get(name) if isinstance(servers, dict) else None
+    if not isinstance(entry, dict):
+        return False
+    for key, value in (("enabled_tools", enabled_tools), ("disabled_tools", disabled_tools)):
+        if value is None or (key == "disabled_tools" and not value):
+            entry.pop(key, None)
+        else:
+            entry[key] = list(value)
+    path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    return True
