@@ -51,8 +51,12 @@ export interface McpServerRow {
   enabledInFile: boolean;
   state: string;
   detail: string | null;
+  // Visible tools only; `tools` lists every tool the server offers.
   toolCount: number;
   userEnabled: boolean;
+  tools: { name: string; description: string; enabled: boolean }[];
+  enabledTools: string[] | null;
+  disabledTools: string[];
 }
 
 export interface SettingsState {
@@ -91,6 +95,7 @@ export type SettingsInMsg =
   | { type: "settings/mcpDelete"; name: string }
   | { type: "settings/mcpToggle"; name: string; enabled: boolean }
   | { type: "settings/mcpReconnect"; name: string }
+  | { type: "settings/mcpTools"; name: string; enabledTools: string[] | null; disabledTools: string[] }
   | { type: "settings/skillToggle"; name: string; enabled: boolean }
   | { type: "settings/setEnvFlag"; key: string; value: string }
   | { type: "settings/loadInstructions" }

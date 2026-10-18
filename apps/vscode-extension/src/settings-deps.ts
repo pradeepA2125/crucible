@@ -64,6 +64,8 @@ export function buildSettingsDeps(opts: SettingsDepsOptions): SettingsDeps {
       upsertMcpServer: (name, entry, disabled) => client().upsertMcpServer(name, entry, disabled),
       deleteMcpServer: (name, disabled) => client().deleteMcpServer(name, disabled),
       reconnectMcpServer: (name, disabled) => client().reconnectMcpServer(name, disabled),
+      setMcpServerTools: (name, enabledTools, disabledTools, disabled) =>
+        client().setMcpServerTools(name, enabledTools, disabledTools, disabled),
       testContextWindow: (req) => client().testContextWindow(req),
       listAgentDefinitions: () => client().listAgentDefinitions(),
       saveAgentDefinition: (name, input) => client().saveAgentDefinition(name, input),

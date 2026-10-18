@@ -4,6 +4,8 @@ import { BtnDanger, BtnGhost, BtnPrimary } from "../../components/shared/buttons
 import { Switch } from "../../components/shared/Switch";
 import { SectionHeader } from "../SectionHeader";
 import { buildMcpEntry, type McpTransport } from "../mcpEntry";
+import { nextToolFilters } from "../mcpToolFilters";
+import type { McpServerRow } from "../types";
 import { FIELD } from "../ui";
 import type { SectionProps } from "./meta";
 
@@ -23,6 +25,48 @@ function StatusDot({ state }: { state: string }) {
         animation: state === "connecting" ? "dot-pulse 1.2s ease-in-out infinite" : undefined,
       }}
     />
+  );
+}
+
+/** Collapsed list of every tool a connected server offers, one checkbox each. Servers
+ *  can list dozens of tools, so it stays closed until asked for. */
+function ToolList({ server, busy, send }: { server: McpServerRow } & Pick<SectionProps, "busy" | "send">) {
+  const [open, setOpen] = useState(false);
+  if (server.tools.length === 0) return null;
+  const enabled = server.tools.filter((t) => t.enabled).length;
+  return (
+    <div className="px-3 pb-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={`Tools for ${server.name}: ${enabled} of ${server.tools.length} enabled`}
+        className="text-[11px] text-text-3 hover:text-text-1"
+        onClick={() => setOpen(!open)}
+      >
+        {open ? "▾" : "▸"} Tools · {enabled} of {server.tools.length} enabled
+      </button>
+      {open && (
+        <ul className="mt-1.5 flex flex-col gap-1">
+          {server.tools.map((tool) => (
+            <li key={tool.name}>
+              <label className="flex items-start gap-2 text-[11px]" title={tool.description}>
+                <input
+                  type="checkbox"
+                  checked={tool.enabled}
+                  disabled={busy}
+                  onChange={(e) => send({
+                    type: "settings/mcpTools",
+                    name: server.name,
+                    ...nextToolFilters(server, tool.name, e.target.checked),
+                  })}
+                />
+                <span className="font-mono text-text-2">{tool.name}</span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -77,6 +121,7 @@ export function McpSection({ state, busy, send }: SectionProps) {
               }
             >
               {s.detail && <p className="px-3 pb-2 text-[11px] text-text-3">{s.detail}</p>}
+              <ToolList server={s} busy={busy} send={send} />
             </CardShell>
           </div>
         ))}

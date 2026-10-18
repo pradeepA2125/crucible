@@ -6,7 +6,7 @@ import type { SettingsState } from "../types";
 const state: SettingsState = {
   provider: { backend: "gemini", model: "gemini-flash-latest" },
   runtime: null,
-  mcp: { enabled: true, servers: [{ name: "web", transport: "stdio", enabledInFile: true, state: "connected", detail: null, toolCount: 2, userEnabled: true }] },
+  mcp: { enabled: true, servers: [{ name: "web", transport: "stdio", enabledInFile: true, state: "connected", detail: null, toolCount: 2, userEnabled: true, tools: [], enabledTools: null, disabledTools: [] }] },
   skills: [{ name: "code-review", description: "d", enabled: true }],
   envFlags: {},
   restartRequired: false,

@@ -44,6 +44,9 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
             state: "connected",
             detail: null,
             toolCount: 2,
+            tools: [],
+            enabledTools: null,
+            disabledTools: [],
           },
         ],
       }),
@@ -53,6 +56,7 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
       upsertMcpServer: async () => ({ enabled: true, servers: [] }),
       deleteMcpServer: async () => ({ enabled: true, servers: [] }),
       reconnectMcpServer: vi.fn(async () => ({ enabled: true, servers: [] })),
+      setMcpServerTools: vi.fn(async () => ({ enabled: true, servers: [] })),
       testContextWindow: async () => ({ ok: true, recalled: true }),
       listAgentDefinitions: vi.fn(async () => CATALOG),
       saveAgentDefinition: vi.fn(async () => CATALOG.agents[0]!),
@@ -246,6 +250,16 @@ describe("createSettingsHandler", () => {
     await handle({ type: "settings/mcpToggle", name: "web", enabled: false });
     expect(d.mcpDisabled()).toEqual(["web"]);
     expect(d.client.reconnectMcpServer).toHaveBeenCalledWith("web", ["web"]);
+  });
+
+  it("mcpTools saves the server's tool filters with the user-local disabled list", async () => {
+    const d = deps();
+    const posted: SettingsOutMsg[] = [];
+    await createSettingsHandler(d, (m) => posted.push(m))({
+      type: "settings/mcpTools", name: "web", enabledTools: null, disabledTools: ["b"],
+    });
+    expect(d.client.setMcpServerTools).toHaveBeenCalledWith("web", null, ["b"], []);
+    expect(posted.some((m) => m.type === "settings/state")).toBe(true);
   });
 
   it("skillToggle flags restartRequired", async () => {

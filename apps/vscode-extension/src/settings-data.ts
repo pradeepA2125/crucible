@@ -59,6 +59,7 @@ export type SettingsInMsg =
   | { type: "settings/mcpDelete"; name: string }
   | { type: "settings/mcpToggle"; name: string; enabled: boolean }
   | { type: "settings/mcpReconnect"; name: string }
+  | { type: "settings/mcpTools"; name: string; enabledTools: string[] | null; disabledTools: string[] }
   | { type: "settings/skillToggle"; name: string; enabled: boolean }
   | { type: "settings/setEnvFlag"; key: string; value: string }
   | { type: "settings/loadInstructions" }
@@ -117,6 +118,9 @@ export interface SettingsDeps {
     ): Promise<McpServerList>;
     deleteMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
     reconnectMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
+    setMcpServerTools(
+      name: string, enabledTools: string[] | null, disabledTools: string[], disabled: string[],
+    ): Promise<McpServerList>;
     testContextWindow(req: {
       backend: string;
       model?: string;
@@ -375,6 +379,12 @@ export function createSettingsHandler(
         }
         case "settings/mcpReconnect": {
           await deps.client.reconnectMcpServer(msg.name, deps.mcpDisabled());
+          await postState();
+          return;
+        }
+        case "settings/mcpTools": {
+          await deps.client.setMcpServerTools(
+            msg.name, msg.enabledTools, msg.disabledTools, deps.mcpDisabled());
           await postState();
           return;
         }

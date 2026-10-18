@@ -10,8 +10,11 @@ function makeState(overrides: Partial<SettingsState["mcp"]> = {}): SettingsState
     mcp: {
       enabled: true,
       servers: [
-        { name: "web", transport: "stdio", enabledInFile: true, state: "connected", detail: null, toolCount: 2, userEnabled: true },
-        { name: "gh", transport: "http", enabledInFile: true, state: "failed", detail: "missing GITHUB_PAT", toolCount: 0, userEnabled: true },
+        { name: "web", transport: "stdio", enabledInFile: true, state: "connected", detail: null, toolCount: 1, userEnabled: true,
+          tools: [{ name: "a", description: "does a", enabled: true }, { name: "b", description: "does b", enabled: false }],
+          enabledTools: null, disabledTools: ["b"] },
+        { name: "gh", transport: "http", enabledInFile: true, state: "failed", detail: "missing GITHUB_PAT", toolCount: 0, userEnabled: true,
+          tools: [], enabledTools: null, disabledTools: [] },
       ],
       ...overrides,
     },
@@ -50,4 +53,29 @@ describe("McpSection", () => {
       entry: { command: "uv", args: ["run", "docs.py"], enabled: true },
     });
   });
+
+  it("lists every tool behind a disclosure and toggles one", () => {
+    const send = vi.fn();
+    render(<McpSection state={makeState()} busy={false} send={send} />);
+    fireEvent.click(screen.getByRole("button", { name: "Tools for web: 1 of 2 enabled" }));
+    const a = screen.getByRole("checkbox", { name: "a" }) as HTMLInputElement;
+    const b = screen.getByRole("checkbox", { name: "b" }) as HTMLInputElement;
+    expect(a.checked).toBe(true);
+    expect(b.checked).toBe(false);
+    fireEvent.click(b);
+    expect(send).toHaveBeenCalledWith({
+      type: "settings/mcpTools", name: "web", enabledTools: null, disabledTools: [] });
+  });
+
+  it("offers no tool list for a server that is not connected", () => {
+    render(<McpSection state={makeState()} busy={false} send={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /^Tools for gh/ })).toBeNull();
+  });
+
+  it("disables tool checkboxes while busy", () => {
+    render(<McpSection state={makeState()} busy={true} send={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Tools for web: 1 of 2 enabled" }));
+    expect((screen.getByRole("checkbox", { name: "a" }) as HTMLInputElement).disabled).toBe(true);
+  });
 });
+
