@@ -79,16 +79,8 @@ def valid_input_tokens(value: object) -> int | None:
     return value if type(value) is int and value >= 0 else None
 
 
-def estimate_request_input(model: str, body: dict[str, Any]) -> int:
-    """Estimate text characters / four plus a separate native-image allowance.
-
-    This is explicitly a heuristic, not provider accuracy. Include framing,
-    instructions, history, native tool tails and every tool/grammar schema.
-    Image cost uses the application's size-based heuristic, not encoded file size
-    or a provider billing formula. Unknown images get a fixed conservative budget.
-    Exclude dispatch controls and output reservations. The model argument leaves
-    room for model-specific tokenizers without changing the observer interface.
-    """
+def _visible_request(body: dict[str, Any]) -> tuple[str, int]:
+    """The model-visible request text, serialized, plus its native-image allowance."""
     fields = ('instructions', 'input', 'messages', 'contents', 'tools', 'tool_choice',
               'functions', 'function_call', 'text', 'response_format')
     visible = {key: body[key] for key in fields if key in body}
@@ -103,7 +95,37 @@ def estimate_request_input(model: str, body: dict[str, Any]) -> int:
             visible[key], tokens = _text_and_image_tokens(visible[key])
             image_tokens += tokens
     serialized = json.dumps(visible, ensure_ascii=False, separators=(',', ':'), default=str)
+    return serialized, image_tokens
+
+
+def estimate_request_input(model: str, body: dict[str, Any]) -> int:
+    """Estimate text characters / four plus a separate native-image allowance.
+
+    This is explicitly a heuristic, not provider accuracy. Include framing,
+    instructions, history, native tool tails and every tool/grammar schema.
+    Image cost uses the application's size-based heuristic, not encoded file size
+    or a provider billing formula. Unknown images get a fixed conservative budget.
+    Exclude dispatch controls and output reservations. Cheap enough for the request
+    path (progress ticker, tool-result budget); the meter uses count_request_input.
+    """
+    serialized, image_tokens = _visible_request(body)
     return (len(serialized) + 3) // 4 + image_tokens
+
+
+def count_request_input(model: str, body: dict[str, Any]) -> int:
+    """The same request text counted with the o200k_base tokenizer, one encoding for
+    every model: an estimate, closer than characters / four on JSON-heavy requests.
+
+    Tokenizing a large request takes time, so the meter calls this off the request
+    path. Until the startup hook has loaded the encoding it is estimate_request_input.
+    """
+    from agentd.context_metrics import count_text_tokens
+
+    serialized, image_tokens = _visible_request(body)
+    tokens = count_text_tokens(serialized)
+    if tokens is None:
+        return (len(serialized) + 3) // 4 + image_tokens
+    return tokens + image_tokens
 
 
 def _safe(observer: ContextInputObserver | None, method: str, *args: Any) -> None:

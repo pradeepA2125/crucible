@@ -9,6 +9,7 @@ from functools import partial
 from pathlib import Path
 from typing import TypedDict
 
+from agentd.context_metrics import count_text_tokens
 from agentd.history_metadata import message_sequence
 from agentd.local_models import LocalModels
 from agentd.memory.compactor import AnchorSummarizer, Compactor, estimate_tokens
@@ -28,6 +29,7 @@ from agentd.memory.store import MemoryStore
 from agentd.providers.contracts import ModelJsonTransport
 from agentd.providers.plan_access import find_access_stop
 from agentd.providers.request_budget import RequestBudgetExhausted
+from agentd.reasoning.react_common import accepts_kwarg
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,7 @@ logger = logging.getLogger(__name__)
 class _CompactionOptions(TypedDict, total=False):
     force: bool
     projected_history: History
+    unmeasured_overhead: int
 
 # Running-memory prompt. Modelled on the Claude Code conversation-summarization template
 # (sectioned, distill-don't-copy), tightened against two failure modes seen live on a
@@ -137,6 +140,10 @@ def summary_input_tokens(old_anchor: str, evicted_text: str) -> int:
 
     This is a budget estimate, not a provider tokenizer or a promise about actual usage.
     The transport reserve covers message envelopes and model-specific routing fields.
+    chars/3, not the tokenizer: next_fold's binary search calls this ~20 times per
+    compaction on prefixes up to 200k tokens — 246 ms on the event loop with
+    o200k_base vs 15 ms, measured 2026-10-19 — and chars/3 already over-counted that
+    real history by 22%, so the larger-of-both never changed a fold.
     """
     payload = json.dumps({"transcript": _render_transcript(old_anchor, evicted_text)}, indent=2)
     return estimate_tokens(_SUMMARY_SYSTEM + payload) + 1 + 2048
@@ -262,6 +269,7 @@ class MemoryHarness:
         self, history: History, run_id: str, query: str = "",
         observed: ObservedPrompt | None = None, *, consolidate: bool = True,
         force: bool = False, projected_history: History | None = None,
+        unmeasured_overhead: int | None = None,
     ) -> TurnPreparation:
         if not self._enabled:
             return TurnPreparation(history=history, recalled_memories=[], compacted=False)
@@ -277,6 +285,9 @@ class MemoryHarness:
                     options["force"] = True
                 if projected_history is not None:
                     options["projected_history"] = projected_history
+                if unmeasured_overhead is not None and accepts_kwarg(
+                        self._compactor.maybe_compact, "unmeasured_overhead"):
+                    options["unmeasured_overhead"] = unmeasured_overhead
                 result = await self._compactor.maybe_compact(
                     history, run_id, observed=observed, **options)
             except Exception as exc:
@@ -427,7 +438,8 @@ class MemoryHarness:
         budget = self._recall_token_budget
         for m in mems:
             line = f"- ({getattr(m, 'kind', '?')}) {getattr(m, 'content', '')}"
-            budget -= max(1, len(line) // 4)
+            counted = count_text_tokens(line)
+            budget -= max(1, counted if counted is not None else estimate_tokens(line))
             if budget < 0:
                 break
             out.append(line)

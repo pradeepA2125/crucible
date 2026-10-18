@@ -52,16 +52,20 @@ def _is_usable(history: History, observed: ObservedPrompt | None) -> bool:
     return observed is not None and observed.message_count <= len(history)
 
 
-def input_tokens(history: History, observed: ObservedPrompt | None) -> int:
+def input_tokens(
+    history: History, observed: ObservedPrompt | None, unmeasured_overhead: int = 0,
+) -> int:
     """Total input tokens the next call will send: system prompt, schemas and
     history together.
 
     The window holds all of it, so all of it counts against the trigger. The
     character estimate could only ever see message contents, missing the system
-    prompt entirely — about 14.5k tokens on a real controller turn.
+    prompt entirely — about 14.5k tokens on a real controller turn. Without a
+    measured count (the first call, or a provider that reports no usage) the
+    caller's `unmeasured_overhead` estimate of those parts stands in for it.
     """
     if not _is_usable(history, observed):
-        return _history_tokens(history)
+        return _history_tokens(history) + max(0, unmeasured_overhead)
     assert observed is not None  # narrowed by _is_usable
     return observed.tokens + _history_tokens(history[observed.message_count:])
 
@@ -272,6 +276,7 @@ class Compactor:
     async def maybe_compact(
         self, history: History, run_id: str, observed: ObservedPrompt | None = None,
         *, force: bool = False, projected_history: History | None = None,
+        unmeasured_overhead: int = 0,
     ) -> CompactionResult:
         accounting = projected_history if projected_history is not None else history
         # Pure token-trigger check (no count short-circuit: a short history of oversized
@@ -283,7 +288,8 @@ class Compactor:
         # eight transports that report no usage are unaffected.
         # force: the provider refused the last request as over its window, so the input
         # must shrink whatever the count says.
-        if not force and input_tokens(accounting, observed) < self.trigger_tokens():
+        if not force and (input_tokens(accounting, observed, unmeasured_overhead)
+                          < self.trigger_tokens()):
             return CompactionResult(compacted=False, history=history)
         now = datetime.now(UTC)
         ms = int(now.timestamp() * 1000)

@@ -38,7 +38,14 @@ async def test_runtime_catalog_is_nonblocking_and_late_result_cannot_restore_inp
     assert snap.context_window is None
     observer = tracker.observer('a', 't')
     observer.begin('m', {'input': 'hello'})
+    # The meter's count lands from an executor thread; let it settle before taking
+    # the timestamp the catalog result must not rewrite.
+    for _ in range(200):
+        if tracker.snapshot('a').input_quality == 'estimated':
+            break
+        await asyncio.sleep(0.005)
     timestamp = tracker.snapshot('a').observed_at
+    assert timestamp is not None
     await asyncio.sleep(0)
     runtime.future.set_result((200000, 'catalog'))
     await asyncio.sleep(0)

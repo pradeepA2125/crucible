@@ -210,19 +210,14 @@ class RequestObserver:
     def begin(self, model: str, body: dict) -> PhysicalObservation | None:
         if not self._alive() or model != self._tracker._model:
             return None
-        from agentd.providers.context_observation import estimate_request_input
-        try:
-            estimate = valid_count(estimate_request_input(model, body))
-        except (TypeError, ValueError):
-            estimate = None
         generation = self._tracker.snapshot(self._thread).generation + 1
+        # The meter keeps its previous count until this request's count arrives.
         self._tracker._put(self._thread, generation=generation, model=model,
-                           turn_id=self._turn, request_id=uuid4().hex, status='in_flight',
-                           input_tokens=estimate,
-                           input_quality='estimated' if estimate is not None else 'unavailable',
-                           observed_at=datetime.now(UTC).isoformat().replace('+00:00', 'Z') if estimate is not None else None)
-        self._attempt = PhysicalObservation(self, generation)
-        return self._attempt
+                           turn_id=self._turn, request_id=uuid4().hex, status='in_flight')
+        attempt = PhysicalObservation(self, generation)
+        self._attempt = attempt
+        _count_in_background(model, body, attempt.estimated)
+        return attempt
 
     def reported(self, value: object) -> None:
         # Compatibility for single-attempt callers; transport callbacks use handles.
@@ -234,12 +229,46 @@ class RequestObserver:
             self._attempt.finish()
 
 
+def _count(model: str, body: dict[str, object]) -> int | None:
+    from agentd.providers import context_observation
+    try:
+        return valid_count(context_observation.count_request_input(model, body))
+    except Exception:
+        return None  # telemetry never fails a request
+
+
+def _count_in_background(
+    model: str, body: dict[str, object], apply: Callable[[int | None], None],
+) -> None:
+    """Tokenizing a large request (and the first call's encoding download) must not
+    delay it: count on an executor thread and apply on the loop. Without a running
+    loop (synchronous callers) count inline."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        apply(_count(model, body))
+        return
+    future = loop.run_in_executor(None, _count, model, body)
+    future.add_done_callback(
+        lambda done: apply(None if done.cancelled() or done.exception() else done.result()))
+
+
 class PhysicalObservation:
     """A callback handle bound permanently to one physical dispatch generation."""
     def __init__(self, logical: RequestObserver, generation: int) -> None:
         self._logical = logical
         self._generation = generation
         self._finished = False
+        self._reported = False
+
+    def estimated(self, value: int | None) -> None:
+        # Only useful before the provider's own count; it is never overwritten.
+        if value is None or self._reported or not self._current():
+            return
+        logical = self._logical
+        now = datetime.now(UTC).isoformat().replace('+00:00', 'Z')
+        logical._tracker._put(logical._thread, input_tokens=value, input_quality='estimated',
+                              observed_at=now)
 
     def _current(self) -> bool:
         logical = self._logical
@@ -250,6 +279,7 @@ class PhysicalObservation:
         count = valid_count(value)
         if not self._current() or count is None:
             return
+        self._reported = True
         logical = self._logical
         logical._tracker._put(logical._thread, input_tokens=count, input_quality='provider_reported',
                               observed_at=datetime.now(UTC).isoformat().replace('+00:00', 'Z'))

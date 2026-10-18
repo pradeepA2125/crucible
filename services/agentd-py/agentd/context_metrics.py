@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
+import threading
+from importlib import import_module
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def serialized_size(value: Any) -> int:
@@ -90,3 +95,42 @@ def physical_context(body: dict[str, Any]) -> dict[str, Any]:
         "estimated_image_tokens": sum(int(image.get("estimated_tokens", 16384))
                                       for image in images),
     }
+
+
+# o200k_base, loaded once by the startup hook (`load_encoding`) and only read after
+# that. Nothing loads it on demand: the first load may download the encoding file, and
+# no request may wait on that. Until it is loaded every count falls back to an estimate.
+_ENCODING: Any = None
+_ENCODING_LOCK = threading.Lock()
+
+
+def load_encoding() -> None:
+    """Load the encoding; blocking (it may download), so the caller runs it off the
+    event loop. A failure leaves the estimates in place."""
+    global _ENCODING
+    with _ENCODING_LOCK:
+        if _ENCODING is not None:
+            return
+        try:
+            _ENCODING = import_module("tiktoken").get_encoding("o200k_base")
+        except Exception:
+            logger.warning("tiktoken o200k_base unavailable; token counts stay estimates",
+                           exc_info=True)
+
+
+def loaded_encoding() -> Any:
+    return _ENCODING
+
+
+def count_text_tokens(text: str) -> int | None:
+    """o200k_base token count, or None while the encoding is not loaded."""
+    encoding = _ENCODING
+    return len(encoding.encode(text, disallowed_special=())) if encoding is not None else None
+
+
+def text_measurement(text: str) -> dict[str, Any]:
+    """Content-free text size using a named proxy, not provider billing tokens."""
+    encoding = loaded_encoding()
+    return {"tokens": len(encoding.encode(text, disallowed_special=())) if encoding else
+            (len(text) + 3) // 4, "chars": len(text),
+            "method": "o200k_base_text" if encoding else "chars_div_4_estimate"}

@@ -212,6 +212,15 @@ retrieval_client = RetrievalArtifactClient.from_env(
     semantic_index=_semantic_index,
 )
 
+async def _load_token_encoding() -> None:
+    # Loaded here and nowhere else: counting code only reads it (context_metrics).
+    from agentd.context_metrics import load_encoding
+    await asyncio.to_thread(load_encoding)
+
+
+# The first load may download the encoding, so it must not hold up /health.
+app.router.add_event_handler("startup", in_background(_load_token_encoding, "token-encoding"))
+
 if _semantic_index is not None:
     _warm_target = _semantic_index
 

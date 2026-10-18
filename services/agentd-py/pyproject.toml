@@ -27,6 +27,8 @@ dependencies = [
   "markdownify>=1.2,<2",
   "beautifulsoup4>=4.12,<5",
   "Pillow>=11.3",
+  # The context meter counts each request with o200k_base, off the request path.
+  "tiktoken>=0.9",
 ]
 
 [project.scripts]

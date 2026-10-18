@@ -1631,6 +1631,15 @@ class ControllerLoop:
             from agentd.image_context import project_image_context
             from agentd.memory.compactor import _history_tokens, estimate_tokens, fixed_overhead
 
+            def fixed_estimate() -> int:
+                # Usage is unavailable on the first call, and some providers never report
+                # it. This floor conservatively reserves the controller's large system/
+                # schema block; tool definitions and dynamic plan context are counted
+                # additionally. Image budgeting and the compaction trigger both use it
+                # until a measured count exists.
+                return (16000 + estimate_tokens(json.dumps(tool_defs, default=str))
+                        + estimate_tokens(json.dumps(plan_context, default=str)))
+
             def project_images():
                 def resolve(ref):
                     from agentd.images import ImageAssetStore
@@ -1642,14 +1651,9 @@ class ControllerLoop:
                 text_cost = max(
                     sum(estimate_tokens(str(m.get("content", ""))) for m in view)
                     for view in (preliminary.history, unavailable.history))
-                # Usage is unavailable on the first call. Never interpret zero measured
-                # overhead as permission to ignore a known context window. This floor
-                # conservatively reserves the controller's large system/schema block;
-                # tool definitions and dynamic plan context are counted additionally.
-                import json
-                fixed_estimate = (16000 + estimate_tokens(json.dumps(tool_defs, default=str))
-                                  + estimate_tokens(json.dumps(plan_context, default=str)))
-                overhead = max(fixed_estimate,
+                # Never interpret zero measured overhead as permission to ignore a
+                # known context window.
+                overhead = max(fixed_estimate(),
                                fixed_overhead(preliminary.history, self._observed_prompt))
                 return project_image_context(
                     history, resolve, context_window=window,
@@ -1667,6 +1671,9 @@ class ControllerLoop:
             _prep = await self._memory_harness.prepare_turn(
                 history, run_id, query=str(plan_context.get("goal", "")),
                 observed=self._observed_prompt,
+                **({"unmeasured_overhead": fixed_estimate()}
+                   if accepts_kwarg(self._memory_harness.prepare_turn, "unmeasured_overhead")
+                   else {}),
                 **({"projected_history": projection.history} if projection.revision else {}),
                 # A child's run never schedules consolidation (spec §5.2); the parent's
                 # call is left exactly as it was.

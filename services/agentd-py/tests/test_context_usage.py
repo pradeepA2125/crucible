@@ -107,7 +107,9 @@ def test_full_body_estimate_and_snapshot_excludes_prompt_secrets():
     body = {'instructions': 'secret' * 20, 'input': 'history' * 20, 'tools': [{'schema': 'tool' * 200}], 'text': {'format': {'schema': 'strict' * 200}}}
     obs.begin('m', body)
     snap = state.snapshot('a')
-    assert snap.input_tokens > 500
+    from agentd.providers.context_observation import count_request_input
+    # Every model-visible field counts, not just the conversation input.
+    assert snap.input_tokens > count_request_input('m', {'input': body['input']}) + 100
     assert 'secret' not in snap.model_dump_json()
     assert snap.scope == 'main'
 
@@ -155,11 +157,97 @@ def test_same_logical_observer_returns_retired_physical_handles():
     assert state.snapshot('a').generation == 4
 
 
-def test_tracker_estimates_full_request_using_shared_estimator():
-    from agentd.providers.context_observation import estimate_request_input
+def test_tracker_counts_full_request_using_shared_counter():
+    from agentd.providers.context_observation import count_request_input
     state, _ = manager()
     body = {'input': 'history', 'tool_choice': {'schema': 'choice' * 200},
             'functions': [{'schema': 'function' * 200}], 'function_call': 'selected',
             'extra_body': {'response_format': {'schema': 'tail' * 200}}}
     state.observer('a', None).begin('m', body)
-    assert state.snapshot('a').input_tokens == estimate_request_input('m', body)
+    assert state.snapshot('a').input_tokens == count_request_input('m', body)
+
+
+def _gated_counter(monkeypatch):
+    """Hold the meter's token count until the test releases it."""
+    import threading
+
+    from agentd.providers import context_observation
+    release, started = threading.Event(), threading.Event()
+    owner = threading.get_ident()
+    threads = []
+
+    def count(model, body):
+        threads.append(threading.get_ident())
+        started.set()
+        release.wait(5)
+        return 4242
+
+    monkeypatch.setattr(context_observation, 'count_request_input', count)
+    return release, started, threads, owner
+
+
+async def _settle(started):
+    import asyncio
+    for _ in range(200):
+        await asyncio.sleep(0.005)
+        if started.is_set():
+            return
+
+
+@pytest.mark.asyncio
+async def test_count_runs_off_the_request_path_and_the_old_value_stays_meanwhile(monkeypatch):
+    # Counting may download the tokenizer's encoding; the request must never wait on it.
+    import asyncio
+    release, started, threads, owner = _gated_counter(monkeypatch)
+    state, _ = manager()
+    first = state.observer('a', 't').begin('m', {'input': 'x'})
+    await _settle(started)
+    release.set()
+    for _ in range(200):
+        await asyncio.sleep(0.005)
+        if state.snapshot('a').input_tokens == 4242:
+            break
+    first.reported(81)
+    first.finish()
+    release.clear()
+    started.clear()
+    state.observer('a', 't').begin('m', {'input': 'next'})
+    snap = state.snapshot('a')
+    assert snap.status == 'in_flight'
+    assert (snap.input_tokens, snap.input_quality) == (81, 'provider_reported')
+    await _settle(started)
+    release.set()
+    for _ in range(200):
+        await asyncio.sleep(0.005)
+        if state.snapshot('a').input_quality == 'estimated':
+            break
+    assert (state.snapshot('a').input_tokens, state.snapshot('a').input_quality) == (
+        4242, 'estimated')
+    assert threads and all(t != owner for t in threads)
+
+
+@pytest.mark.asyncio
+async def test_provider_count_that_arrives_first_is_never_overwritten(monkeypatch):
+    import asyncio
+    release, started, _, _ = _gated_counter(monkeypatch)
+    state, _ = manager()
+    attempt = state.observer('a', 't').begin('m', {'input': 'x'})
+    await _settle(started)
+    attempt.reported(77)
+    release.set()
+    await asyncio.sleep(0.05)
+    assert (state.snapshot('a').input_tokens, state.snapshot('a').input_quality) == (
+        77, 'provider_reported')
+
+
+@pytest.mark.asyncio
+async def test_a_retired_request_count_is_dropped(monkeypatch):
+    import asyncio
+    release, started, _, _ = _gated_counter(monkeypatch)
+    state, _ = manager()
+    state.observer('a', 't').begin('m', {'input': 'x'})
+    await _settle(started)
+    state.invalidate('a')
+    release.set()
+    await asyncio.sleep(0.05)
+    assert state.snapshot('a').input_tokens is None
