@@ -2227,6 +2227,7 @@ class AgentOrchestrator:
         planning_registry = PlanningToolRegistry(
             real_path=Path(workspace_path).resolve(),
             semantic_index=getattr(self._retrieval_client, "_semantic_index", None),
+            retrieval_client=self._retrieval_client,
         )
         return PlanningAgent(
             reasoning_engine=self._reasoning_engine,

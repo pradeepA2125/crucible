@@ -164,7 +164,8 @@ def test_index_status_semantic_disabled():
     """index_status reports semantic_enabled=False when no index is configured."""
     client = _make_retrieval_client(semantic_index=None)
     status = client.index_status()
-    assert status == {"semantic_enabled": False, "building": False, "last_indexed_snapshot_ms": 0}
+    assert status == {"semantic_enabled": False, "building": False, "last_indexed_snapshot_ms": 0,
+                      "discovery": {"state": "cold", "warmup_count": 0}}
 
 
 def test_index_status_semantic_enabled():
@@ -253,13 +254,13 @@ async def test_build_index_semantic_not_enabled():
 
 @pytest.mark.asyncio
 async def test_build_index_semantic_disabled_on_client():
-    """Returns 503 when retrieval_client has no semantic index."""
+    """Discovery warmup remains available with no local/semantic model."""
     retrieval_client = _make_retrieval_client(semantic_index=None)
     app = _make_app(retrieval_client)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/index/build", json={"workspace_path": "/tmp/ws"})
-        assert resp.status_code == 503
-        assert "CRUCIBLE_SEMANTIC_RETRIEVAL" in resp.json()["detail"]
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "building"
 
 
 @pytest.mark.asyncio

@@ -20,7 +20,13 @@ from agentd.domain.models import (
 )
 from agentd.local_models import semantic_ready
 from agentd.retrieval.chunker import ScoredChunk
+from agentd.retrieval.discovery_cache import DiscoverySnapshotCache, snapshot_version
 from agentd.runtime.adapters import EvidenceAdapter, GenericEvidenceAdapter
+
+# Whole words only: a substring match let "latest", "inspect" and "specific" pull
+# test files back into discovery results that never asked for them.
+_TEST_REQUEST = re.compile(
+    r"\b(?:tests?|testing|tested|specs?|pytest|unittest|vitest|jest|fixtures?)\b")
 
 
 def _coerce_int(value: object, default: int) -> int:
@@ -44,6 +50,10 @@ class RetrievalContext:
     # connections (e.g. `engine.py:_run_task → state_machine.py:transition` via Calls + Imports), so this
     # surfaces neighboring files the semantic top-K may not have matched on. Read but never wrote before.
     graph_neighbor_files: list[str] = field(default_factory=list)
+    # Bounded file-level structural edges for the chat discovery seed. The
+    # planner's existing serialization contract remains unchanged.
+    graph_relationships: list[dict[str, str]] = field(default_factory=list)
+    discovery_candidates: list[dict[str, object]] = field(default_factory=list)
     file_outlines: dict[str, list[str]] = field(default_factory=dict)
     diagnostics_excerpt: list[str] = field(default_factory=list)
     snapshot_age_sec: float | None = None
@@ -114,14 +124,27 @@ class RetrievalContext:
 
 
 @dataclass
-class _SnapshotPathCache:
-    """Goal-independent results for one snapshot version. Only these small maps and the
-    structure lines are kept, never the parsed graph (~220 MB on a large repo)."""
+class _DiscoveryGraph:
+    nodes: list[dict[str, object]]
+    edges: list[dict[str, object]]
+    by_id: dict[str, dict[str, object]]
+    by_path: dict[str, list[str]]
+    incident: dict[str, list[int]]
 
-    key: tuple[int, str, str]
+    def edges_for(self, ids: set[str]) -> list[dict[str, object]]:
+        # Preserve snapshot order, including parallel edges and first-edge choices.
+        indexes = {i for node_id in ids for i in self.incident.get(node_id, [])}
+        return [self.edges[i] for i in sorted(indexes)]
+
+
+@dataclass
+class _SnapshotPathCache:
+    """Goal-independent results for one snapshot; discovery retains a bounded graph view."""
+
+    key: tuple[object, ...]
     normalized_by_raw: dict[str, str | None] = field(default_factory=dict)
-    relative_by_path: dict[str, str | None] = field(default_factory=dict)
     repository_structure: list[str] | None = None
+    discovery: _DiscoveryGraph | None = None
 
 
 def _git_visible_files(workspace_root: Path) -> set[str] | None:
@@ -189,6 +212,13 @@ class RetrievalArtifactClient:
         self._build_lock = threading.Lock()
         self._rebuild_requested = False
         self._path_cache: _SnapshotPathCache | None = None
+        self._discovery_path_cache: _SnapshotPathCache | None = None
+        self._discovery_prepare_lock = threading.RLock()
+        self._discovery_warm_lock = threading.Lock()
+        self._discovery_warm_status: dict[str, object] = {"state": "cold", "warmup_count": 0}
+        self._discovery_warm_version: object = None
+        self._discovery_workspace: str | None = None
+        self._discovery_snapshot = DiscoverySnapshotCache()
 
     @classmethod
     def from_env(
@@ -209,13 +239,20 @@ class RetrievalArtifactClient:
     def semantic_enabled(self) -> bool:
         return semantic_ready(self._semantic_index)
 
+    def snapshot_version(self, workspace_path: str) -> object:
+        try:
+            return snapshot_version(self._resolve_snapshot_path(workspace_path))
+        except OSError:
+            return None
+
     def trigger_index_build(self, workspace_path: str) -> object | None:
-        """Synchronously build/update the semantic index from the current snapshot.
+        """Warm discovery metadata and build/update the optional semantic index.
 
         Returns the IndexStats from build_or_update, or None if semantic retrieval
         is disabled, the snapshot doesn't exist, or another build is running (that
         build then runs once more for this request).
         """
+        self.warm_discovery(workspace_path)
         if not self.semantic_enabled():
             return None
         stats: object | None = None
@@ -248,6 +285,7 @@ class RetrievalArtifactClient:
             if snapshot_ms > self._last_indexed_snapshot_ms:
                 self._last_indexed_snapshot_ms = snapshot_ms
             self._fill_path_cache(payload, workspace_path)
+            self.warm_discovery(workspace_path)
             return stats
         except Exception as exc:
             import logging
@@ -275,19 +313,132 @@ class RetrievalArtifactClient:
     def index_status(self) -> dict[str, object]:
         return {
             "semantic_enabled": self.semantic_enabled(),
-            "building": self._building,
+            "building": self._building or self._discovery_warm_status.get("state") == "warming",
             "last_indexed_snapshot_ms": self._last_indexed_snapshot_ms,
+            "discovery": self.discovery_status(),
         }
+
+    def discovery_status(self) -> dict[str, object]:
+        status = dict(self._discovery_warm_status)
+        if status.get("state") == "ready" and self._discovery_workspace:
+            try:
+                current = snapshot_version(self._resolve_snapshot_path(self._discovery_workspace))
+            except OSError:
+                current = None
+            if current != self._discovery_warm_version:
+                status["state"] = "pending"
+        return status
+
+    def warm_discovery(self, workspace_path: str) -> dict[str, object]:
+        """Prepare only versioned metadata/lookups; no ranking, source reads or model calls."""
+        with self._discovery_warm_lock:
+            started = time.perf_counter()
+            previous = self._discovery_warm_status
+            warmup_count = _coerce_int(previous.get("warmup_count"), 0)
+            self._discovery_workspace = workspace_path
+            self._discovery_warm_status = {**previous, "state": "warming"}
+            path = self._resolve_snapshot_path(workspace_path)
+            try:
+                payload = self._discovery_snapshot.load(path)
+                version = payload.get("_discovery_cache_key")
+                if version is None:
+                    with self._discovery_prepare_lock:
+                        self._discard_outdated_discovery(path)
+                    self._discovery_warm_version = None
+                    self._discovery_warm_status = {"state": "uncacheable",
+                                                   "warmup_count": warmup_count}
+                    return self.discovery_status()
+                workspace_root = Path(workspace_path).resolve()
+                raw_root = payload.get("workspace_root")
+                snapshot_root = (Path(raw_root).expanduser().resolve()
+                                 if isinstance(raw_root, str) and raw_root.strip() else workspace_root)
+                cache = self._path_cache_for(payload, workspace_root, snapshot_root)
+                graph = self._prepare_discovery_graph(payload, workspace_root, snapshot_root, cache)
+                if snapshot_version(path) != version:
+                    raise OSError("Snapshot changed during discovery warmup")
+                changed = self._discovery_warm_version != version
+                self._discovery_warm_version = version
+                self._discovery_warm_status = {
+                    "state": "ready", "warmup_count": warmup_count + int(changed),
+                    "last_warmup_ms": (round((time.perf_counter() - started) * 1000, 2)
+                                       if changed else previous.get("last_warmup_ms", 0)),
+                    "node_count": len(graph.nodes), "edge_count": len(graph.edges),
+                    "generated_at_ms": payload.get("generated_at_ms"),
+                }
+            except (OSError, ValueError) as exc:
+                with self._discovery_prepare_lock:
+                    self._discard_outdated_discovery(path)
+                self._discovery_warm_version = None
+                self._discovery_warm_status = {
+                    "state": "missing" if isinstance(exc, FileNotFoundError) else "unavailable",
+                    "warmup_count": warmup_count, "error_type": type(exc).__name__,
+                }
+            return self.discovery_status()
+
+    def _discard_outdated_discovery(self, path: Path) -> None:
+        # A query may already have prepared a newer revision while this warmup failed.
+        try:
+            current = snapshot_version(path)
+        except OSError:
+            current = None
+        cache = self._discovery_path_cache
+        if cache is not None and cache.key[-1] != current:
+            self._discovery_path_cache = None
+
+    def _prepare_discovery_graph(
+        self, payload: dict[str, object], workspace_root: Path, snapshot_root: Path,
+        cache: _SnapshotPathCache,
+    ) -> _DiscoveryGraph:
+        with self._discovery_prepare_lock:
+            if cache.discovery is not None:
+                return cache.discovery
+            graph = payload.get("graph", {})
+            if not isinstance(graph, dict):
+                raise ValueError("Discovery graph must be an object")
+            raw_nodes = graph.get("nodes", [])
+            edges = [e for e in graph.get("edges", []) if isinstance(e, dict)]
+            nodes: list[dict[str, object]] = []
+            for node in raw_nodes:
+                if not isinstance(node, dict):
+                    continue
+                raw = node.get("path")
+                if isinstance(raw, str) and raw in cache.normalized_by_raw:
+                    path = cache.normalized_by_raw[raw]
+                else:
+                    path = self._normalize_snapshot_path(
+                        raw_path=raw, workspace_root=workspace_root,
+                        snapshot_workspace_root=snapshot_root)
+                    if isinstance(raw, str):
+                        cache.normalized_by_raw[raw] = path
+                if path is not None:
+                    nodes.append({**node, "path": path})
+            by_id = {str(n["id"]): n for n in nodes if isinstance(n.get("id"), str)}
+            by_path: dict[str, list[str]] = {}
+            for node_id, node in by_id.items():
+                by_path.setdefault(str(node["path"]), []).append(node_id)
+            incident: dict[str, list[int]] = {}
+            for i, edge in enumerate(edges):
+                source, target = edge.get("from"), edge.get("to")
+                if isinstance(source, str):
+                    incident.setdefault(source, []).append(i)
+                if isinstance(target, str) and target != source:
+                    incident.setdefault(target, []).append(i)
+            cache.discovery = _DiscoveryGraph(nodes, edges, by_id, by_path, incident)
+            return cache.discovery
 
     def load_context(
         self,
         workspace_path: str,
         goal: str,
+        *,
+        discovery_only: bool = False,
+        current_query: str | None = None,
+        allow_build: bool = True,
     ) -> tuple[RetrievalContext, list[Diagnostic]]:
         diagnostics: list[Diagnostic] = []
         snapshot_path = self._resolve_snapshot_path(workspace_path)
 
-        if not snapshot_path.exists():
+        if allow_build and not snapshot_path.exists():
             diagnostics.extend(self._attempt_build_snapshot(workspace_path, snapshot_path))
 
         if not snapshot_path.exists():
@@ -304,8 +455,9 @@ class RetrievalArtifactClient:
             return RetrievalContext.empty(), diagnostics
 
         try:
-            payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            payload = (self._discovery_snapshot.load(snapshot_path) if discovery_only
+                       else json.loads(snapshot_path.read_text(encoding="utf-8")))
+        except (OSError, ValueError) as exc:
             diagnostics.append(
                 Diagnostic(
                     source="retrieval",
@@ -342,7 +494,10 @@ class RetrievalArtifactClient:
             if snapshot_ms > self._last_indexed_snapshot_ms or not index.is_ready():  # type: ignore[attr-defined]
                 self._request_background_build(workspace_path)
 
-        context = self._build_context(payload, goal, age_sec, workspace_path)
+        context = self._build_context(
+            payload, goal, age_sec, workspace_path,
+            discovery_only=discovery_only, current_query=current_query,
+        )
 
         return context, diagnostics
 
@@ -467,6 +622,9 @@ class RetrievalArtifactClient:
         goal: str,
         age_sec: float | None,
         workspace_path: str,
+        *,
+        discovery_only: bool = False,
+        current_query: str | None = None,
     ) -> RetrievalContext:
         workspace_root = Path(workspace_path).resolve()
         snapshot_workspace_root = workspace_root
@@ -501,24 +659,51 @@ class RetrievalArtifactClient:
                 normalized_by_raw[raw_path] = normalized
             return normalized
 
-        for node in raw_node_items:
-            normalized_path = normalize_path(node.get("path"))
-            if normalized_path is None:
-                continue
-            normalized_node = dict(node)
-            normalized_node["path"] = normalized_path
-            node_items.append(normalized_node)
-
-        edge_items = [edge for edge in edges if isinstance(edge, dict)]
+        prepared = (self._prepare_discovery_graph(
+            payload, workspace_root, snapshot_workspace_root, path_cache)
+            if discovery_only and payload.get("_discovery_cache_key") is not None else None)
+        if prepared is not None:
+            node_items, edge_items = prepared.nodes, prepared.edges
+        else:
+            for node in raw_node_items:
+                normalized_path = normalize_path(node.get("path"))
+                if normalized_path is None:
+                    continue
+                normalized_node = dict(node)
+                normalized_node["path"] = normalized_path
+                node_items.append(normalized_node)
+            edge_items = [edge for edge in edges if isinstance(edge, dict)]
         diagnostic_items = [item for item in diagnostics if isinstance(item, dict)]
 
         terms = {
             token.lower()
-            for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", goal)
+            for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", current_query or goal)
             if len(token) >= 3
         }
+        context_terms = ({
+            token.lower() for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", goal)
+        } - terms - {"thread", "recap", "conversation", "summary", "previous",
+                     "substantive", "answer"}) if discovery_only and current_query else set()
 
-        goal_lower = goal.lower()
+        goal_lower = (current_query or goal).lower()
+
+        eligibility: dict[str, bool] = {}
+        wants_tests = bool(_TEST_REQUEST.search(goal_lower))
+
+        def eligible_discovery_path(path: str) -> bool:
+            if not discovery_only or wants_tests:
+                return True
+            if path in eligibility:
+                return eligibility[path]
+            parts = Path(path).parts
+            name = Path(path).name.lower()
+            allowed = not (
+                any(part in {"test", "tests", "__tests__"} for part in parts)
+                or name.startswith("test_") or "_test." in name
+                or ".test." in name or ".spec." in name
+            )
+            eligibility[path] = allowed
+            return allowed
 
         # ── Semantic retrieval (if index is ready) ────────────────────────────
         semantic_results: list[ScoredChunk] = []
@@ -553,15 +738,23 @@ class RetrievalArtifactClient:
         # millions of comparisons on a large snapshot).
         path_score_by_path: dict[str, float] = {}
         for node in node_items:
+            if not eligible_discovery_path(str(node.get("path", ""))):
+                continue
             node_name = str(node.get("name", "")).lower()
             node_path = str(node.get("path", "")).lower()
             canonical_path = str(node.get("path", ""))
             graph_raw: float = sum(1.0 for term in terms if term in node_name)
             path_score = path_score_by_path.get(node_path)
             if path_score is None:
-                path_score = self._path_graph_score(node_path, terms, goal)
+                path_score = self._path_graph_score(node_path, terms, current_query or goal)
                 path_score_by_path[node_path] = path_score
             graph_raw += path_score
+            if context_terms:
+                # Supplemental recall signals help anaphoric follow-ups, while
+                # direct request matches remain stronger than background hits.
+                graph_raw += min(0.5, 0.15 * sum(
+                    term in node_name or term in node_path for term in context_terms
+                ))
             sem_score = semantic_file_scores.get(canonical_path, 0.0)
 
             # Skip nodes with no signal from either source
@@ -579,6 +772,8 @@ class RetrievalArtifactClient:
         # Also surface nodes from files the semantic index found but token matching missed
         graph_paths = {str(n.get("path", "")) for _, n in scored_nodes}
         for sem_path, sem_score in semantic_file_scores.items():
+            if not eligible_discovery_path(sem_path):
+                continue
             if sem_path in graph_paths:
                 continue
             for node in node_items:
@@ -588,7 +783,7 @@ class RetrievalArtifactClient:
         scored_nodes.sort(key=lambda item: (-item[0], str(item[1].get("path", ""))))
         matched_nodes = [node for _, node in scored_nodes[:500]]
 
-        if not matched_nodes:
+        if not matched_nodes and not discovery_only:
             matched_nodes = node_items[:8]
 
         matched_ids = {
@@ -632,7 +827,7 @@ class RetrievalArtifactClient:
                 break
 
         graph_neighbors: set[str] = set()
-        for edge in edge_items:
+        for edge in (prepared.edges_for(matched_ids) if prepared else edge_items):
             source = edge.get("from")
             target = edge.get("to")
             if isinstance(source, str) and source in matched_ids and isinstance(target, str):
@@ -655,8 +850,8 @@ class RetrievalArtifactClient:
         # cross-file targets we actually need. Here we drop neighbors whose host
         # file is already a seed file, and rank by distinct edge count so the
         # most-connected new files come first.
-        nodes_by_id = {
-            str(n.get("id")): n for n in nodes
+        nodes_by_id = prepared.by_id if prepared else {
+            str(n.get("id")): n for n in node_items
             if isinstance(n.get("id"), str)
         }
         # Seed files = files the planner is actually likely to see as evidence.
@@ -675,16 +870,19 @@ class RetrievalArtifactClient:
             sem_path = sr.chunk.path
             if not sem_path:
                 continue
-            try:
-                abs_sem = (workspace_root / sem_path).resolve()
-            except (ValueError, OSError):
-                continue
-            seed_files.add(str(abs_sem))
-        ws_resolved = workspace_root.resolve()
-        # Edges outnumber files ~60:1; resolve each neighbour path once.
-        rel_by_path = path_cache.relative_by_path
+            normalized_sem = normalize_path(sem_path)
+            if normalized_sem:
+                seed_files.add(normalized_sem)
+        # One representative per neighbouring file, selected after hit ranking;
+        # an arbitrary first-N edge cutoff can hide all useful relationships.
+        neighbor_relationships: dict[str, dict[str, str]] = {}
+        internal_relationships: dict[tuple[str, str], dict[str, str]] = {}
+        visible_seed_files = set(related_files) | set(semantic_file_scores)
         neighbor_file_hits: dict[str, int] = {}
-        for edge in edge_items:
+        seed_ids = (matched_ids | {node_id for path in seed_files
+                                  for node_id in prepared.by_path.get(path, [])}
+                    if prepared else set())
+        for edge in (prepared.edges_for(seed_ids) if prepared else edge_items):
             src = edge.get("from")
             tgt = edge.get("to")
             src_node = nodes_by_id.get(src) if isinstance(src, str) else None
@@ -703,6 +901,20 @@ class RetrievalArtifactClient:
                 (isinstance(tgt, str) and tgt in matched_ids)
                 or (isinstance(tgt_path, str) and tgt_path in seed_files)
             )
+            # Preserve edge direction and type without inventing reachability.
+            # Shared file endpoints summarize a real symbol/file-level edge.
+            kind = str(edge.get("kind", "")).lower()
+            if ((src_path in visible_seed_files or tgt_path in visible_seed_files)
+                    and isinstance(src_path, str) and isinstance(tgt_path, str)
+                    and src_path != tgt_path
+                    and kind in {"calls", "imports", "references", "inherits", "implements"}):
+                relation = {"from": src_path, "to": tgt_path, "kind": kind}
+                if src_is_seed != tgt_is_seed:
+                    neighbor_relationships.setdefault(
+                        tgt_path if src_is_seed else src_path, relation,
+                    )
+                elif len(internal_relationships) < 16:
+                    internal_relationships.setdefault((src_path, tgt_path), relation)
             if src_is_seed == tgt_is_seed:
                 # Both seeds or neither seed → no new file to surface.
                 continue
@@ -714,17 +926,8 @@ class RetrievalArtifactClient:
                 continue
             if any(f"/{ig}/" in path_str for ig in self._IGNORED_CONTEXT_DIRS):
                 continue
-            if path_str in rel_by_path:
-                rel_str = rel_by_path[path_str]
-            else:
-                try:
-                    rel_str = str(Path(path_str).resolve().relative_to(ws_resolved))
-                except (ValueError, OSError):
-                    rel_str = None
-                rel_by_path[path_str] = rel_str
-            if rel_str is None:
-                continue
-            neighbor_file_hits[rel_str] = neighbor_file_hits.get(rel_str, 0) + 1
+            # nodes_by_id already contains normalized workspace-relative paths.
+            neighbor_file_hits[path_str] = neighbor_file_hits.get(path_str, 0) + 1
 
         # Sort by hit count (descending), then path (ascending) for deterministic
         # ties; cap at 20.
@@ -734,6 +937,53 @@ class RetrievalArtifactClient:
                 key=lambda item: (-item[1], item[0]),
             )[:20]
         ]
+
+        if discovery_only:
+            # No repository walk, source reads, outline expansion or excerpt
+            # extraction. Prefer distinct files before adding extra symbols.
+            discovery_neighbors = [path for path in graph_neighbor_files
+                                   if eligible_discovery_path(path)]
+            selected_paths = related_files[:8]
+            # Reserve a little graph reach when the direct ranking is broad.
+            if len(selected_paths) > 6 and discovery_neighbors:
+                selected_paths = selected_paths[:6]
+            selected_paths += [path for path in discovery_neighbors
+                               if path not in selected_paths][:8 - len(selected_paths)]
+            ranked_by_path: dict[str, list[dict[str, object]]] = {
+                path: [] for path in selected_paths
+            }
+            for result in semantic_results:
+                path, name = result.chunk.path, getattr(result.chunk, "name", None)
+                if path not in ranked_by_path or not name:
+                    continue
+                symbol = {"name": name, "kind": getattr(result.chunk, "kind", None),
+                          "line": result.chunk.line_start}
+                symbols = ranked_by_path[path]
+                if symbol not in symbols and len(symbols) < 3:
+                    symbols.append(symbol)
+            for _, node in scored_nodes:
+                path = str(node.get("path", ""))
+                if path not in ranked_by_path or node.get("kind") == "File":
+                    continue
+                symbols = ranked_by_path[path]
+                symbol = {key: node.get(key) for key in ("name", "kind", "line")}
+                if symbol not in symbols and len(symbols) < 3:
+                    symbols.append(symbol)
+            discovery = []
+            for path, symbols in ranked_by_path.items():
+                ranges = []
+                for result in semantic_results:
+                    if result.chunk.path == path:
+                        bounds = [result.chunk.line_start, result.chunk.line_end]
+                        if bounds not in ranges and len(ranges) < 3:
+                            ranges.append(bounds)
+                discovery.append({"path": path, "symbols": symbols, "ranges": ranges})
+            return RetrievalContext(
+                related_files=selected_paths, graph_neighbor_files=graph_neighbor_files,
+                graph_relationships=[*neighbor_relationships.values(),
+                                     *internal_relationships.values()],
+                discovery_candidates=discovery, snapshot_age_sec=age_sec,
+            )
 
         # Extract structural outlines for top files.
         # When semantic search is active, only include files above threshold to suppress noise.
@@ -934,6 +1184,9 @@ class RetrievalArtifactClient:
             related_symbols=related_symbols,
             graph_neighbors=neighbors,
             graph_neighbor_files=graph_neighbor_files,
+            graph_relationships=[neighbor_relationships[path] for path in graph_neighbor_files
+                                 if path in neighbor_relationships]
+            + list(internal_relationships.values()),
             file_outlines=file_outlines,
             diagnostics_excerpt=diagnostics_excerpt,
             snapshot_age_sec=age_sec,
@@ -952,9 +1205,27 @@ class RetrievalArtifactClient:
         """The cache for this snapshot version, or a throwaway one when the snapshot has no
         version (nothing to key on)."""
         version = _coerce_int(payload.get("generated_at_ms"), 0)
-        key = (version, str(workspace_root), str(snapshot_workspace_root))
-        if version <= 0:
+        key = (version, str(workspace_root), str(snapshot_workspace_root),
+               payload.get("_discovery_cache_key"))
+        if version <= 0 and payload.get("_discovery_cache_key") is None:
             return _SnapshotPathCache(key=key)
+        if payload.get("_discovery_cache_key") is not None:
+            with self._discovery_prepare_lock:
+                cache = self._discovery_path_cache
+                if cache is None or cache.key != key:
+                    cache = _SnapshotPathCache(key=key)
+                    stamp = payload.get("_discovery_cache_key")
+                    try:
+                        current = (snapshot_version(Path(stamp[0]))
+                                   if isinstance(stamp, tuple) and stamp
+                                   and isinstance(stamp[0], str) else None)
+                    except OSError:
+                        current = None
+                    # An in-flight query for an older revision gets a private view;
+                    # it must not evict a newer graph prepared in the background.
+                    if current == stamp:
+                        self._discovery_path_cache = cache
+                return cache
         cache = self._path_cache
         if cache is None or cache.key != key:
             cache = _SnapshotPathCache(key=key)

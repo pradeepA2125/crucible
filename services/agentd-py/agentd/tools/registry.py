@@ -79,10 +79,12 @@ class ToolRegistry:
         command_approval_callback: object | None = None,
         render_ctx: RenderContext | None = None,
         command_guard: Callable[[str], str | None] | None = None,
+        retrieval_client: object | None = None,
     ) -> None:
         self._shadow_root = shadow_root
         self._real_workspace_path = real_workspace_path
         self._semantic_index = semantic_index
+        self._retrieval_client = retrieval_client
         self._read_from_shadow: bool = False
         self._ripgrep_cmd = os.environ.get("CRUCIBLE_RIPGREP_CMD", "rg")
         # async (command, args, cwd) -> CommandDecision. When set, run_command
@@ -290,6 +292,9 @@ class ToolRegistry:
                 ),
             ]
 
+        if self._retrieval_client is not None:
+            from agentd.tools.index_search import SEARCH_INDEX
+            tools.append(SEARCH_INDEX)
         if semantic_ready(self._semantic_index):
             tools.append(
                 ToolDefinition(
@@ -448,6 +453,9 @@ class ToolRegistry:
             from agentd.tools.env_profile import read_env_profile
             return await read_env_profile(real_workspace=self._real_workspace_path)
 
+        if name == "search_index":
+            from agentd.tools.index_search import search_index
+            return await search_index(self._real_workspace_path, self._retrieval_client, args)
         if name == "search_semantic":
             from agentd.tools.search import search_semantic
             if not semantic_ready(self._semantic_index):

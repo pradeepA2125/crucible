@@ -212,6 +212,22 @@ retrieval_client = RetrievalArtifactClient.from_env(
     semantic_index=_semantic_index,
 )
 
+_discovery_workspace = os.getenv("CRUCIBLE_WORKSPACE_PATH", str(Path.cwd())).strip()
+if _discovery_workspace:
+    from agentd.retrieval.discovery_warmer import DiscoveryWarmer
+
+    _discovery_warmer = DiscoveryWarmer(retrieval_client, _discovery_workspace)
+
+    async def _start_discovery_warmer() -> None:
+        _discovery_warmer.start()
+
+    async def _stop_discovery_warmer() -> None:
+        await asyncio.to_thread(_discovery_warmer.stop)
+
+    app.router.add_event_handler("startup", _start_discovery_warmer)
+    app.router.add_event_handler("shutdown", _stop_discovery_warmer)
+
+
 async def _load_token_encoding() -> None:
     # Loaded here and nowhere else: counting code only reads it (context_metrics).
     from agentd.context_metrics import load_encoding

@@ -36,7 +36,8 @@ def test_builtins() -> None:
     general = BUILTIN_AGENTS["general-purpose"]
     assert explore.permission == "plan"
     assert explore.tools == frozenset(
-        {"search_code", "read_file", "list_directory", "query_graph", "search_semantic"})
+        {"search_code", "read_file", "list_directory", "query_graph", "search_semantic",
+         "search_index"})
     assert general.permission == "default" and general.tools is None
     assert explore.description and general.description and explore.persona
 

@@ -40,6 +40,7 @@ class BuiltinToolSource:
         render_ctx: RenderContext | None = None,
         read_observer: Callable[[str], None] | None = None,
         command_guard: Callable[[str], str | None] | None = None,
+        retrieval_client: object | None = None,
     ) -> None:
         self._inner = ToolRegistry(
             shadow_root,
@@ -48,6 +49,7 @@ class BuiltinToolSource:
             command_approval_callback=command_approval_callback,
             render_ctx=render_ctx,
             command_guard=command_guard,
+            retrieval_client=retrieval_client,
         )
         self._phase = "explore"
         self._read_observer = read_observer

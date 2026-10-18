@@ -8,6 +8,25 @@ vi.mock("vscode", () => ({ workspace: { getConfiguration } }));
 
 const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
+describe("retired candidate experiment settings", () => {
+  it.each(["candidateTrial", "candidateDelivery", "candidateScorer", "qwenModelPath"])(
+    "does not advertise or forward %s", name => {
+      const key = `crucible.performance.${name}`;
+      expect(manifest.contributes.configuration.properties[key]).toBeUndefined();
+      getConfiguration.mockReturnValue({
+        inspect: (setting: string) => setting === key ? { workspaceValue: "automatic" } : undefined,
+        get: (setting: string, fallback?: unknown) => setting === key ? "automatic" : fallback,
+      });
+      const mapper = RuntimeManager.prototype as unknown as {
+        extraEnvFromSettings(): Record<string, string>;
+      };
+      expect(Object.keys(mapper.extraEnvFromSettings()).some(
+        k => k.startsWith("CRUCIBLE_CODE_CANDIDATE") || k.startsWith("CRUCIBLE_CODE_QWEN"),
+      )).toBe(false);
+    },
+  );
+});
+
 describe.each([
   ["crucible.performance.toolBatching", "CRUCIBLE_TOOL_BATCHING_ENABLED"],
   ["crucible.performance.adaptiveReads", "CRUCIBLE_ADAPTIVE_READS_ENABLED"],

@@ -150,6 +150,10 @@ def profile_workspace_turn(fn: Callable) -> Callable:
         parent_token = _parent.set(None)
         try:
             with span("controller.backend_turn"):
+                context_measurement({"layer": "user_turn", "thread_id":
+                                     kwargs.get("thread_id", args[0] if args else None),
+                                     "message_id": kwargs.get("message_id"),
+                                     "started_unix_ms": int(time.time() * 1000)})
                 return await fn(self, *args, **kwargs)
         finally:
             _parent.reset(parent_token)

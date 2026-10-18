@@ -49,7 +49,7 @@ CC_TOOLS: dict[str, str] = {
 # tools are matched by the mcp__ prefix: their exact names exist only at runtime.
 NATIVE_TOOL_NAMES = frozenset({
     "read_file", "search_code", "list_directory", "run_command", "search_semantic",
-    "query_graph", "write_todos", "read_skill", "remember", "recall", "edit",
+    "query_graph", "search_index", "write_todos", "read_skill", "remember", "recall", "edit",
     "find_binary", "init_workspace", "read_env_profile", "setup_env", "web_search", "web_fetch",
     "start_session", "write_stdin", "kill_session", "list_sessions",
     "dispatch_agents", "wait_agents", "message_agent", "stop_agent",

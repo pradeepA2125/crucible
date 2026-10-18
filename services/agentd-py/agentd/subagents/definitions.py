@@ -40,7 +40,7 @@ BUILTIN_AGENTS: dict[str, AgentDefinition] = {
                      "with path:line citations. Never edits files or runs commands."),
         permission="plan",
         tools=frozenset({"search_code", "read_file", "list_directory", "query_graph",
-                         "search_semantic"}),
+                         "search_semantic", "search_index"}),
         persona=_EXPLORE_PERSONA),
     "general-purpose": AgentDefinition(
         name="general-purpose",

@@ -24,9 +24,11 @@ class PlanningToolRegistry:
         self,
         real_path: Path,
         semantic_index: object | None = None,
+        retrieval_client: object | None = None,
     ) -> None:
         self._real_path = real_path
         self._semantic_index = semantic_index
+        self._retrieval_client = retrieval_client
         self._ripgrep_cmd = os.environ.get("CRUCIBLE_RIPGREP_CMD", "rg")
         self._graph_walker: GraphWalker | None = None
 
@@ -79,6 +81,9 @@ class PlanningToolRegistry:
                 },
             ),
         ]
+        if self._retrieval_client is not None:
+            from agentd.tools.index_search import SEARCH_INDEX
+            tools.append(SEARCH_INDEX)
         if self._semantic_index is not None:
             tools.append(
                 ToolDefinition(
@@ -197,6 +202,9 @@ class PlanningToolRegistry:
                 root=self._real_path,
             )
 
+        if name == "search_index":
+            from agentd.tools.index_search import search_index
+            return await search_index(self._real_path, self._retrieval_client, args)
         if name == "search_semantic":
             from agentd.tools.search import search_semantic
             if self._semantic_index is None:

@@ -136,6 +136,7 @@ def resources_for(call: Call, shadow: Path, real: Path) -> tuple[Resource, ...]:
         "read_file",
         "list_directory",
         "search_code",
+        "search_index",
         "find_binary",
         "read_env_profile",
     }:

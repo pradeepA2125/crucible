@@ -411,9 +411,6 @@ HOW A <<main>>TURN<</main>><<child>>TASK<</child>> WORKS
       STALE_READ (or fails with a patch error), and that is your signal to read it again.
 <</type:edit>>
     • instruction — guidance for this step. budget_status — steps used out of your limit.
-<<main>>
-    • retrieval_seed (when present) — a map of the workspace: outlines and a few excerpts.
-<</main>>
   Your actions (exact shapes under OUTPUT below):
     • tool_calls — runs tools from AVAILABLE TOOLS. Their results arrive in
       conversation_history on your next step.
@@ -436,7 +433,7 @@ GROUND CLAIMS IN CODE YOU HAVE READ
   • Describe what code does only from its source: file names, outlines, graph nodes, line
     numbers and docs locate code; they are not the code.
 <<main>>
-    The retrieval seed is a map with some excerpts, not every file's full contents.
+    Candidate rows locate code; they do not establish its current contents or graph correctness.
 <</main>>
 <<child>>
     Your task text identifies the work; do not assume it includes the relevant source code.
@@ -667,7 +664,7 @@ folded into the create-the-file item.
 
 <</tool:write_todos>>
 <<type:edit>>
-After an edit, prefer live tools (read_file/search_code)<<main>> over the retrieval seed<</main>> — your edit is
+After an edit, prefer live tools (read_file/search_code)<<main>> over candidate hints<</main>> — your edit is
 already on the real workspace. Available tools:
 <</type:edit>>
 <<child:readonly>>
@@ -1352,7 +1349,7 @@ def build_controller_step_payload(
     """Build the user payload for one controller turn.
 
     KV-cache discipline (mirrors build_planning_step_payload): stable head
-    (workspace/retrieval_seed) -> append-only conversation_history ->
+    (workspace) -> append-only conversation_history ->
     per-turn-varying fields LAST. NOTE: `goal` is the CURRENT turn's user message
     — it changes every turn, so it must live in the TAIL, not the head. Putting it
     first (the original bug) broke the cached prefix from the start of the user
@@ -1363,9 +1360,6 @@ def build_controller_step_payload(
     payload: dict[str, object] = {
         "workspace_path": plan_context.get("workspace_path", ""),
     }
-    seed = plan_context.get("retrieval_seed")
-    if seed:
-        payload["retrieval_seed"] = seed  # FROZEN; never mutated in place
     raw_max = plan_context.get("max_iters", _DEFAULT_MAX_ITERS)
     max_iters = raw_max if isinstance(raw_max, int) else _DEFAULT_MAX_ITERS
     # THIS turn's step count, supplied by the loop. The `len(history) // 2` fallback is
@@ -1687,6 +1681,15 @@ def build_controller_step_payload(
                                  plan_context.get("delegated"))
         if live:
             hint = live + " " + hint
+    if iteration == 0 and any(t.get("name") == "search_index" for t in tool_definitions):
+        hint += (
+            " CODE DISCOVERY: after required skill/todo setup, when this request needs repo "
+            "code and locations are unknown, prefer search_index(query, limit=4) as your first "
+            "code-discovery tool. It searches the current workspace; no repo name is needed. "
+            "Candidate paths, symbols, ranges and relationships are suggestions, may be stale "
+            "or incomplete, and are not source. Verify with read_file. Use known locations "
+            "directly; skip discovery for conversation or when visible source is sufficient."
+        )
     payload["instruction"] = f"Phase={phase}. {hint} ({iteration} of {max_iters} steps used.)"
     payload["budget_status"] = f"{iteration}/{max_iters} steps used"  # LAST (varies every turn)
     return payload

@@ -190,7 +190,7 @@
           "type": "boolean",
           "default": true,
           "scope": "machine",
-          "description": "Compact tool catalog JSON and bound repository trees for new chats. Requires a backend restart."
+          "description": "Compact tool catalog JSON. Requires a backend restart."
         },
         "crucible.webFetch.enabled": {
           "type": "boolean",

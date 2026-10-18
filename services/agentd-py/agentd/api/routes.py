@@ -294,6 +294,7 @@ def build_router(
             "shell_policy": getattr(getattr(chat_agent, "_shell_policy", None), "value", "ask"),
             "task_subsystem_enabled": is_task_subsystem_enabled(),
             "chat_controller_enabled": is_controller_enabled(),
+            "code_context_mode": "on_demand",
             "memory_enabled": is_memory_enabled(),
             "local_models": (
                 local_models.payload() if local_models is not None  # type: ignore[attr-defined]
@@ -1395,17 +1396,17 @@ def build_router(
         return ResumeTaskResponse(task_id=child_id, resume_of_task_id=parent.task_id)
 
     # ── Index routes ───────────────────────────────────────────────────────────
-    # Allows callers (CI, indexer scripts, start-backend.sh) to pre-warm the
-    # semantic index immediately after the Rust indexer writes a new snapshot,
-    # eliminating the cold-start penalty on the first task.
+    # Prepares discovery metadata after Rust snapshot writes, independently of
+    # local models, and updates the semantic index when enabled.
 
     @router.get("/index/status")
     async def get_index_status() -> dict:  # type: ignore[type-arg]
-        """Return the current state of the semantic index.
+        """Return discovery cache readiness and semantic index build state.
 
         GET /v1/index/status
-        Response: { "semantic_enabled": bool, "building": bool, "last_indexed_snapshot_ms": int }
-        Poll until building=false to know the pre-warm triggered by POST /v1/index/build is done.
+        Discovery is warm for the current snapshot when discovery.state="ready".
+        building=false alone does not establish readiness: a snapshot may be
+        missing, uncacheable, or pending a background refresh.
         """
         if retrieval_client is None:
             return {"semantic_enabled": False, "building": False, "last_indexed_snapshot_ms": 0}
@@ -1413,13 +1414,13 @@ def build_router(
 
     @router.post("/index/build", status_code=202)
     async def build_index(request: dict) -> dict:  # type: ignore[type-arg]
-        """Trigger an async semantic index build for a workspace.
+        """Warm discovery caches and update the semantic index when enabled.
 
         POST /v1/index/build
         Body: { "workspace_path": "/abs/path/to/workspace" }
 
         Returns 202 immediately; building runs in the background.
-        Returns 503 if semantic retrieval is not enabled.
+        Returns 503 if no retrieval client is configured.
         Returns 400 if workspace_path is missing.
         """
         import asyncio as _asyncio
@@ -1429,9 +1430,8 @@ def build_router(
             if isinstance(request, dict) else "")
         if not workspace_path:
             raise HTTPException(400, "workspace_path is required")
-        if retrieval_client is None or not retrieval_client.semantic_enabled():
-            raise HTTPException(
-                503, "Semantic retrieval is not enabled (set CRUCIBLE_SEMANTIC_RETRIEVAL=true)")
+        if retrieval_client is None:
+            raise HTTPException(503, "Code retrieval is not configured")
 
         async def _build() -> None:
             loop = _asyncio.get_event_loop()

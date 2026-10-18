@@ -82,6 +82,8 @@ class _RecordingEngine(ScriptedReasoningEngine):
 class _Ctx:
     def __init__(self, payload: dict) -> None:
         self._payload = payload
+        self.discovery_candidates = [{"path": p} for p in payload.get("files", [])]
+        self.graph_relationships = []
 
     def as_prompt_payload(self) -> dict:
         return self._payload
@@ -95,7 +97,7 @@ class _StubRetrieval:
         self._payload = payload
         self.calls = 0
 
-    def load_context(self, workspace_path: str, goal: str):
+    def load_context(self, workspace_path: str, goal: str, **kwargs):
         _ = (workspace_path, goal)
         self.calls += 1
         return _Ctx(self._payload), []
@@ -182,40 +184,23 @@ async def test_cacheable_head_byte_identical_across_restart(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_retrieval_seed_pinned_across_restart(tmp_path: Path):
-    """The seed is frozen for the thread's life (deltas append to the history tail,
-    never the seed). Pin it durably so a restart replays the SAME bytes — the KV
-    prefix matches even if the snapshot was re-indexed meanwhile."""
+async def test_restart_never_replays_legacy_seed_or_automatically_retrieves(tmp_path: Path):
     store = ChatThreadStore(tmp_path / "chat.sqlite3")
     thread = store.create_thread(str(tmp_path), title="t")
-
-    retr_a = _StubRetrieval({"seed_marker": "v1", "files": ["a.py"]})
-    ctrl_a = ChatController(
-        workspace_path=str(tmp_path),
-        reasoning_engine=ScriptedReasoningEngine(
-            None, [], controller_step_responses=[
-                {"type": "answer", "thought": "t", "answer": "ok"}]),
-        thread_store=store, orchestrator=None, broadcaster=EventBroadcaster(),
-        retrieval_client=retr_a)
-    await ctrl_a.handle_message(thread.thread_id, "hi", channel_id="c1")
-    assert retr_a.calls == 1  # computed once
-
-    # Restart: fresh controller; the retrieval client would now return a DIFFERENT
-    # seed (simulating a background re-index). The pinned v1 must still be replayed.
-    retr_b = _StubRetrieval({"seed_marker": "v2-CHANGED", "files": ["b.py"]})
-    engine_b = _RecordingEngine(
-        None, [], controller_step_responses=[
+    store.set_controller_seed(thread.thread_id, {"files": ["stale.py"]})
+    for name in ("a.py", "b.py"):
+        retrieval = _StubRetrieval({"files": [name]})
+        engine = _RecordingEngine(None, [], controller_step_responses=[
             {"type": "answer", "thought": "t", "answer": "ok"}])
-    ctrl_b = ChatController(
-        workspace_path=str(tmp_path), reasoning_engine=engine_b,
-        thread_store=store, orchestrator=None, broadcaster=EventBroadcaster(),
-        retrieval_client=retr_b)
-    await ctrl_b.handle_message(thread.thread_id, "again", channel_id="c2")
-
-    seed_used = engine_b.plan_contexts_seen[0].get("retrieval_seed")
-    assert seed_used == {"seed_marker": "v1", "files": ["a.py"]}, \
-        f"pinned seed not replayed after restart; got {seed_used}"
-    assert retr_b.calls == 0, "seed was recomputed instead of rehydrated from the store"
+        controller = ChatController(
+            workspace_path=str(tmp_path), reasoning_engine=engine,
+            thread_store=store, orchestrator=None, broadcaster=EventBroadcaster(),
+            retrieval_client=retrieval)
+        await controller.handle_message(thread.thread_id, "Explain this", channel_id="c")
+        context = engine.plan_contexts_seen[0]
+        assert "retrieval_seed" not in context
+        assert "code_candidates" not in context
+        assert retrieval.calls == 0
 
 
 @pytest.mark.asyncio

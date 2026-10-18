@@ -10,21 +10,20 @@ def test_system_prompt_carries_tools_not_retrieval():
     sp = format_controller_system_prompt(
         [{"name": "read_file", "description": "d", "parameters": {}}])
     assert "read_file" in sp
-    # Retrieval data never rides the system string; HOW A TURN WORKS only names the payload field.
-    mentions = [line.strip() for line in sp.splitlines() if "retrieval_seed" in line]
-    assert mentions == ["• retrieval_seed (when present) — a map of the workspace: outlines and "
-                        "a few excerpts."]
+    assert "code_candidates" not in sp
+    assert "retrieval_seed" not in sp
+
 
 
 def test_payload_key_order_is_cache_stable():
     payload = build_controller_step_payload(
-        {"goal": "g", "workspace_path": "/w", "retrieval_seed": {"neighbors": []}},
+        {"goal": "g", "workspace_path": "/w", "code_candidates": "candidate rows"},
         history=[{"role": "assistant", "content": "{}"}],
         tool_definitions=[],
         phase="PLAN",
     )
     keys = list(payload.keys())
-    assert keys.index("retrieval_seed") < keys.index("conversation_history")
+    assert "code_candidates" not in payload
     assert keys[-1] == "budget_status"
     assert keys.index("instruction") < keys.index("budget_status")
     assert keys.index("conversation_history") < keys.index("instruction")

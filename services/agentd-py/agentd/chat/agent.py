@@ -119,6 +119,7 @@ class ChatAgent:
         self._registry = PlanningToolRegistry(
             real_path=Path(workspace_path),
             semantic_index=getattr(retrieval_client, "_semantic_index", None),
+            retrieval_client=retrieval_client,
         )
         self._classifier = IntentClassifier(transport=transport, model=model)
 

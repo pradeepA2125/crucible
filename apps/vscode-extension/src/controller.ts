@@ -2088,6 +2088,7 @@ export class CrucibleController {
             : tool === "list_directory" ? "Listing directory"
             : tool === "search_code" ? "Searching codebase"
             : tool === "search_semantic" ? "Semantic search"
+            : tool === "search_index" ? "Finding code candidates"
             : tool;
           this.ui.updateChatThinking(`Replanning: ${action}…`);
         } else if (event.type === "planning_complete") {

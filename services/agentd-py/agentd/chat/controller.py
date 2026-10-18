@@ -72,7 +72,7 @@ from agentd.domain.models import (
 )
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
-from agentd.performance import mark, profile_async, profile_sync, profile_workspace_turn, span
+from agentd.performance import mark, profile_async, profile_workspace_turn, span
 from agentd.prompting.tagged import RenderContext
 from agentd.providers.availability import ProviderUnavailable
 from agentd.providers.plan_access import (
@@ -446,11 +446,8 @@ class ChatController:
         # TODO(controller): unbounded per-thread growth; eviction/compaction is owned
         # by the future agent-memory module (spec §6 defers it). Fine for v1.
         self._histories: dict[str, list[dict[str, object]]] = {}
-        # Per-thread retrieval seed — computed once, never rewritten (spec §6 cache
-        # discipline: a frozen pointer-set placed before history).
-        self._seeds: dict[str, dict[str, object] | None] = {}
         # Per-thread carried prompt-size observation — closes the same turn-boundary
-        # gap _histories/_seeds already close for their own state. Without this, a
+        # gap _histories closes for conversation state. Without this, a
         # fresh ControllerLoop resets its observation to None every run(), so every
         # turn's first compaction decision fell back to the character estimate on the
         # largest history the thread had ever accumulated, and the exact provider
@@ -618,6 +615,7 @@ class ChatController:
             shadow_root=Path(self._workspace_path),
             real_workspace_path=Path(self._workspace_path),
             semantic_index=getattr(self._retrieval, "_semantic_index", None),
+            retrieval_client=self._retrieval,
             command_approval_callback=command_approval_callback,
             read_observer=read_observer,
         )]
@@ -692,44 +690,6 @@ class ChatController:
             history = recovered
         self._histories[thread_id] = history
         return history
-
-    async def _retrieval_seed(self, thread_id: str, goal: str) -> dict[str, object] | None:
-        """Compute the thread's retrieval seed once, then reuse it byte-for-byte so
-        the cached payload prefix stays stable across turns (spec §6) AND across a
-        backend restart: the seed is pinned durably and replayed verbatim, mirroring
-        the planner's planning_initial_context. Retrieval changes ride the history
-        tail as delta notes, so the seed itself is frozen for the thread's life — a
-        re-indexed snapshot must NOT recompute it (that would break the KV prefix)."""
-        if thread_id in self._seeds:
-            return self._seeds[thread_id]
-        # Rehydrate a pinned seed from the store (the restart path) before recomputing.
-        thread = self._store.get_thread(thread_id)
-        if thread is not None and thread.controller_retrieval_seed is not None:
-            self._seeds[thread_id] = thread.controller_retrieval_seed
-            return thread.controller_retrieval_seed
-        # Retrieval is seconds of CPU and filesystem work: off the event loop, so other
-        # chats, SSE streams and /live polls keep running. The store stays on the loop.
-        seed = await asyncio.to_thread(self._compute_retrieval_seed, goal)
-        self._seeds[thread_id] = seed
-        # Pin on first compute so a later restart replays these exact bytes.
-        self._store.set_controller_seed(thread_id, seed)
-        return seed
-
-    @profile_sync("context.retrieval_seed")
-    def _compute_retrieval_seed(self, goal: str) -> dict[str, object] | None:
-        if self._retrieval is None:
-            return None
-        try:
-            context, _ = self._retrieval.load_context(self._workspace_path, goal)
-            seed = context.as_prompt_payload()
-            from agentd.tools.read_policy import compact_context_enabled
-            if compact_context_enabled() and isinstance(seed.get("repository_structure"), list):
-                from agentd.context_compaction import bounded_tree
-                seed["repository_structure"] = bounded_tree(seed["repository_structure"])
-            return seed
-        except Exception:
-            logger.debug("[controller] retrieval seed failed", exc_info=True)
-            return None
 
     def _image_refs(self, attachments: list[dict[str, object]] | None) -> list[dict[str, object]]:
         if not attachments:
@@ -1110,9 +1070,6 @@ class ChatController:
         plan_context["context_capacity"] = capacity
         plan_context["capacity_source"] = capacity_source
         plan_context["capacity_model"] = capacity_model
-        seed = await self._retrieval_seed(thread_id, goal)
-        if seed:
-            plan_context["retrieval_seed"] = seed
         # "Review each edit" on → hold each patch for a decision; off → instant promote.
         # LIVE for the whole turn: the composer checkbox posts /review-pref, which mutates
         # this control, and the loop re-reads it before every edit. The message's
@@ -1292,17 +1249,20 @@ class ChatController:
     async def _retrieval_delta_cb(self, touched: list[str]) -> str | None:
         """Append-only retrieval delta after an accepted edit (spec §6).
 
-        v1 returns a compact pointer note rather than recomputed neighbors: the
-        edits are instant-promoted to real, so the live tools (read_file/search_code/
-        query_graph) are the always-current source; a real neighbor recompute would
-        need a fresh snapshot, which the self-updating watcher rebuilds async. The
-        note never touches `retrieval_seed` (cache-prefix immutability)."""
+        Source edits are live, but graph/vector rebuilds are asynchronous. Record
+        invalidation immediately without claiming a new graph is already current.
+        Candidate hints remain historical; later search_index calls use the snapshot
+        current at lookup, and ordinary reads verify current source."""
         if not touched:
             return None
-        return (
-            f"Workspace changed: edited {touched}. These edits are live on the real "
-            "workspace — use read_file/search_code for current contents and query_graph "
-            "for updated neighbors. (The retrieval seed is from session start.)")
+        return json.dumps({
+            "schema_version": 1, "kind": "evidence_invalidation", "paths": touched,
+            "workspace": "real", "index_state": "unverified_after_edit",
+            "guidance": (
+                "Accepted edits changed source. Earlier excerpts and relationships for these "
+                "paths may be stale. Use read_file/search_code for current source; "
+                "query_graph may still reflect the previous snapshot until indexing finishes."),
+        })
 
     @profile_async("controller.persist_and_publish")
     async def _finish(
@@ -1937,7 +1897,6 @@ class ChatController:
         writes it straight back (the model kept remembering rewound turns until a
         restart)."""
         self._histories.pop(thread_id, None)
-        self._seeds.pop(thread_id, None)
         self._observed_prompts.pop(thread_id, None)
         self._context_usage.invalidate(thread_id)
 
@@ -4016,6 +3975,7 @@ class ChatController:
                 BuiltinToolSource(
                     shadow_root=workspace, real_workspace_path=workspace,
                     semantic_index=getattr(self._retrieval, "_semantic_index", None),
+                    retrieval_client=self._retrieval,
                     command_approval_callback=partial(self._child_command_approval_cb, handle),
                     render_ctx=render_ctx,
                     read_observer=log.read_observer(workspace, ctx.agent_id),

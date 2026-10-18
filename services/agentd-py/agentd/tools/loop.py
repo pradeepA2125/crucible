@@ -1240,5 +1240,6 @@ def build_tool_registry(
         shadow_root=shadow_root,
         real_workspace_path=real_workspace_path or shadow_root,
         semantic_index=semantic_index,
+        retrieval_client=retrieval_client,
         command_approval_callback=command_approval_callback,
     )
