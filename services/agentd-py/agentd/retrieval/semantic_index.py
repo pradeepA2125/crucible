@@ -112,7 +112,7 @@ class SemanticIndex:
         1. Compare each source file's mtime with the stored index state (stat only).
         2. Skip files with unchanged mtimes entirely — they are never read.
         3. Chunk the changed files from snapshot boundaries + their contents.
-        4. Delete their stale chunks, then embed and insert the new ones.
+        4. Prepare embeddings before deleting stale chunks, then insert replacements.
         """
         start = time.time()
         workspace = Path(workspace_path).resolve()
@@ -129,15 +129,20 @@ class SemanticIndex:
             except OSError:
                 continue
             current_mtimes[rel_path] = stat.st_mtime
-        if not current_mtimes:
-            return IndexStats(total_chunks=0, updated_files=0, skipped_files=0, build_time_ms=0)
-
         existing_mtimes = self._get_existing_mtimes(table)
         files_to_update = {
             path for path, mtime in current_mtimes.items()
             if path not in existing_mtimes or abs(existing_mtimes[path] - mtime) > 0.001
         }
         skipped = len(current_mtimes) - len(files_to_update)
+
+        # A failed model call must not destroy the last usable chunks. Prepare
+        # and validate ALL replacement rows before any destructive storage call.
+        new_rows: list[dict[str, Any]] = []
+        if files_to_update:
+            new_chunks = self._chunker.build(
+                workspace, snapshot_payload, only_paths=files_to_update)
+            new_rows = self._embed_rows(new_chunks)
 
         # Files the snapshot no longer has (deleted, moved, newly ignored): without this their
         # chunks stay forever, and searches return files that do not exist.
@@ -147,10 +152,8 @@ class SemanticIndex:
             logger.info("Semantic index: removed chunks of %d missing files", len(removed))
 
         if files_to_update:
-            new_chunks = self._chunker.build(
-                workspace, snapshot_payload, only_paths=files_to_update)
             self._delete_chunks_for_files(table, files_to_update)
-            self._embed_and_insert(table, new_chunks)
+            self._insert_rows(table, new_rows)
 
         elapsed = int((time.time() - start) * 1000)
         if files_to_update:
@@ -399,14 +402,15 @@ class SemanticIndex:
                 table.delete(f"path IN ({in_clause})")
         except Exception:
             logger.warning(
-                "Failed to delete stale chunks for %d files; they will accumulate",
+                "Failed to delete stale chunks for %d files; index update failed",
                 len(paths),
                 exc_info=True,
             )
+            raise
 
-    def _embed_and_insert(self, table: Any, chunks: list[CodeChunk]) -> None:
+    def _embed_rows(self, chunks: list[CodeChunk]) -> list[dict[str, Any]]:
         if not chunks:
-            return
+            return []
 
         texts = [self._chunker.make_embedding_text(c) for c in chunks]
 
@@ -416,16 +420,21 @@ class SemanticIndex:
             batch = texts[i : i + self._embed_batch_size]
             all_vectors.extend(self._encode_batch(batch))
 
-        rows = [self._chunk_to_row(chunk, vec) for chunk, vec in zip(chunks, all_vectors)]
+        return [self._chunk_to_row(chunk, vec)
+                for chunk, vec in zip(chunks, all_vectors, strict=True)]
+
+    def _insert_rows(self, table: Any, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return
         table.add(rows)
 
         # Build ANN index for fast approximate search (skip for tiny datasets)
-        if len(chunks) >= 256:
+        if len(rows) >= 256:
             try:
                 table.create_index(
                     vector_column_name="vector",
                     metric="cosine",
-                    num_partitions=min(256, max(4, len(chunks) // 40)),
+                    num_partitions=min(256, max(4, len(rows) // 40)),
                     replace=True,
                 )
             except Exception:
