@@ -37,7 +37,7 @@ def _nonneg_float(env: str, default: float) -> float:
 
 
 def mcp_tools_max_chars() -> int:
-    return _pos_int("CRUCIBLE_MCP_TOOLS_MAX_CHARS", 16000)
+    return _pos_int("CRUCIBLE_MCP_TOOLS_MAX_CHARS", 64000)
 
 
 def mcp_decision_timeout_sec() -> float:

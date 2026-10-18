@@ -305,7 +305,7 @@ tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval ga
 - **Tools (`agentd/mcp/tool_source.py::McpToolSource`):** dynamic `definitions()` from
   `list_tools()`, namespaced `mcp__<server>__<tool>`; schemas ride `tools_json` via the
   existing `AggregatingToolRegistry` seam. Budget: `CRUCIBLE_MCP_TOOLS_MAX_CHARS` (default
-  16000, order-truncation). Results: text blocks flattened; non-text counted-not-rendered;
+  64000, order-truncation). Results: text blocks flattened; non-text counted-not-rendered;
   `isError` → `ToolOutput(is_error=True)` — the loop adapts, never crashes.
 - **Gate:** every call raises `PendingGate(kind="mcp_tool", payload={server, tool, args})`
   (Class-A: renders from `/live`, survives reload; `mcp_approval_requested` SSE is only the
@@ -320,7 +320,7 @@ tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval ga
   `mcp__` (detected from `tool_definitions` — no loader param). Teaches: external/side-
   effecting + the approval pause is expected, not an error.
 - **Env:** `CRUCIBLE_MCP_ENABLED` (off) · `CRUCIBLE_MCP_DECISION_TIMEOUT_SEC` (0) ·
-  `CRUCIBLE_MCP_TOOLS_MAX_CHARS` (16000) · `CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC` (30) ·
+  `CRUCIBLE_MCP_TOOLS_MAX_CHARS` (64000) · `CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC` (30) ·
   `CRUCIBLE_MCP_CALL_TIMEOUT_SEC` (120). `/v1/config` exposes `mcp_enabled`.
 - **GitHub:** proof-via-user-config (no bundled entry): an `mcp.json` entry for the official
   GitHub MCP server with a `${GITHUB_PAT}` header, verified live end-to-end.
@@ -768,7 +768,7 @@ Spec: `docs/superpowers/specs/2026-10-06-chatgpt-plan-usage-design.md` (built fr
 - `CRUCIBLE_SKILLS_CATALOG_MAX_CHARS` (default `16000`; order-truncates the catalog) + `CRUCIBLE_SKILLS_BODY_MAX_CHARS` (default `20000`; caps a loaded skill body).
 - `CRUCIBLE_MCP_ENABLED` — connect external MCP servers from `.crucible/mcp.json` and offer their tools to the controller. Default **OFF**; opt in with `1/true/yes/on`. See "MCP client (P3)".
 - `CRUCIBLE_MCP_DECISION_TIMEOUT_SEC` — seconds to wait for the user's mcp_tool gate decision; `0` (default) = wait forever; timeout → reject.
-- `CRUCIBLE_MCP_TOOLS_MAX_CHARS` — char budget for MCP tool definitions in tools_json (default `16000`; order-truncation).
+- `CRUCIBLE_MCP_TOOLS_MAX_CHARS` — char budget for MCP tool definitions in tools_json (default `64000`, raised from 16000 on 2026-10-19: 16000 chars ≈ 4k tokens cut this workspace's 39 connected tools to 21; order-truncation).
 - `CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC` — per-server connect wait at startup before continuing without it (default `30`).
 - `CRUCIBLE_MCP_CALL_TIMEOUT_SEC` — per-call timeout for an MCP tool invocation (default `120`).
 - `CRUCIBLE_LISTEN_PORT` / `CRUCIBLE_SERVE_PID` — set by `python -m agentd.serve` for the app process only (stripped from every backend subprocess by `agentd/child_env.py::child_env()`); the app refuses to start without them, so bare `uvicorn agentd.main:app` no longer works. (`CRUCIBLE_PORT` is retired.)
