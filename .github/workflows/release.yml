@@ -11,15 +11,23 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/agentd-py/pyproject.toml
       - run: npm install && npm run build && npm run test && npm run typecheck
       # search_code shells out to ripgrep; without it its tests skip instead of running.
       - run: sudo apt-get update && sudo apt-get install -y ripgrep
-      - run: |
-          cd services/agentd-py
-          python -m venv .venv && . .venv/bin/activate
-          pip install -e .[dev]
-          pytest
+      - name: Install Python test dependencies
+        working-directory: services/agentd-py
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e '.[dev]'
+      - name: Run full Python suite
+        working-directory: services/agentd-py
+        run: |
+          . .venv/bin/activate
+          python -m pytest --durations=30
       - run: cd services/indexer-rs && cargo test --locked
 
   indexer:

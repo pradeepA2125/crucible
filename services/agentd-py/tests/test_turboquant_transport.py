@@ -346,7 +346,7 @@ async def test_thinking_on_falls_back_to_json_object() -> None:
 
 
 @pytest.mark.asyncio
-async def test_retries_on_503_then_succeeds() -> None:
+async def test_retries_on_503_then_succeeds(provider_retry_sleep) -> None:
     """503 on first attempt → retry → success on second."""
     lines = _sse_stream(*_chunk_json({"ok": True}))
     responses: list[_FakeStreamResponse] = [
@@ -369,7 +369,7 @@ async def test_retries_on_503_then_succeeds() -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_timeout_retries_then_succeeds() -> None:
+async def test_read_timeout_retries_then_succeeds(provider_retry_sleep) -> None:
     """httpx.ReadTimeout on first stream → retried → succeeds on second attempt."""
     lines = _sse_stream(*_chunk_json({"ok": True}))
 
@@ -415,7 +415,7 @@ async def test_read_timeout_retries_then_succeeds() -> None:
 
 
 @pytest.mark.asyncio
-async def test_raises_after_retries_exhausted_on_503() -> None:
+async def test_raises_after_retries_exhausted_on_503(provider_retry_sleep) -> None:
     responses = [_FakeStreamResponse(status_code=503, lines=[])] * 3
     client = _FakeStreamClient(responses)
     transport = TurboQuantTransport(profile=DEVSTRAL, http_client=client, max_retries=2)
@@ -430,6 +430,7 @@ async def test_raises_after_retries_exhausted_on_503() -> None:
         )
 
     assert len(client.calls) == 3
+    assert [call.args[0] for call in provider_retry_sleep.await_args_list] == [5.0, 10.0]
 
 
 @pytest.mark.asyncio

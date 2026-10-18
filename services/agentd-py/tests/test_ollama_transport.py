@@ -16,6 +16,8 @@ from agentd.providers.ollama_transport import (
     strip_json_code_fences,
 )
 
+pytestmark = pytest.mark.usefixtures("provider_retry_sleep")
+
 
 @dataclass
 class _FakeRequest:
@@ -660,12 +662,19 @@ async def test_ollama_transport_raises_on_non_retryable_4xx() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ollama_transport_raises_after_retries_exhausted() -> None:
-    flaky = [_FakeResponse(status_code=503, payload="busy")] * 3
+@pytest.mark.parametrize("max_retries,delays", [
+    (0, []),
+    (2, [5.0, 10.0]),
+    (6, [5.0, 10.0, 20.0, 40.0, 60.0, 60.0]),
+])
+async def test_ollama_transport_raises_after_retries_exhausted(
+    provider_retry_sleep, max_retries, delays,
+) -> None:
+    flaky = [_FakeResponse(status_code=503, payload="busy")] * (max_retries + 1)
     client = _FakeAsyncClient(flaky)
-    transport = OllamaJsonTransport(http_client=client, max_retries=2)
+    transport = OllamaJsonTransport(http_client=client, max_retries=max_retries)
 
-    with pytest.raises(RuntimeError, match="failed after 2 retries"):
+    with pytest.raises(RuntimeError, match=f"failed after {max_retries} retries"):
         await transport.generate_json(
             model="m",
             schema_name="x",
@@ -673,7 +682,8 @@ async def test_ollama_transport_raises_after_retries_exhausted() -> None:
             system_instructions="s",
             user_payload={},
         )
-    assert len(client.calls) == 3
+    assert len(client.calls) == max_retries + 1
+    assert [call.args[0] for call in provider_retry_sleep.await_args_list] == delays
 
 
 def test_ollama_transport_default_host_when_no_env(monkeypatch: pytest.MonkeyPatch) -> None:

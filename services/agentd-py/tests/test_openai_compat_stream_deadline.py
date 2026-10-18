@@ -14,6 +14,8 @@ from agentd.providers.openai_compatible_transport import (
 )
 from tests.test_openai_compatible_transport import _FakeCompletions, _GoodStream, _StreamChunk
 
+pytestmark = pytest.mark.usefixtures("provider_retry_sleep")
+
 
 class _TricklingStream:
     """Sends an empty chunk every 10 ms forever: never idle, never done."""

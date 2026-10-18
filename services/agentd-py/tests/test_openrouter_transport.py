@@ -6,6 +6,8 @@ import pytest
 
 from agentd.providers.openrouter_transport import OpenRouterJsonTransport
 
+pytestmark = pytest.mark.usefixtures("provider_retry_sleep")
+
 # ---------------------------------------------------------------------------
 # Fakes for the OpenAI-compatible chat.completions client
 # ---------------------------------------------------------------------------
@@ -207,7 +209,7 @@ async def test_call_with_retry_calls_on_retry() -> None:
 
 
 @pytest.mark.asyncio
-async def test_call_with_retry_classifies_429_as_rate_limited() -> None:
+async def test_call_with_retry_classifies_429_as_rate_limited(provider_retry_sleep) -> None:
     fake = _FlakyCompletions("ignored", status_code=429)
     transport = OpenRouterJsonTransport(completions_client=fake)
     retries: list[tuple[int, int, str, str]] = []
@@ -218,6 +220,8 @@ async def test_call_with_retry_classifies_429_as_rate_limited() -> None:
     )
 
     assert retries[0][2] == "rate_limited"
+    provider_retry_sleep.assert_awaited_once()
+    assert 3.75 <= provider_retry_sleep.await_args.args[0] <= 6.25  # 5s, +/-25% jitter
 
 
 @pytest.mark.asyncio

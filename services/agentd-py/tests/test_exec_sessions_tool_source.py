@@ -1,6 +1,8 @@
 import sys
+from collections.abc import AsyncIterator
 
 import pytest
+import pytest_asyncio
 
 from agentd.domain.models import ApprovalOutcome, CommandDecision
 from agentd.exec_sessions.manager import SessionManager
@@ -10,23 +12,34 @@ pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="unix tests")
 PY = sys.executable
 
 
-def _source(tmp_path, approve=True, calls=None):
+@pytest_asyncio.fixture
+async def manager(tmp_path) -> AsyncIterator[SessionManager]:
+    manager = SessionManager(tmp_path)
+    try:
+        yield manager
+    finally:
+        # Cancelling the PTY waiter does not stop its blocking proc.wait thread;
+        # always kill children before pytest closes the loop's executor.
+        await manager.shutdown()
+
+
+def _source(manager, approve=True, calls=None):
     async def cb(command, args, cwd):
         if calls is not None:
             calls.append((command, args, cwd))
         return ApprovalOutcome.from_command(CommandDecision(approve=approve))
-    return ExecSessionToolSource(SessionManager(tmp_path), "t1", cb)
+    return ExecSessionToolSource(manager, "t1", cb)
 
 
 def test_definitions_names(tmp_path):
-    names = [d.name for d in _source(tmp_path).definitions()]
+    names = [d.name for d in _source(SessionManager(tmp_path)).definitions()]
     assert names == ["start_session", "write_stdin", "kill_session", "list_sessions"]
 
 
 @pytest.mark.asyncio
-async def test_start_gated_and_fast_command_runs(tmp_path):
+async def test_start_gated_and_fast_command_runs(manager):
     calls = []
-    src = _source(tmp_path, approve=True, calls=calls)
+    src = _source(manager, approve=True, calls=calls)
     out = await src.execute("start_session", {
         "command": PY, "args": ["-c", "print('ok')"], "yield_time_ms": 5000})
     assert not out.is_error and "ok" in out.output and "exit code: 0" in out.output
@@ -34,16 +47,16 @@ async def test_start_gated_and_fast_command_runs(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_start_rejected_is_error_no_spawn(tmp_path):
-    src = _source(tmp_path, approve=False)
+async def test_start_rejected_is_error_no_spawn(manager):
+    src = _source(manager, approve=False)
     out = await src.execute("start_session", {"command": PY, "args": ["-c", "print(1)"]})
     assert out.is_error and "rejected" in out.output.lower()
     assert "(none)" in (await src.execute("list_sessions", {})).output
 
 
 @pytest.mark.asyncio
-async def test_long_runner_roundtrip_poll_kill(tmp_path):
-    src = _source(tmp_path)
+async def test_long_runner_roundtrip_poll_kill(manager):
+    src = _source(manager)
     out = await src.execute("start_session", {
         "command": PY,
         "args": ["-u", "-c", "import time;print('up',flush=True);time.sleep(60)"],
@@ -60,9 +73,9 @@ async def test_long_runner_roundtrip_poll_kill(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_write_stdin_ungated(tmp_path):
+async def test_write_stdin_ungated(manager):
     calls = []
-    src = _source(tmp_path, approve=True, calls=calls)
+    src = _source(manager, approve=True, calls=calls)
     out = await src.execute("start_session", {
         "command": PY, "args": ["-c", "import time;time.sleep(60)"],
         "yield_time_ms": 300})
@@ -72,16 +85,16 @@ async def test_write_stdin_ungated(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_unknown_session_is_error_not_raise(tmp_path):
-    out = await _source(tmp_path).execute("write_stdin", {"session_id": "sess-zzz"})
+async def test_unknown_session_is_error_not_raise(manager):
+    out = await _source(manager).execute("write_stdin", {"session_id": "sess-zzz"})
     assert out.is_error and "No session" in out.output
 
 
 @pytest.mark.asyncio
-async def test_oversized_stdin_rejected(tmp_path):
+async def test_oversized_stdin_rejected(manager):
     """A blocked event loop is the failure mode: a huge write into a full PTY
     buffer would freeze the backend — reject before it reaches the fd."""
-    src = _source(tmp_path)
+    src = _source(manager)
     out = await src.execute("start_session", {
         "command": PY, "args": ["-c", "import time;time.sleep(60)"],
         "yield_time_ms": 300})

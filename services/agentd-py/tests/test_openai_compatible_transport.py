@@ -8,10 +8,10 @@ from agentd.providers.openai_compatible_transport import (
 )
 from agentd.providers.openrouter_transport import OpenRouterJsonTransport
 
-# The fake response/completions classes below deliberately duplicate the ones in
-# tests/test_openrouter_transport.py: that file is the extraction's regression net and
-# must stay byte-for-byte unmodified, so sharing fixtures would couple it to this new
-# file and undo exactly the insulation that made the extraction safe to land.
+pytestmark = pytest.mark.usefixtures("provider_retry_sleep")
+
+# Keep these fake response/completions classes independent of the OpenRouter
+# request/response regression cases in tests/test_openrouter_transport.py.
 
 
 class _FakeMessage:
@@ -80,6 +80,20 @@ def _transport(contents: list[object], *, probe_done: bool = False, **kw
     t = OpenAICompatibleTransport(completions_client=fake, **kw)
     t._newline_probe_done = probe_done
     return t, fake
+
+
+@pytest.mark.asyncio
+async def test_retry_backoff_grows_and_caps_with_jitter(provider_retry_sleep) -> None:
+    transport, fake = _transport([_StatusError(503)] * 7, max_retries=6)
+    with pytest.raises(_StatusError, match="http 503"):
+        await transport._call_with_retry({"model": "m", "messages": []})
+    assert len(fake.calls) == 7
+    delays = [call.args[0] for call in provider_retry_sleep.await_args_list]
+    bases = [5.0, 10.0, 20.0, 40.0, 60.0, 60.0]
+    assert len(delays) == len(bases)
+    assert all(
+        0.75 * base <= delay <= 1.25 * base for base, delay in zip(bases, delays, strict=True)
+    )
 
 
 def test_openrouter_is_a_subclass() -> None:
