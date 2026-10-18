@@ -1,0 +1,29 @@
+{
+  "pid": 5596,
+  "code_context_mode": "on_demand",
+  "provider": {
+    "backend": "chatgpt",
+    "model": "gpt-6.1-sol",
+    "reasoning_effort": "medium",
+    "context_window": 500000
+  },
+  "discovery": {
+    "state": "ready",
+    "warmup_count": 1,
+    "last_warmup_ms": 395.58,
+    "node_count": 25984,
+    "edge_count": 71194,
+    "generated_at_ms": 1792345604083
+  },
+  "local_models": {
+    "embedder": {
+      "state": "ready",
+      "error": null
+    },
+    "reranker": {
+      "state": "ready",
+      "error": null
+    }
+  },
+  "retired_config_fields_absent": true
+}

@@ -1,0 +1,41 @@
+{
+  "pid": 85309,
+  "before": {
+    "semantic_enabled": true,
+    "building": false,
+    "last_indexed_snapshot_ms": 0,
+    "discovery": {
+      "state": "ready",
+      "warmup_count": 1,
+      "last_warmup_ms": 373.03,
+      "node_count": 25984,
+      "edge_count": 71194,
+      "generated_at_ms": 1792345604083
+    }
+  },
+  "after": {
+    "semantic_enabled": true,
+    "building": false,
+    "last_indexed_snapshot_ms": 0,
+    "discovery": {
+      "state": "ready",
+      "warmup_count": 2,
+      "last_warmup_ms": 267.48,
+      "node_count": 25984,
+      "edge_count": 71194,
+      "generated_at_ms": 1792345604083
+    }
+  },
+  "model_calls": 0,
+  "discovery_queries": 0,
+  "index_build_notifications": 0,
+  "snapshot_contents_unchanged": true,
+  "snapshot_inode_changed": true,
+  "observed_states": [
+    "pending",
+    "warming",
+    "ready"
+  ],
+  "observed_ready_after_ms": 1116.53,
+  "validation": "Live polling detects atomic snapshot replacement without a query or indexer notification."
+}

@@ -1,0 +1,21 @@
+{
+  "port": 59898,
+  "pid": 76888,
+  "ready": true,
+  "candidate_scorer": {
+    "scorer": "none",
+    "state": "disabled"
+  },
+  "candidate_delivery": "on_demand",
+  "provider_unchanged": true,
+  "local_models": {
+    "embedder": {
+      "state": "ready",
+      "error": null
+    },
+    "reranker": {
+      "state": "loading",
+      "error": null
+    }
+  }
+}

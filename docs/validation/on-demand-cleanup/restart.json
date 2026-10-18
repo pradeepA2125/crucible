@@ -1,0 +1,26 @@
+{
+  "port": 59898,
+  "pid": 3787,
+  "ready": true,
+  "code_context_mode": "on_demand",
+  "provider_unchanged": false,
+  "local_models": {
+    "embedder": {
+      "state": "loading",
+      "error": null
+    },
+    "reranker": {
+      "state": "loading",
+      "error": null
+    }
+  },
+  "discovery": {
+    "state": "ready",
+    "warmup_count": 1,
+    "last_warmup_ms": 395.57,
+    "node_count": 25984,
+    "edge_count": 71194,
+    "generated_at_ms": 1792345604083
+  },
+  "retired_env_present": false
+}

@@ -1,0 +1,33 @@
+{
+  "port": 59898,
+  "pid": 5596,
+  "ready": true,
+  "code_context_mode": "on_demand",
+  "provider_unchanged": false,
+  "provider_selection": {
+    "backend": "chatgpt",
+    "model": "gpt-6.1-sol",
+    "context_window": 500000,
+    "reasoning_effort": "medium"
+  },
+  "saved_effort_matches": true,
+  "local_models": {
+    "embedder": {
+      "state": "loading",
+      "error": null
+    },
+    "reranker": {
+      "state": "loading",
+      "error": null
+    }
+  },
+  "discovery": {
+    "state": "ready",
+    "warmup_count": 1,
+    "last_warmup_ms": 395.58,
+    "node_count": 25984,
+    "edge_count": 71194,
+    "generated_at_ms": 1792345604083
+  },
+  "retired_env_present": false
+}

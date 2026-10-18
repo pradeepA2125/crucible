@@ -1,0 +1,458 @@
+[
+  {
+    "trace": "3fb12f2b957048c6820f9c5468160d98",
+    "message_id": "a4500db0-c008-4bd0-957b-1981a05d9a74",
+    "thread_id": "chat-86a74fc4eae3",
+    "started_unix_ms": 1792348536669,
+    "completed": true,
+    "backend_elapsed_ms": 28333.78,
+    "physical_requests": 4,
+    "index_search_calls": 1,
+    "index_search_result_tokens": 278,
+    "index_searches": [
+      {
+        "trace": "3fb12f2b957048c6820f9c5468160d98",
+        "kind": "context",
+        "parent": "99b050627c674c2eaa21af52aecba8fd",
+        "layer": "index_search",
+        "status": "ok",
+        "rows": 4,
+        "elapsed_ms": 2280.52,
+        "result": {
+          "tokens": 278,
+          "chars": 936,
+          "method": "o200k_base_text"
+        }
+      }
+    ],
+    "candidate_tokens_all_requests": 0,
+    "candidate_tokens_per_request": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "candidate_tokens_new_deliveries": 0,
+    "delivery_comparison": {
+      "method": "same_retrieved_catalog_and_observed_reads",
+      "deliveries_compared": 0,
+      "without_qwen_tokens": 0,
+      "with_qwen_tokens": 0,
+      "tokens_removed": 0
+    },
+    "candidate_tokens_logical_calls": 0,
+    "candidate_token_methods": [],
+    "provider_input_reports": [
+      20387,
+      21592,
+      26292,
+      30444
+    ],
+    "filter_catalog_tokens_before": 0,
+    "filter_catalog_tokens_after": 0,
+    "filter_catalog_tokens_removed": 0,
+    "filter_catalog_reduction_pct": null,
+    "filter_computations": [],
+    "deliveries": [],
+    "candidate_errors": [],
+    "span_ms": {
+      "context.system_prompt": {
+        "calls": 4,
+        "total": 4.69
+      },
+      "context.payload": {
+        "calls": 4,
+        "total": 0.95
+      },
+      "provider.rate_limit_wait": {
+        "calls": 4,
+        "total": 0.06
+      },
+      "provider.auth": {
+        "calls": 4,
+        "total": 48.84
+      },
+      "provider.response_headers": {
+        "calls": 4,
+        "total": 7775.93
+      },
+      "provider.stream": {
+        "calls": 4,
+        "total": 25447.02
+      },
+      "provider.request": {
+        "calls": 4,
+        "total": 25514.12
+      },
+      "model.step": {
+        "calls": 4,
+        "total": 25567.65
+      },
+      "index_search.retrieval": {
+        "calls": 1,
+        "total": 2280.26
+      },
+      "tool.search_index": {
+        "calls": 1,
+        "total": 2280.9
+      },
+      "tool.read_file": {
+        "calls": 2,
+        "total": 9.7
+      },
+      "tool.search_code": {
+        "calls": 2,
+        "total": 112.26
+      },
+      "controller.turn": {
+        "calls": 1,
+        "total": 28309.9
+      },
+      "controller.setup_and_loop": {
+        "calls": 1,
+        "total": 28330.92
+      },
+      "controller.persist_and_publish": {
+        "calls": 1,
+        "total": 0.89
+      },
+      "controller.user_turn": {
+        "calls": 1,
+        "total": 28332.92
+      },
+      "controller.handle_message": {
+        "calls": 1,
+        "total": 28333.61
+      },
+      "controller.backend_turn": {
+        "calls": 1,
+        "total": 28333.78
+      }
+    },
+    "note": "Candidate tokens use o200k_base field envelopes, a provider-attribution proxy. Filter computations compare bounded catalogs before/after relevance only. Not a counterfactual estimate of entire-agent token or billing savings."
+  },
+  {
+    "trace": "cd1c9cdb80b84ea6be889867b1dd6f36",
+    "message_id": "94dbc97e-f3f6-4d97-8fb9-31fb5def5372",
+    "thread_id": "chat-86a74fc4eae3",
+    "started_unix_ms": 1792348565008,
+    "completed": true,
+    "backend_elapsed_ms": 4835.38,
+    "physical_requests": 1,
+    "index_search_calls": 0,
+    "index_search_result_tokens": 0,
+    "index_searches": [],
+    "candidate_tokens_all_requests": 0,
+    "candidate_tokens_per_request": [
+      0
+    ],
+    "candidate_tokens_new_deliveries": 0,
+    "delivery_comparison": {
+      "method": "same_retrieved_catalog_and_observed_reads",
+      "deliveries_compared": 0,
+      "without_qwen_tokens": 0,
+      "with_qwen_tokens": 0,
+      "tokens_removed": 0
+    },
+    "candidate_tokens_logical_calls": 0,
+    "candidate_token_methods": [],
+    "provider_input_reports": [
+      32353
+    ],
+    "filter_catalog_tokens_before": 0,
+    "filter_catalog_tokens_after": 0,
+    "filter_catalog_tokens_removed": 0,
+    "filter_catalog_reduction_pct": null,
+    "filter_computations": [],
+    "deliveries": [],
+    "candidate_errors": [],
+    "span_ms": {
+      "context.system_prompt": {
+        "calls": 1,
+        "total": 0.73
+      },
+      "context.payload": {
+        "calls": 1,
+        "total": 0.41
+      },
+      "provider.rate_limit_wait": {
+        "calls": 1,
+        "total": 0.01
+      },
+      "provider.auth": {
+        "calls": 1,
+        "total": 0.73
+      },
+      "provider.response_headers": {
+        "calls": 1,
+        "total": 2127.51
+      },
+      "provider.stream": {
+        "calls": 1,
+        "total": 4502.88
+      },
+      "provider.request": {
+        "calls": 1,
+        "total": 4513.35
+      },
+      "model.step": {
+        "calls": 1,
+        "total": 4529.85
+      },
+      "controller.turn": {
+        "calls": 1,
+        "total": 4824.73
+      },
+      "controller.setup_and_loop": {
+        "calls": 1,
+        "total": 4830.75
+      },
+      "controller.persist_and_publish": {
+        "calls": 1,
+        "total": 1.58
+      },
+      "controller.user_turn": {
+        "calls": 1,
+        "total": 4833.96
+      },
+      "controller.handle_message": {
+        "calls": 1,
+        "total": 4835.11
+      },
+      "controller.backend_turn": {
+        "calls": 1,
+        "total": 4835.38
+      }
+    },
+    "note": "Candidate tokens use o200k_base field envelopes, a provider-attribution proxy. Filter computations compare bounded catalogs before/after relevance only. Not a counterfactual estimate of entire-agent token or billing savings."
+  },
+  {
+    "trace": "03ee821214ed400db8168d4bd3075f9a",
+    "message_id": "eb7d0636-6d72-4a77-9fa1-f0f85f819531",
+    "thread_id": "chat-86a74fc4eae3",
+    "started_unix_ms": 1792348569851,
+    "completed": true,
+    "backend_elapsed_ms": 35312.61,
+    "physical_requests": 5,
+    "index_search_calls": 1,
+    "index_search_result_tokens": 311,
+    "index_searches": [
+      {
+        "trace": "03ee821214ed400db8168d4bd3075f9a",
+        "kind": "context",
+        "parent": "8f5ade5beb5d46b1a1f3417cb0608edc",
+        "layer": "index_search",
+        "status": "ok",
+        "rows": 4,
+        "elapsed_ms": 241.15,
+        "result": {
+          "tokens": 311,
+          "chars": 1091,
+          "method": "o200k_base_text"
+        }
+      }
+    ],
+    "candidate_tokens_all_requests": 0,
+    "candidate_tokens_per_request": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "candidate_tokens_new_deliveries": 0,
+    "delivery_comparison": {
+      "method": "same_retrieved_catalog_and_observed_reads",
+      "deliveries_compared": 0,
+      "without_qwen_tokens": 0,
+      "with_qwen_tokens": 0,
+      "tokens_removed": 0
+    },
+    "candidate_tokens_logical_calls": 0,
+    "candidate_token_methods": [],
+    "provider_input_reports": [
+      34118,
+      35391,
+      37930,
+      42309,
+      48330
+    ],
+    "filter_catalog_tokens_before": 0,
+    "filter_catalog_tokens_after": 0,
+    "filter_catalog_tokens_removed": 0,
+    "filter_catalog_reduction_pct": null,
+    "filter_computations": [],
+    "deliveries": [],
+    "candidate_errors": [],
+    "span_ms": {
+      "context.system_prompt": {
+        "calls": 5,
+        "total": 4.07
+      },
+      "context.payload": {
+        "calls": 5,
+        "total": 1.12
+      },
+      "provider.rate_limit_wait": {
+        "calls": 5,
+        "total": 0.04
+      },
+      "provider.auth": {
+        "calls": 5,
+        "total": 1.18
+      },
+      "provider.response_headers": {
+        "calls": 5,
+        "total": 10020.49
+      },
+      "provider.stream": {
+        "calls": 5,
+        "total": 34533.6
+      },
+      "provider.request": {
+        "calls": 5,
+        "total": 34567.87
+      },
+      "model.step": {
+        "calls": 5,
+        "total": 34629.12
+      },
+      "index_search.retrieval": {
+        "calls": 1,
+        "total": 240.98
+      },
+      "tool.search_index": {
+        "calls": 1,
+        "total": 241.39
+      },
+      "tool.search_code": {
+        "calls": 3,
+        "total": 183.05
+      },
+      "tool.read_file": {
+        "calls": 4,
+        "total": 29.22
+      },
+      "controller.turn": {
+        "calls": 1,
+        "total": 35301.1
+      },
+      "controller.setup_and_loop": {
+        "calls": 1,
+        "total": 35307.9
+      },
+      "controller.persist_and_publish": {
+        "calls": 1,
+        "total": 1.47
+      },
+      "controller.user_turn": {
+        "calls": 1,
+        "total": 35311.04
+      },
+      "controller.handle_message": {
+        "calls": 1,
+        "total": 35312.38
+      },
+      "controller.backend_turn": {
+        "calls": 1,
+        "total": 35312.61
+      }
+    },
+    "note": "Candidate tokens use o200k_base field envelopes, a provider-attribution proxy. Filter computations compare bounded catalogs before/after relevance only. Not a counterfactual estimate of entire-agent token or billing savings."
+  },
+  {
+    "trace": "066915c2c90b489792d55efa3b574dd8",
+    "message_id": "5f503460-7283-41aa-a587-c90b0c6c740b",
+    "thread_id": "chat-b15db299efd6",
+    "started_unix_ms": 1792348605174,
+    "completed": true,
+    "backend_elapsed_ms": 6138.1,
+    "physical_requests": 1,
+    "index_search_calls": 0,
+    "index_search_result_tokens": 0,
+    "index_searches": [],
+    "candidate_tokens_all_requests": 0,
+    "candidate_tokens_per_request": [
+      0
+    ],
+    "candidate_tokens_new_deliveries": 0,
+    "delivery_comparison": {
+      "method": "same_retrieved_catalog_and_observed_reads",
+      "deliveries_compared": 0,
+      "without_qwen_tokens": 0,
+      "with_qwen_tokens": 0,
+      "tokens_removed": 0
+    },
+    "candidate_tokens_logical_calls": 0,
+    "candidate_token_methods": [],
+    "provider_input_reports": [
+      20271
+    ],
+    "filter_catalog_tokens_before": 0,
+    "filter_catalog_tokens_after": 0,
+    "filter_catalog_tokens_removed": 0,
+    "filter_catalog_reduction_pct": null,
+    "filter_computations": [],
+    "deliveries": [],
+    "candidate_errors": [],
+    "span_ms": {
+      "context.system_prompt": {
+        "calls": 1,
+        "total": 1.04
+      },
+      "context.payload": {
+        "calls": 1,
+        "total": 0.25
+      },
+      "provider.rate_limit_wait": {
+        "calls": 1,
+        "total": 0.01
+      },
+      "provider.auth": {
+        "calls": 1,
+        "total": 0.26
+      },
+      "provider.response_headers": {
+        "calls": 1,
+        "total": 3189.38
+      },
+      "provider.stream": {
+        "calls": 1,
+        "total": 5960.13
+      },
+      "provider.request": {
+        "calls": 1,
+        "total": 5964.82
+      },
+      "model.step": {
+        "calls": 1,
+        "total": 5976.72
+      },
+      "controller.turn": {
+        "calls": 1,
+        "total": 6131.76
+      },
+      "controller.setup_and_loop": {
+        "calls": 1,
+        "total": 6135.09
+      },
+      "controller.persist_and_publish": {
+        "calls": 1,
+        "total": 0.66
+      },
+      "controller.user_turn": {
+        "calls": 1,
+        "total": 6136.71
+      },
+      "controller.handle_message": {
+        "calls": 1,
+        "total": 6137.85
+      },
+      "controller.backend_turn": {
+        "calls": 1,
+        "total": 6138.1
+      }
+    },
+    "note": "Candidate tokens use o200k_base field envelopes, a provider-attribution proxy. Filter computations compare bounded catalogs before/after relevance only. Not a counterfactual estimate of entire-agent token or billing savings."
+  }
+]

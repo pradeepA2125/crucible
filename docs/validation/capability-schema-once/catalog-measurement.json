@@ -1,0 +1,11 @@
+{
+  "measurement": "local o200k_base estimates on archived 57-tool catalog; same complete schemas; no deferral or tool removal; not deployed or model-quality tested",
+  "tools": 57,
+  "baseline_minified_json_tokens": 7972,
+  "schema_once_rows_tokens": 7764,
+  "schema_once_with_explanation_tokens": 7788,
+  "explanation": "Tool catalog rows follow tool_columns; each parameters cell is a complete JSON Schema. Invoke tools using ordinary named JSON arguments.\n",
+  "saved_tokens_with_explanation": 184,
+  "reduction_pct_with_explanation": 2.31,
+  "exact_roundtrip": true
+}

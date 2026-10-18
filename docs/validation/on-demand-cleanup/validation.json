@@ -1,0 +1,33 @@
+{
+  "extension_tests": {
+    "passed": 601,
+    "files": 48
+  },
+  "extension_typecheck": "passed",
+  "extension_bundle": "passed",
+  "initial_backend_run": {
+    "tests": 3983,
+    "passed": 3970,
+    "skipped": 12,
+    "failed": 1,
+    "seconds": 147.029,
+    "failure": "Outdated explore-tool allowlist assertion omitted supported search_index; corrected and targeted test passed."
+  },
+  "archive": {
+    "files": 139,
+    "bytes": 791892
+  },
+  "retired_runtime_references": 0,
+  "branch": "codex/sidecar-reliability-experiments",
+  "final_backend_run": {
+    "tests": 3983,
+    "passed": 3971,
+    "skipped": 12,
+    "failed": 0,
+    "errors": 0,
+    "seconds": 143.174
+  },
+  "lint": "passed for retained discovery/metrics modules and adjusted discovery tests",
+  "targeted_mypy": "5 retained discovery/metrics modules passed",
+  "git_diff_check": "passed"
+}

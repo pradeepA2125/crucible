@@ -1,0 +1,119 @@
+[
+  {
+    "case": "unknown_location",
+    "thread_id": "chat-86a74fc4eae3",
+    "artifact_folder": ".crucible/state/artifacts/chat/chat-86a74fc4eae3/017eeef9d93e446e89b298368ac67ca5",
+    "first_executed_tool": "search_index",
+    "first_discovery_tool": "search_index",
+    "search_queries": [
+      "local code retrieval models enabled disabled configuration fallback"
+    ],
+    "candidate_paths": [
+      "apps/vscode-extension/src/runtime/vscode-runtime.ts",
+      "services/agentd-py/agentd/local_models.py",
+      "services/agentd-py/agentd/retrieval/artifact_client.py",
+      "services/agentd-py/agentd/retrieval/semantic_index.py"
+    ],
+    "new_read_file_paths": [
+      "services/agentd-py/agentd/local_models.py",
+      "services/agentd-py/agentd/main.py"
+    ],
+    "suggested_files_directly_read": [
+      "services/agentd-py/agentd/local_models.py"
+    ],
+    "automatic_candidate_tokens": 0,
+    "provider_reported_input_tokens": 98715,
+    "provider_requests": 4,
+    "elapsed_ms": 28336.62,
+    "index_searches": [
+      {
+        "trace": "3fb12f2b957048c6820f9c5468160d98",
+        "kind": "context",
+        "parent": "99b050627c674c2eaa21af52aecba8fd",
+        "layer": "index_search",
+        "status": "ok",
+        "rows": 4,
+        "elapsed_ms": 2280.52,
+        "result": {
+          "tokens": 278,
+          "chars": 936,
+          "method": "o200k_base_text"
+        }
+      }
+    ]
+  },
+  {
+    "case": "acknowledgement",
+    "thread_id": "chat-86a74fc4eae3",
+    "artifact_folder": ".crucible/state/artifacts/chat/chat-86a74fc4eae3/50b01da5379b4353860c9e6cc7bdce5e",
+    "first_executed_tool": null,
+    "first_discovery_tool": null,
+    "search_queries": [],
+    "candidate_paths": [],
+    "new_read_file_paths": [],
+    "suggested_files_directly_read": [],
+    "automatic_candidate_tokens": 0,
+    "provider_reported_input_tokens": 32353,
+    "provider_requests": 1,
+    "elapsed_ms": 4838.55,
+    "index_searches": []
+  },
+  {
+    "case": "multiple_files",
+    "thread_id": "chat-86a74fc4eae3",
+    "artifact_folder": ".crucible/state/artifacts/chat/chat-86a74fc4eae3/b7b3f83eaaf54ef2a6db6b1a4c632f55",
+    "first_executed_tool": "search_index",
+    "first_discovery_tool": "search_index",
+    "search_queries": [
+      "code candidate catalog refresh after edits suppress already visible source evidence ledger"
+    ],
+    "candidate_paths": [
+      "apps/vscode-extension/src/file-references/catalog.ts",
+      "apps/vscode-extension/src/runtime/vscode-runtime.ts",
+      "services/agentd-py/agentd/orchestrator/engine.py",
+      "services/agentd-py/agentd/patch/engine.py"
+    ],
+    "new_read_file_paths": [
+      "services/agentd-py/agentd/chat/controller.py",
+      "services/agentd-py/agentd/chat/controller_loop.py",
+      "services/agentd-py/agentd/retrieval/candidate_delivery.py"
+    ],
+    "suggested_files_directly_read": [],
+    "automatic_candidate_tokens": 0,
+    "provider_reported_input_tokens": 198078,
+    "provider_requests": 5,
+    "elapsed_ms": 35316.56,
+    "index_searches": [
+      {
+        "trace": "03ee821214ed400db8168d4bd3075f9a",
+        "kind": "context",
+        "parent": "8f5ade5beb5d46b1a1f3417cb0608edc",
+        "layer": "index_search",
+        "status": "ok",
+        "rows": 4,
+        "elapsed_ms": 241.15,
+        "result": {
+          "tokens": 311,
+          "chars": 1091,
+          "method": "o200k_base_text"
+        }
+      }
+    ]
+  },
+  {
+    "case": "greeting",
+    "thread_id": "chat-b15db299efd6",
+    "artifact_folder": ".crucible/state/artifacts/chat/chat-b15db299efd6/16a5b1da0485491eaa9a99e695ac0f5a",
+    "first_executed_tool": null,
+    "first_discovery_tool": null,
+    "search_queries": [],
+    "candidate_paths": [],
+    "new_read_file_paths": [],
+    "suggested_files_directly_read": [],
+    "automatic_candidate_tokens": 0,
+    "provider_reported_input_tokens": 20271,
+    "provider_requests": 1,
+    "elapsed_ms": 6141.07,
+    "index_searches": []
+  }
+]

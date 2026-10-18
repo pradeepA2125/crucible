@@ -1,0 +1,21 @@
+{
+  "port": 59898,
+  "pid": 77744,
+  "ready": true,
+  "candidate_scorer": {
+    "scorer": "qwen_plain",
+    "state": "ready"
+  },
+  "candidate_delivery": "automatic",
+  "provider_unchanged": true,
+  "local_models": {
+    "embedder": {
+      "state": "ready",
+      "error": null
+    },
+    "reranker": {
+      "state": "ready",
+      "error": null
+    }
+  }
+}
