@@ -31,6 +31,9 @@ class ToolOutput:
     exit_code: int | None = None
     delivered_read: object | None = None
     image_refs: list[dict] = field(default_factory=list)
+    # Never cut to the batch's result share: a capability bundle is a set of complete
+    # JSON schemas, and a sliced one would be worse than none.
+    whole: bool = False
 
 
 # Tagged (spec §4.6.3). Main renders today's text byte-for-byte; a child is told it runs in

@@ -424,3 +424,25 @@ def test_teaching_examples_cover_the_previous_tool_scenarios(monkeypatch, tmp_pa
         assert example["thought"] and example["calls"]
         assert len({c["id"] for c in example["calls"]}) == len(example["calls"])
         assert all(isinstance(c["args"], dict) for c in example["calls"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("whole", [True, False])
+async def test_whole_output_is_not_sliced(whole):
+    async def prepare(call):
+        async def run():
+            return ToolOutput("x" * 5000, whole=whole)
+        return run
+
+    async def update(outcome):
+        pass
+
+    (result,) = await run_batch(
+        [Call("a", "run_command", {})], prepare=prepare, resources=lambda c: (),
+        pool=ExecutionPool(1), update=update, budget=1024)
+    if whole:
+        assert result.output.output == "x" * 5000
+    else:
+        assert len(result.output.output) <= 1024
+        assert result.output.output.endswith(
+            "[Result omitted beyond aggregate budget; request the missing portion.]")

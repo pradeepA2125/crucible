@@ -332,7 +332,7 @@ async def run_batch(
                         result = await prepared()
                 finally:
                     output_budget.reset(token)
-            if len(result.output) > share:
+            if len(result.output) > share and not result.whole:
                 notice = "\n[Result omitted beyond aggregate budget; request the missing portion.]"
                 result.output = result.output[: max(0, share - len(notice))] + notice
             await finish(
