@@ -105,3 +105,18 @@ async def test_result_isError_maps_to_error_output():
                        results={("gh", "ci"): _Result([_Block("boom")], is_error=True)})
     out = await McpToolSource(mgr, _approve).execute("mcp__gh__ci", {})
     assert out.is_error is True and "boom" in out.output
+
+
+@pytest.mark.asyncio
+async def test_filtered_tool_is_refused_before_approval():
+    approvals = []
+
+    async def approve(server, tool, args):
+        approvals.append((server, tool))
+        return ApprovalOutcome.allow()
+
+    manager = _StubManager([_def("mcp__echo__say")])
+    manager.is_exposed = lambda server, tool: (server, tool) == ("echo", "say")
+    out = await McpToolSource(manager, approve).prepare("mcp__echo__shout", {})
+    assert out.is_error and out.output == "Error: unknown tool 'mcp__echo__shout'"
+    assert approvals == [] and manager.calls == []

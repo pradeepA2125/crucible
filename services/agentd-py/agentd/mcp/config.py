@@ -53,6 +53,19 @@ def mcp_call_timeout_sec() -> float:
     return _nonneg_float("CRUCIBLE_MCP_CALL_TIMEOUT_SEC", 120.0)
 
 
+def _tool_filters(entry: dict[str, object]) -> dict[str, list[str]] | None:
+    """The entry's set tool filters; JSON null means unset. None when malformed."""
+    filters: dict[str, list[str]] = {}
+    for key in ("enabled_tools", "disabled_tools"):
+        value = entry.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            return None
+        filters[key] = value
+    return filters
+
+
 class McpMissingEnvVar(ValueError):
     """A ${VAR} reference in env/headers names an unset environment variable."""
 
@@ -124,6 +137,11 @@ class McpConfigLoader:
                     transport in ("http", "sse") and not entry.get("url")) or not transport:
                 logger.warning("[mcp] server %r: missing command/url for transport — skipped", name)
                 continue
+            filters = _tool_filters(entry)
+            if filters is None:
+                logger.warning("[mcp] server %r: enabled_tools/disabled_tools must be lists of "
+                               "tool names — skipped", name)
+                continue
             try:
                 out.append(McpServerConfig(
                     name=str(name),
@@ -134,6 +152,7 @@ class McpConfigLoader:
                     url=entry.get("url"),
                     headers={str(k): str(v) for k, v in (entry.get("headers") or {}).items()},
                     enabled=True,
+                    **filters,
                 ))
             except ValidationError as exc:
                 logger.warning("[mcp] server %r: invalid entry: %s — skipped", name, exc)

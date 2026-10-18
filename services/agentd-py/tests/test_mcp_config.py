@@ -99,3 +99,32 @@ def test_env_knob_defaults(monkeypatch):
     monkeypatch.setenv("CRUCIBLE_MCP_DECISION_TIMEOUT_SEC", "2.5")
     assert mcp_tools_max_chars() == 500
     assert mcp_decision_timeout_sec() == 2.5
+
+
+def test_tool_filters_parse(tmp_path: Path):
+    _write(tmp_path, {"mcpServers": {"web": {
+        "command": "x", "enabled": True, "enabled_tools": ["a", "b"], "disabled_tools": ["b"]}}})
+    (cfg,) = McpConfigLoader(tmp_path).load()
+    assert cfg.enabled_tools == ["a", "b"] and cfg.disabled_tools == ["b"]
+
+
+def test_absent_tool_filters_default_to_all(tmp_path: Path):
+    _write(tmp_path, {"mcpServers": {"web": {"command": "x", "enabled": True}}})
+    (cfg,) = McpConfigLoader(tmp_path).load()
+    assert cfg.enabled_tools is None and cfg.disabled_tools == []
+
+
+@pytest.mark.parametrize("bad", [{"enabled_tools": "a"}, {"disabled_tools": [1]},
+                                 {"enabled_tools": [None]}, {"disabled_tools": {"a": 1}}])
+def test_malformed_tool_filter_skips_entry_with_warning(tmp_path: Path, caplog, bad):
+    _write(tmp_path, {"mcpServers": {"web": {"command": "x", "enabled": True, **bad},
+                                     "ok": {"command": "y", "enabled": True}}})
+    assert [c.name for c in McpConfigLoader(tmp_path).load()] == ["ok"]
+    assert "'web'" in caplog.text
+
+
+def test_null_tool_filters_mean_unset(tmp_path: Path):
+    _write(tmp_path, {"mcpServers": {"web": {
+        "command": "x", "enabled": True, "enabled_tools": None, "disabled_tools": None}}})
+    (cfg,) = McpConfigLoader(tmp_path).load()
+    assert cfg.enabled_tools is None and cfg.disabled_tools == []

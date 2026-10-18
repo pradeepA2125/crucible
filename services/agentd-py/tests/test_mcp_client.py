@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from agentd.mcp.client import McpConnectionManager, McpServerUnavailable
+from agentd.mcp.client import McpConnectionManager, McpServerUnavailable, McpToolNotExposed
 from agentd.mcp.models import McpServerConfig
 
 
@@ -55,8 +55,8 @@ def _factory(sessions: dict[str, _FakeSession]):
     return open_session
 
 
-def _cfg(name: str) -> McpServerConfig:
-    return McpServerConfig(name=name, transport="stdio", command="x", enabled=True)
+def _cfg(name: str, **filters) -> McpServerConfig:
+    return McpServerConfig(name=name, transport="stdio", command="x", enabled=True, **filters)
 
 
 class _StaticLoader:
@@ -156,3 +156,60 @@ async def test_real_stdio_round_trip():
         assert any("echo: hi" in t for t in texts)
     finally:
         await mgr.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled,disabled,visible", [
+    (None, [], ["say", "shout", "whisper"]),
+    (["say", "shout"], [], ["say", "shout"]),
+    (None, ["shout"], ["say", "whisper"]),
+    (["say", "shout"], ["shout"], ["say"]),
+    ([], [], []),
+])
+async def test_filters_decide_visible_tools(enabled, disabled, visible):
+    sessions = {"echo": _FakeSession(["say", "shout", "whisper"])}
+    cfg = _cfg("echo", enabled_tools=enabled, disabled_tools=disabled)
+    mgr = McpConnectionManager(_StaticLoader([cfg]), session_factory=_factory(sessions))
+    await mgr.start()
+    assert [d.name for d in mgr.tool_definitions()] == [f"mcp__echo__{t}" for t in visible]
+    assert {s.name: s for s in mgr.statuses()}["echo"].tool_count == len(visible)
+    inventory = mgr.tool_inventory()["echo"]
+    assert [t.name for t in inventory] == ["say", "shout", "whisper"]
+    assert [t.name for t in inventory if t.enabled] == visible
+    assert inventory[0].description == "desc of say"
+    await mgr.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_unknown_filter_names_warn_once(caplog):
+    sessions = {"echo": _FakeSession(["say", "shout"])}
+    cfg = _cfg("echo", enabled_tools=["say", "gone"], disabled_tools=["nope"])
+    mgr = McpConnectionManager(_StaticLoader([cfg]), session_factory=_factory(sessions))
+    await mgr.start()
+    warnings = [r.getMessage() for r in caplog.records if "not offered" in r.getMessage()]
+    assert len(warnings) == 1 and "gone" in warnings[0] and "nope" in warnings[0]
+    await mgr.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_refuses_filtered_tool():
+    sessions = {"echo": _FakeSession(["say", "shout"])}
+    cfg = _cfg("echo", disabled_tools=["shout"])
+    mgr = McpConnectionManager(_StaticLoader([cfg]), session_factory=_factory(sessions))
+    await mgr.start()
+    assert mgr.is_exposed("echo", "say") and not mgr.is_exposed("echo", "shout")
+    assert not mgr.is_exposed("missing", "say")
+    with pytest.raises(McpToolNotExposed):
+        await mgr.call_tool("echo", "shout", {})
+    assert sessions["echo"].calls == []
+    await mgr.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_filter_change_reconnects_on_reconcile():
+    sessions = {"echo": _FakeSession(["say", "shout"])}
+    mgr = McpConnectionManager(_StaticLoader([_cfg("echo")]), session_factory=_factory(sessions))
+    await mgr.start()
+    await mgr.reconcile([_cfg("echo", disabled_tools=["shout"])])
+    assert [d.name for d in mgr.tool_definitions()] == ["mcp__echo__say"]
+    await mgr.shutdown()

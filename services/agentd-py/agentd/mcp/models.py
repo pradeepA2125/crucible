@@ -16,10 +16,21 @@ class McpServerConfig(BaseModel):
     url: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
     enabled: bool = False
+    # The server's own (unprefixed) tool names. None = every tool; then
+    # disabled_tools removes names. Applied when the server connects.
+    enabled_tools: list[str] | None = None
+    disabled_tools: list[str] = Field(default_factory=list)
 
     def fingerprint(self) -> str:
         """Change-detection key for reconcile(): any field change = new fingerprint."""
         return self.model_dump_json()
+
+
+class McpToolInfo(BaseModel):
+    """One tool a connected server lists; `enabled` = visible to the agent."""
+    name: str
+    description: str
+    enabled: bool
 
 
 class McpServerStatus(BaseModel):

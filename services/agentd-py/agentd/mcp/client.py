@@ -25,7 +25,8 @@ from agentd.mcp.config import (
     mcp_call_timeout_sec,
     mcp_connect_timeout_sec,
 )
-from agentd.mcp.models import McpServerConfig, McpServerStatus
+from agentd.mcp.filters import unknown_filter_names, visible_tool_names
+from agentd.mcp.models import McpServerConfig, McpServerStatus, McpToolInfo
 from agentd.tools.registry import ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,10 @@ logger = logging.getLogger(__name__)
 
 class McpServerUnavailable(RuntimeError):
     """The named server is not connected (unknown, failed, or shut down)."""
+
+
+class McpToolNotExposed(RuntimeError):
+    """The server does not list the tool, or its enabled_tools/disabled_tools hide it."""
 
 
 @asynccontextmanager
@@ -77,7 +82,8 @@ class _ServerHandle:
         self.cfg = cfg
         self.fingerprint = cfg.fingerprint()
         self.session: Any = None
-        self.tools: list[Any] = []
+        self.all_tools: list[Any] = []  # every tool the server lists
+        self.tools: list[Any] = []  # the visible subset after the entry's filters
         self.status = McpServerStatus(name=cfg.name, state="connecting")
         self.stop = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
@@ -137,7 +143,15 @@ class McpConnectionManager:
             async with self._session_factory(handle.cfg) as session:
                 listed = await session.list_tools()
                 handle.session = session
-                handle.tools = list(listed.tools)
+                handle.all_tools = list(listed.tools)
+                names = [getattr(t, "name", "") for t in handle.all_tools]
+                cfg = handle.cfg
+                visible = set(visible_tool_names(names, cfg.enabled_tools, cfg.disabled_tools))
+                handle.tools = [t for t in handle.all_tools if getattr(t, "name", "") in visible]
+                unknown = unknown_filter_names(names, cfg.enabled_tools, cfg.disabled_tools)
+                if unknown:
+                    logger.warning("[mcp] server %s: filter names not offered by the server: %s",
+                                   cfg.name, ", ".join(unknown))
                 handle.status = McpServerStatus(
                     name=handle.cfg.name, state="connected", tool_count=len(handle.tools))
                 logger.info("[mcp] connected server=%s tools=%d",
@@ -193,12 +207,32 @@ class McpConnectionManager:
                 ))
         return out
 
+    def tool_inventory(self) -> dict[str, list[McpToolInfo]]:
+        """Every tool each connected server lists, marked by visibility — for Settings."""
+        out: dict[str, list[McpToolInfo]] = {}
+        for name, handle in self._handles.items():
+            if handle.session is None:
+                continue
+            visible = {getattr(t, "name", "") for t in handle.tools}
+            out[name] = [McpToolInfo(
+                name=getattr(t, "name", ""),
+                description=getattr(t, "description", None) or "",
+                enabled=getattr(t, "name", "") in visible,
+            ) for t in handle.all_tools]
+        return out
+
+    def is_exposed(self, server: str, tool: str) -> bool:
+        handle = self._handles.get(server)
+        return handle is not None and any(getattr(t, "name", "") == tool for t in handle.tools)
+
     async def call_tool(self, server: str, tool: str, args: dict[str, object]) -> Any:
         handle = self._handles.get(server)
         if handle is None or handle.session is None:
             raise McpServerUnavailable(
                 f"MCP server '{server}' is not connected"
                 + (f" ({handle.status.state}: {handle.status.detail})" if handle else ""))
+        if not self.is_exposed(server, tool):
+            raise McpToolNotExposed(f"MCP server '{server}' does not expose tool '{tool}'")
         return await asyncio.wait_for(
             handle.session.call_tool(tool, arguments=args),
             timeout=mcp_call_timeout_sec() or None)

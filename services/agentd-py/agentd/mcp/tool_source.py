@@ -70,6 +70,11 @@ class McpToolSource:
         if parsed is None:
             return ToolOutput(output=f"Error: malformed MCP tool name '{tool}'", is_error=True)
         server, tool_name = parsed
+        # A filtered tool is refused before the approval gate: the user must never be
+        # asked to approve a tool they removed with enabled_tools/disabled_tools.
+        is_exposed = getattr(self._manager, "is_exposed", None)
+        if callable(is_exposed) and not is_exposed(server, tool_name):
+            return ToolOutput(output=f"Error: unknown tool '{tool}'", is_error=True)
         outcome = await self._approve(server, tool_name, dict(args))
         if not outcome.approved:
             user_text = (render_prompt(_MCP_REJECTED_TEMPLATE, self._render_ctx)
