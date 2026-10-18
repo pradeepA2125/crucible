@@ -145,3 +145,15 @@ def test_put_tools_when_mcp_disabled_409(tmp_path: Path) -> None:
     resp = _client(tmp_path, with_manager=False).put(
         "/v1/mcp/servers/web/tools", json={"disabled_tools": []})
     assert resp.status_code == 409
+
+
+def test_malformed_filter_is_listed_safely_with_a_reason(tmp_path: Path) -> None:
+    # The loader skips this server; the listing must still be valid for the client's schema
+    # (lists of strings or null) and say why the server is not connected.
+    path = tmp_path / ".crucible" / "mcp.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"mcpServers": {"web": {
+        "command": "x", "enabled": True, "enabled_tools": "a", "disabled_tools": ["b", 1]}}}))
+    (web,) = _client(tmp_path).get("/v1/mcp/servers").json()["servers"]
+    assert web["enabled_tools"] is None and web["disabled_tools"] == []
+    assert web["detail"] == "enabled_tools/disabled_tools must be lists of tool names"

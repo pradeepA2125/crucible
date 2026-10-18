@@ -22,8 +22,10 @@ class McpServerConfig(BaseModel):
     disabled_tools: list[str] = Field(default_factory=list)
 
     def fingerprint(self) -> str:
-        """Change-detection key for reconcile(): any field change = new fingerprint."""
-        return self.model_dump_json()
+        """Change-detection key for reconcile(): a change here means reconnecting. The
+        tool filters are left out — reconcile re-filters a live connection instead, so
+        toggling one tool never restarts the server (or closes Playwright's browser)."""
+        return self.model_dump_json(exclude={"enabled_tools", "disabled_tools"})
 
 
 class McpToolInfo(BaseModel):

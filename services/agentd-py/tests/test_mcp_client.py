@@ -206,10 +206,48 @@ async def test_call_tool_refuses_filtered_tool():
 
 
 @pytest.mark.asyncio
-async def test_filter_change_reconnects_on_reconcile():
+async def test_filter_change_applies_without_reconnecting():
+    # Toggling a tool in Settings must not restart the server: for Playwright that
+    # would close the live browser and fail in-flight calls.
     sessions = {"echo": _FakeSession(["say", "shout"])}
-    mgr = McpConnectionManager(_StaticLoader([_cfg("echo")]), session_factory=_factory(sessions))
+    opened = []
+    inner = _factory(sessions)
+
+    @asynccontextmanager
+    async def counting(cfg):
+        opened.append(cfg.name)
+        async with inner(cfg) as session:
+            yield session
+
+    mgr = McpConnectionManager(_StaticLoader([_cfg("echo")]), session_factory=counting)
     await mgr.start()
     await mgr.reconcile([_cfg("echo", disabled_tools=["shout"])])
     assert [d.name for d in mgr.tool_definitions()] == ["mcp__echo__say"]
+    assert [t.name for t in mgr.tool_inventory()["echo"] if t.enabled] == ["say"]
+    await mgr.reconcile([_cfg("echo", enabled_tools=["shout"])])
+    assert [d.name for d in mgr.tool_definitions()] == ["mcp__echo__shout"]
+    assert {s.name: s for s in mgr.statuses()}["echo"].tool_count == 1
+    assert opened == ["echo"]
+    # A connection-level change still reconnects.
+    await mgr.reconcile([McpServerConfig(name="echo", transport="stdio", command="y",
+                                         enabled=True)])
+    assert opened == ["echo", "echo"]
     await mgr.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_refusal_names_the_real_reason():
+    # A down server is "not connected", not "unknown tool": the model must not conclude
+    # a working tool does not exist. Filtered or unlisted tools on a live server are unknown.
+    sessions = {"echo": _FakeSession(["say", "shout"])}
+    cfg = _cfg("echo", disabled_tools=["shout"])
+    mgr = McpConnectionManager(_StaticLoader([cfg, _cfg("broken")]),
+                               session_factory=_factory(sessions))
+    await mgr.start()
+    assert mgr.refusal("echo", "say") is None
+    assert mgr.refusal("echo", "shout") == "unknown tool 'mcp__echo__shout'"
+    assert mgr.refusal("echo", "nope") == "unknown tool 'mcp__echo__nope'"
+    assert mgr.refusal("broken", "x").startswith("MCP server 'broken' is not connected (failed:")
+    assert mgr.refusal("missing", "x") == "MCP server 'missing' is not connected"
+    await mgr.shutdown()
+    assert mgr.refusal("echo", "say") == "MCP server 'echo' is not connected"

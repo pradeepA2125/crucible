@@ -443,6 +443,7 @@ def build_router(
 
     def _mcp_server_listing() -> dict[str, object]:
         from agentd.mcp.admin import read_raw_servers
+        from agentd.mcp.config import TOOL_FILTERS_MALFORMED, parse_tool_filters
 
         if mcp_manager is None:
             return {"enabled": False, "servers": []}
@@ -453,6 +454,9 @@ def build_router(
             mcp_manager.loader.config_path  # type: ignore[attr-defined]
         ).items():
             status = statuses.get(name)
+            # The loader skips a malformed entry; never pass its raw values on, or the
+            # client's schema rejects the whole listing and Settings cannot load.
+            filters = parse_tool_filters(entry)
             transport = str(
                 entry.get("type") or ("stdio" if entry.get("command") else "http")
             )
@@ -462,11 +466,12 @@ def build_router(
                     "transport": transport,
                     "enabled_in_file": entry.get("enabled") is True,
                     "state": status.state if status else "not_connected",
-                    "detail": getattr(status, "detail", None) if status else None,
+                    "detail": (getattr(status, "detail", None) if status
+                               else TOOL_FILTERS_MALFORMED if filters is None else None),
                     "tool_count": getattr(status, "tool_count", 0) if status else 0,
                     "tools": [t.model_dump() for t in inventory.get(name, [])],
-                    "enabled_tools": entry.get("enabled_tools"),
-                    "disabled_tools": entry.get("disabled_tools") or [],
+                    "enabled_tools": (filters or {}).get("enabled_tools"),
+                    "disabled_tools": (filters or {}).get("disabled_tools", []),
                 }
             )
         return {"enabled": True, "servers": servers}

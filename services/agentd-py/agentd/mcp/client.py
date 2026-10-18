@@ -120,6 +120,9 @@ class McpConnectionManager:
             handle = self._handles[name]
             if name not in desired or desired[name].fingerprint() != handle.fingerprint:
                 await self._stop_handle(name)
+            elif desired[name] != handle.cfg:  # only the tool filters changed
+                handle.cfg = desired[name]
+                self._apply_filters(handle)
         ready_events: list[asyncio.Event] = []
         for name, cfg in desired.items():
             if name in self._handles:
@@ -144,16 +147,7 @@ class McpConnectionManager:
                 listed = await session.list_tools()
                 handle.session = session
                 handle.all_tools = list(listed.tools)
-                names = [getattr(t, "name", "") for t in handle.all_tools]
-                cfg = handle.cfg
-                visible = set(visible_tool_names(names, cfg.enabled_tools, cfg.disabled_tools))
-                handle.tools = [t for t in handle.all_tools if getattr(t, "name", "") in visible]
-                unknown = unknown_filter_names(names, cfg.enabled_tools, cfg.disabled_tools)
-                if unknown:
-                    logger.warning("[mcp] server %s: filter names not offered by the server: %s",
-                                   cfg.name, ", ".join(unknown))
-                handle.status = McpServerStatus(
-                    name=handle.cfg.name, state="connected", tool_count=len(handle.tools))
+                self._apply_filters(handle)
                 logger.info("[mcp] connected server=%s tools=%d",
                             handle.cfg.name, len(handle.tools))
                 ready.set()
@@ -167,6 +161,21 @@ class McpConnectionManager:
         finally:
             handle.session = None
             ready.set()
+
+    @staticmethod
+    def _apply_filters(handle: _ServerHandle) -> None:
+        """Derive the visible tools from the handle's config; reports them as connected."""
+        names = [getattr(t, "name", "") for t in handle.all_tools]
+        cfg = handle.cfg
+        visible = set(visible_tool_names(names, cfg.enabled_tools, cfg.disabled_tools))
+        handle.tools = [t for t in handle.all_tools if getattr(t, "name", "") in visible]
+        unknown = unknown_filter_names(names, cfg.enabled_tools, cfg.disabled_tools)
+        if unknown:
+            logger.warning("[mcp] server %s: filter names not offered by the server: %s",
+                           cfg.name, ", ".join(unknown))
+        if handle.session is not None:
+            handle.status = McpServerStatus(
+                name=cfg.name, state="connected", tool_count=len(handle.tools))
 
     async def _stop_handle(self, name: str) -> None:
         handle = self._handles.pop(name, None)
@@ -223,14 +232,28 @@ class McpConnectionManager:
 
     def is_exposed(self, server: str, tool: str) -> bool:
         handle = self._handles.get(server)
-        return handle is not None and any(getattr(t, "name", "") == tool for t in handle.tools)
+        return (handle is not None and handle.session is not None
+                and any(getattr(t, "name", "") == tool for t in handle.tools))
+
+    def _not_connected(self, server: str) -> str:
+        handle = self._handles.get(server)
+        return (f"MCP server '{server}' is not connected"
+                + (f" ({handle.status.state}: {handle.status.detail})" if handle else ""))
+
+    def refusal(self, server: str, tool: str) -> str | None:
+        """Why a call cannot run right now, or None. A down server says so; a filtered or
+        unlisted tool on a live server is unknown."""
+        handle = self._handles.get(server)
+        if handle is None or handle.session is None:
+            return self._not_connected(server)
+        if not self.is_exposed(server, tool):
+            return f"unknown tool 'mcp__{server}__{tool}'"
+        return None
 
     async def call_tool(self, server: str, tool: str, args: dict[str, object]) -> Any:
         handle = self._handles.get(server)
         if handle is None or handle.session is None:
-            raise McpServerUnavailable(
-                f"MCP server '{server}' is not connected"
-                + (f" ({handle.status.state}: {handle.status.detail})" if handle else ""))
+            raise McpServerUnavailable(self._not_connected(server))
         if not self.is_exposed(server, tool):
             raise McpToolNotExposed(f"MCP server '{server}' does not expose tool '{tool}'")
         return await asyncio.wait_for(

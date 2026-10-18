@@ -116,7 +116,8 @@ async def test_filtered_tool_is_refused_before_approval():
         return ApprovalOutcome.allow()
 
     manager = _StubManager([_def("mcp__echo__say")])
-    manager.is_exposed = lambda server, tool: (server, tool) == ("echo", "say")
+    manager.refusal = lambda server, tool: (
+        None if (server, tool) == ("echo", "say") else f"unknown tool 'mcp__{server}__{tool}'")
     out = await McpToolSource(manager, approve).prepare("mcp__echo__shout", {})
     assert out.is_error and out.output == "Error: unknown tool 'mcp__echo__shout'"
     assert approvals == [] and manager.calls == []

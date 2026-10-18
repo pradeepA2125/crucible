@@ -53,7 +53,10 @@ def mcp_call_timeout_sec() -> float:
     return _nonneg_float("CRUCIBLE_MCP_CALL_TIMEOUT_SEC", 120.0)
 
 
-def _tool_filters(entry: dict[str, object]) -> dict[str, list[str]] | None:
+TOOL_FILTERS_MALFORMED = "enabled_tools/disabled_tools must be lists of tool names"
+
+
+def parse_tool_filters(entry: dict[str, object]) -> dict[str, list[str]] | None:
     """The entry's set tool filters; JSON null means unset. None when malformed."""
     filters: dict[str, list[str]] = {}
     for key in ("enabled_tools", "disabled_tools"):
@@ -137,10 +140,9 @@ class McpConfigLoader:
                     transport in ("http", "sse") and not entry.get("url")) or not transport:
                 logger.warning("[mcp] server %r: missing command/url for transport — skipped", name)
                 continue
-            filters = _tool_filters(entry)
+            filters = parse_tool_filters(entry)
             if filters is None:
-                logger.warning("[mcp] server %r: enabled_tools/disabled_tools must be lists of "
-                               "tool names — skipped", name)
+                logger.warning("[mcp] server %r: %s — skipped", name, TOOL_FILTERS_MALFORMED)
                 continue
             try:
                 out.append(McpServerConfig(
