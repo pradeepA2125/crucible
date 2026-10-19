@@ -281,9 +281,7 @@ async def test_large_bundle_reaches_history_whole_under_a_small_result_budget(tm
 
 
 @pytest.mark.asyncio
-async def test_tiny_mcp_budget_still_lists_every_tool_in_the_directory(
-        tmp_path, on, monkeypatch):
-    monkeypatch.setenv("CRUCIBLE_MCP_TOOLS_MAX_CHARS", "10")
+async def test_directory_lists_every_tool(tmp_path, on):
     many = [ToolDefinition(name=f"mcp__web__t{i}", description="d" * 100,
                            parameters={"type": "object", "properties": {}}) for i in range(5)]
     engine = _Recording([ANSWER])

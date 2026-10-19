@@ -4,19 +4,15 @@ Unlike SkillToolSource's fixed one-tool schema, definitions() is dynamic: whatev
 the connected sessions report, namespaced mcp__<server>__<tool>. Real per-tool JSON
 schemas flow into tools_json via AggregatingToolRegistry with no extra plumbing.
 Every execute() passes through the approval callback (the controller's mcp_tool
-gate) before the wire call. Budget guard: order-truncation over the serialized
-definitions (query-independent, cache-stable — mirrors select_catalog_for_budget).
+gate) before the wire call. Every connected tool is listed: there is no size cap,
+because a dropped tool vanishes without the model or the user knowing. Per-server
+enabled_tools/disabled_tools filters are how a user trims a large server.
 """
 from __future__ import annotations
 
-import logging
-
-from agentd.mcp.config import mcp_tools_max_chars
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 from agentd.tools.approvals import McpApprovalCallback, denial_text
 from agentd.tools.registry import ToolDefinition, ToolOutput
-
-logger = logging.getLogger(__name__)
 
 _PREFIX = "mcp__"
 
@@ -41,29 +37,15 @@ class McpToolSource:
 
     def __init__(
         self, manager: object, approval_callback: McpApprovalCallback, *,
-        render_ctx: RenderContext | None = None, budgeted: bool = True,
+        render_ctx: RenderContext | None = None,
     ) -> None:
-        self._budgeted = budgeted
         self._manager = manager
         self._approve = approval_callback
         self._render_ctx = render_ctx or RenderContext.main()
 
     def definitions(self) -> list[ToolDefinition]:
         defs: list[ToolDefinition] = self._manager.tool_definitions()  # type: ignore[attr-defined]
-        if not self._budgeted:  # deferred tools are sent as a bundle, never in tools_json
-            return list(defs)
-        budget = mcp_tools_max_chars()
-        out: list[ToolDefinition] = []
-        used = 0
-        for d in defs:
-            size = len(d.model_dump_json())
-            if used + size > budget:
-                logger.warning("[mcp] tools_json budget (%d chars) hit — dropping %d of %d tools",
-                               budget, len(defs) - len(out), len(defs))
-                break
-            out.append(d)
-            used += size
-        return out
+        return list(defs)
 
     def owns(self, tool: str) -> bool:
         return tool.startswith(_PREFIX)

@@ -23,7 +23,7 @@ With `CRUCIBLE_CAPABILITY_LOADING_ENABLED=1` (extension setting `crucible.perfor
 | Added: loader schema + capability block and directory | 189 + 207 |
 | Loading the whole `mcp.playwright` namespace later | 3,974 |
 
-This is one workspace's estimate, not a billing figure. The recorded request showed 21 of the server's tools because the old 16,000-character MCP budget cut the rest; with the current 64,000-character budget more tools are listed, so both the saving and a whole-namespace bundle grow. A turn that loads the namespace pays the bundle once and replays it with history until compaction, so the saving is real only for turns that never need the server, or load a few tools with a `query`.
+This is one workspace's estimate, not a billing figure. The recorded request showed 21 of the server's tools because the old 16,000-character MCP budget cut the rest; with no MCP size cap now (removed after this measurement) every tool is listed, so both the saving and a whole-namespace bundle grow. A turn that loads the namespace pays the bundle once and replays it with history until compaction, so the saving is real only for turns that never need the server, or load a few tools with a `query`.
 
 ## Live run (2026-10-19)
 

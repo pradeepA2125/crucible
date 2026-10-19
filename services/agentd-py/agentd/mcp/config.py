@@ -22,11 +22,6 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
-def _pos_int(env: str, default: int) -> int:
-    raw = os.getenv(env, "").strip()
-    return int(raw) if raw.isdigit() and int(raw) > 0 else default
-
-
 def _nonneg_float(env: str, default: float) -> float:
     raw = os.getenv(env, "").strip()
     try:
@@ -34,10 +29,6 @@ def _nonneg_float(env: str, default: float) -> float:
     except ValueError:
         return default
     return val if val >= 0 else default
-
-
-def mcp_tools_max_chars() -> int:
-    return _pos_int("CRUCIBLE_MCP_TOOLS_MAX_CHARS", 64000)
 
 
 def mcp_decision_timeout_sec() -> float:

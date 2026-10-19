@@ -304,8 +304,10 @@ tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval ga
   `McpServerStatus` is queryable. Failed server = zero tools + warning (degrade-not-raise).
 - **Tools (`agentd/mcp/tool_source.py::McpToolSource`):** dynamic `definitions()` from
   `list_tools()`, namespaced `mcp__<server>__<tool>`; schemas ride `tools_json` via the
-  existing `AggregatingToolRegistry` seam. Budget: `CRUCIBLE_MCP_TOOLS_MAX_CHARS` (default
-  64000, order-truncation). Results: text blocks flattened; non-text counted-not-rendered;
+  existing `AggregatingToolRegistry` seam. Every connected tool is listed — no size cap
+  (the old `CRUCIBLE_MCP_TOOLS_MAX_CHARS` order-truncation was removed 2026-10-19: a dropped
+  tool vanished silently while Settings still showed it enabled); trim a large server with
+  its `enabled_tools`/`disabled_tools` filters. Results: text blocks flattened; non-text counted-not-rendered;
   `isError` → `ToolOutput(is_error=True)` — the loop adapts, never crashes.
 - **Per-server tool filters (2026-10-19):** an entry's `enabled_tools` (absent/null = every tool, a list = only those) then `disabled_tools` (removes names) choose which of the server's own, unprefixed tool names the agent sees. `McpConnectionManager` keeps every listed tool (`all_tools`) and derives the visible subset on connect (`mcp/filters.py`). `fingerprint()` leaves the filters out, so a filter-only change re-filters the live connection in `reconcile` instead of reconnecting (toggling one tool never closes Playwright's browser). A filtered tool is absent from `tool_definitions()`, and `McpToolSource.prepare` refuses it **before** the approval gate via `manager.refusal()`, which also refuses a down server with its real status ("not connected", never "unknown tool"); `call_tool` raises `McpToolNotExposed` as a backstop. Unknown names log one warning; a non-list value skips the entry, and the listing then sends null/[] with `detail` = the reason (raw values would fail the client's Zod parse and blank Settings). `PUT /v1/mcp/servers/{name}/tools {enabled_tools, disabled_tools, disabled}` (`admin.set_tool_filters`) rewrites only those two keys; the listing adds `tools` (every listed tool + `enabled`), `enabled_tools`, `disabled_tools`. Settings › MCP Servers shows a checkbox per tool (`webview-ui/src/settings/mcpToolFilters.ts::nextToolFilters` keeps an existing allowlist an allowlist). MCP only — built-in tools keep their feature switches.
 - **On-demand loading pilot (2026-10-19, `CRUCIBLE_CAPABILITY_LOADING_ENABLED`, default OFF; extension `crucible.performance.mcpOnDemand`):** the main agent's catalog drops every `mcp__` schema and the `_MCP_BLOCK`; the system prompt gets `_CAPABILITY_BLOCK` plus one `OPTIONAL CAPABILITIES` line per server (`mcp.<server>`), and the agent calls `load_capabilities` (`agentd/capabilities/`, alone in its step) to get a bundle of full schemas + per-tool versions + the MCP guidance (`mcp_bundle_guidance`) as a tool result delivered whole (`ToolOutput.whole`). **Loaded = a bundle with the tool's current version is in the history being sent** (`capabilities/history.py`) — no other state, so compaction that evicts a bundle unloads its tools and a reconnect that changes a schema stales it; `ControllerLoop`'s batch guard refuses an unloaded MCP call before any member runs. Execution and approval are unchanged (`McpToolSource`). Children, team members and the task path keep full catalogs; restoring bundles for in-progress work after compaction and any model-behavior evaluation are deferred. Measured: `docs/on-demand-capability-loading-pilot.md`.
@@ -322,7 +324,7 @@ tools callable as `mcp__<server>__<tool>` behind a live `"mcp_tool"` approval ga
   `mcp__` (detected from `tool_definitions` — no loader param). Teaches: external/side-
   effecting + the approval pause is expected, not an error.
 - **Env:** `CRUCIBLE_MCP_ENABLED` (off) · `CRUCIBLE_MCP_DECISION_TIMEOUT_SEC` (0) ·
-  `CRUCIBLE_MCP_TOOLS_MAX_CHARS` (64000) · `CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC` (30) ·
+  `CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC` (30) ·
   `CRUCIBLE_MCP_CALL_TIMEOUT_SEC` (120). `/v1/config` exposes `mcp_enabled`.
 - **GitHub:** proof-via-user-config (no bundled entry): an `mcp.json` entry for the official
   GitHub MCP server with a `${GITHUB_PAT}` header, verified live end-to-end.
@@ -772,7 +774,6 @@ Spec: `docs/superpowers/specs/2026-10-06-chatgpt-plan-usage-design.md` (built fr
 - `CRUCIBLE_MCP_ENABLED` — connect external MCP servers from `.crucible/mcp.json` and offer their tools to the controller. Default **OFF**; opt in with `1/true/yes/on`. See "MCP client (P3)".
 - `CRUCIBLE_CAPABILITY_LOADING_ENABLED` — on-demand MCP tool loading for the main agent only (`load_capabilities`; default **OFF**; needs `CRUCIBLE_MCP_ENABLED`). See the "On-demand loading pilot" bullet under MCP client (P3).
 - `CRUCIBLE_MCP_DECISION_TIMEOUT_SEC` — seconds to wait for the user's mcp_tool gate decision; `0` (default) = wait forever; timeout → reject.
-- `CRUCIBLE_MCP_TOOLS_MAX_CHARS` — char budget for MCP tool definitions in tools_json (default `64000`, raised from 16000 on 2026-10-19: 16000 chars ≈ 4k tokens cut this workspace's 39 connected tools to 21; order-truncation).
 - `CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC` — per-server connect wait at startup before continuing without it (default `30`).
 - `CRUCIBLE_MCP_CALL_TIMEOUT_SEC` — per-call timeout for an MCP tool invocation (default `120`).
 - `CRUCIBLE_LISTEN_PORT` / `CRUCIBLE_SERVE_PID` — set by `python -m agentd.serve` for the app process only (stripped from every backend subprocess by `agentd/child_env.py::child_env()`); the app refuses to start without them, so bare `uvicorn agentd.main:app` no longer works. (`CRUCIBLE_PORT` is retired.)

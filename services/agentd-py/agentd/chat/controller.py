@@ -651,9 +651,7 @@ class ChatController:
         if self._mcp_manager is not None and mcp_approval_cb is not None:
             from agentd.mcp.tool_source import McpToolSource
 
-            sources.append(McpToolSource(
-                self._mcp_manager, mcp_approval_cb,
-                budgeted=not is_capability_loading_enabled()))
+            sources.append(McpToolSource(self._mcp_manager, mcp_approval_cb))
         if exec_session_source is not None:
             sources.append(exec_session_source)
         sources.extend(extra_sources or [])

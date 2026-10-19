@@ -64,21 +64,11 @@ def test_owns_only_mcp_prefix():
     assert src.owns("read_file") is False
 
 
-def test_definitions_pass_through_and_budget_truncates(monkeypatch):
-    defs = [_def(f"mcp__s__t{i}", desc="x" * 200) for i in range(10)]
-    src = McpToolSource(_StubManager(defs), _approve)
-    assert len(src.definitions()) == 10
-    monkeypatch.setenv("CRUCIBLE_MCP_TOOLS_MAX_CHARS", "700")
-    kept = src.definitions()
-    assert 0 < len(kept) < 10
-    assert [d.name for d in kept] == [d.name for d in defs[: len(kept)]]  # order-truncation
-
-
-def test_unbudgeted_source_returns_every_definition(monkeypatch):
-    defs = [_def(f"mcp__s__t{i}", desc="x" * 200) for i in range(10)]
-    monkeypatch.setenv("CRUCIBLE_MCP_TOOLS_MAX_CHARS", "700")
-    assert len(McpToolSource(_StubManager(defs), _approve, budgeted=False).definitions()) == 10
-    assert len(McpToolSource(_StubManager(defs), _approve).definitions()) < 10
+def test_definitions_list_every_tool_however_large():
+    # 300 tools of ~2,000 characters each: far past the old 64,000-character cap.
+    defs = [_def(f"mcp__s__t{i}", desc="x" * 2000) for i in range(300)]
+    kept = McpToolSource(_StubManager(defs), _approve).definitions()
+    assert [d.name for d in kept] == [d.name for d in defs]
 
 
 @pytest.mark.asyncio
