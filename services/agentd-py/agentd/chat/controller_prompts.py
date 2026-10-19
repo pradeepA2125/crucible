@@ -792,16 +792,18 @@ exposes.
 # On-demand capability loading (main agent only, flag-gated). Core duties stay here; the
 # MCP teaching itself rides the bundle (mcp_bundle_guidance).
 _CAPABILITY_BLOCK = """
-
-OPTIONAL CAPABILITIES
-Tools of the connected external MCP servers are deferred: their schemas are not in TOOLS.
-Each namespace below is one server. When the user's request needs one, call
-load_capabilities alone in its step with that namespace, and optionally a `query` (a few
-words naming the actions you need) or exact unprefixed `tool_names`. The result holds the
-tool schemas and their guidance; the loaded tools are callable from your next step as
-`mcp__<server>__<tool>`. Loading only shows schemas: it grants no permission, and every
-call to an external tool still pauses for the user's approval when approval applies. If a
-call is refused because a tool is not loaded, load its namespace again.
+OPTIONAL CAPABILITIES: available now, loaded on demand
+The tools above are not all you have. Each namespace below is a connected external MCP
+server, and its tools are available in this turn: only their schemas are left out of the
+list above until you load them. Before you tell the user something is out of reach, check
+these namespaces; if one covers the request, load it and use it. To load, call
+load_capabilities alone in its step with just the namespace: that loads every tool of the
+server. The loaded tools are callable from your next step as `mcp__<server>__<tool>`, and
+their guidance comes with the schemas. Only if a load is refused as bundle_too_large, retry
+with a `query` of a few words naming the tools you need, or exact unprefixed `tool_names`
+from the namespace's line below. Loading grants no permission: every call to an external
+tool still pauses for the user's approval when approval applies. If a call is refused
+because a tool is not loaded, load its namespace again.
 """
 
 _MCP_SCHEMAS_IN_TOOLS = "Their parameter schemas are in TOOLS like any other\ntool;"
@@ -1215,12 +1217,18 @@ def format_controller_system_prompt(
         .replace("{propose_mode_modes}", modes)
         .replace("{tools_json}", catalog)
     )
+    # Right after the tool catalog, where the model looks for what it can do: placed after
+    # the skills catalog, a model found no matching skill and told the user it had no
+    # browser (rollout evaluation, 2026-10-19).
+    directory = _CAPABILITY_BLOCK + capability_directory + "\n" if capability_directory else ""
+    base += directory
     from agentd.tools.batching import batching_enabled
     if not batching_enabled():
         base += "\nTOOL ARRAY: use tool_calls with exactly one calls member. Multiple tools " \
                 "in one step are disabled; choose the next tool after receiving its result.\n"
     sizes = component_sizes if component_sizes is not None else {}
-    sizes.update(core_rules=len(base) - len(catalog), tool_catalog=len(catalog))
+    sizes.update(core_rules=len(base) - len(catalog) - len(directory),
+                 tool_catalog=len(catalog), capability_directory=len(directory))
     measured = len(base)
 
     def record(name: str) -> None:
@@ -1276,9 +1284,6 @@ def format_controller_system_prompt(
            for d in tool_definitions if isinstance(d, dict)):
         base += render_prompt(_MCP_BLOCK, ctx)
     record("mcp_guidance")
-    if capability_directory:
-        base += _CAPABILITY_BLOCK + capability_directory + "\n"
-    record("capability_directory")
     # exec-session teaching block: keyed off the merged tool definitions (same
     # pattern as the MCP block) so no separate flag parameter is needed.
     if any(str((d or {}).get("name", "")) == "start_session"

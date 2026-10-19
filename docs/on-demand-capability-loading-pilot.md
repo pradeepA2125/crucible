@@ -44,7 +44,151 @@ The installed extension's managed backend, on the ChatGPT plan with `gpt-6-luna`
 
 ## Not measured, and deferred
 
-- Model behavior beyond one live run on `gpt-6-luna` (above): whether models generally load the right namespace, pick useful queries, or try unloaded tools. That evaluation, including weaker models, comes before any change of default.
+- Model behavior on providers other than the two in the rollout evaluation below (Anthropic, Gemini, Ollama, Groq and the rest are untested live).
 - Restoring bundles for work still in progress after compaction (spec "Lifetime" row 3). Today the model reloads the namespace.
 - Children, team members and the task path.
 - Provider cache effects of the smaller stable prefix plus appended bundles.
+
+## Rollout evaluation (2026-10-19)
+
+The matched evaluation the spec requires before a default change ("Validation and rollout"). Recommendation at the end.
+
+**Setup.** Each arm is its own backend (`python -m agentd.serve`), started by [eval_rollout.py](validation/capability-loading/eval_rollout.py) with the installed extension's managed-spawn settings, its own chat, task and memory databases, and only `CRUCIBLE_CAPABILITY_LOADING_ENABLED` differing between arms. The workspace is a `git archive` of this repository at `766296b6`, with the same skills and agents and `.crucible/mcp.json` (Playwright 25 tools, `everything` 16, `fetch` 1), and no remembered approvals. The harness approves every gate except in the denial scenario, where it rejects every `mcp_tool` gate. It answers a clarifying question with "Use your best judgment." Prompts are what a user would type; none names the loader or the namespace.
+
+- **Models.** `gpt-6-luna` on the ChatGPT plan (native function calling, effort medium), and `nvidia/nemotron-3-ultra-550b-a55b` on NVIDIA NIM through `openai_compatible`. NIM failed the startup newline probe, so every nemotron arm ran in `json_object` mode with the schema in the prompt. That is the prompt-only path. Local Ollama models were dropped from the matrix at the user's request; no other provider was run.
+- **Suites.** *main*: greeting, a narrow code question, "what does example.com say right now?", a two-turn books.toscrape.com task (navigate, open Poetry, read; then open the book and read its stock), and a screenshot request with the gate denied. *discovery*: four first-turn prompts in fresh threads, repeated (luna 5×, plus 10 more of the explicit-browser prompt; nemotron 3×). *compaction*: one six-turn browsing thread with `CRUCIBLE_MEMORY_WINDOW_TOKENS=45000`, so compaction fires inside the session.
+- **Measures.** Requests, input, cached and output tokens per turn come from the backend's `/usage` route (provider counts). First-request size comes from the provider's own count on the closing `token_progress` event. Loads, refusals of unloaded tools and malformed-output corrections come from the SSE stream and the backend log. Correctness is checked against ground truth fetched the same day: 50 categories; Poetry's first book is *A Light in the Attic* at £51.77 with 22 in stock; the Travel category has 11 titles; Mystery's most expensive book is *Boar Island* at £59.48; Historical Fiction's first book is *Tipping the Velvet* at £53.74, UPC `90fa61229261140a`; the home page's last book is *It's Only the Himalayas*.
+- **Data.** Raw results are in [validation/capability-loading/rollout-2026-10-19/](validation/capability-loading/rollout-2026-10-19/). [analyze_rollout.py](validation/capability-loading/analyze_rollout.py) adds o200k estimates per request from the controller artifacts. [summarize_discovery.py](validation/capability-loading/summarize_discovery.py) produces the rates.
+
+### Turns that need no MCP tool
+
+| Model | Turn | First request off → on | Whole turn off → on (requests) | Correct |
+| --- | --- | --- | --- | --- |
+| luna | greeting | 22,072 → 16,542 (−25%) | 43,864 (2) → 16,542 (1) | both |
+| luna | code question | 22,113 → 16,583 (−25%) | 95,965 (4) → 63,804 (3) | both, 28,000 |
+| luna | example.com, 5 runs each | — | 45,102 → 34,052 (−24%), 11.2 → 9.7 s | 5/5 both |
+| nemotron | greeting, 3 runs each | 22,779–24,370 → 16,835–17,778 | 1 request each | all |
+| nemotron | code question | 22,820–23,763 → 16,876–17,819 | 81,791 and 220,185 → 88,847, 66,946 and 61,763 | 2/2 off (+1 timeout) → 3/3 on |
+| nemotron | example.com, 3 runs each | — | 47,375 → 41,395 (−13%) | 3/3 → 2/3 (1 timeout) |
+
+The first request is about 5,500 tokens smaller on both providers, as in the single live run. The greeting's extra request with the flag off is the known text-reply retry, not the flag. "example.com" never needed a browser: with the flag off both models used the `fetch` MCP server, and with it on both used the built-in `web_fetch`. Deferring the `fetch` server changed the route but not the answer. No model loaded a namespace on a turn that didn't need one.
+
+### First turns that need a browser (discovery)
+
+| Model | Prompt | Arm | Runs | Used browser | Correct | Loads per turn | Unloaded refusals | Requests | Input (uncached) | Seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| luna | "Open books.toscrape.com in the browser and tell me how many book categories…" | off | 15 | 15 | 15 | 0 | 0 | 3.2 | 83,300 (26,417) | 16.7 |
+| | | on | 15 | **12** | 12 | 1.5 | 5 | 4.6 | 94,325 (27,074) | 22.3 |
+| luna | "Go to books.toscrape.com, open the Poetry category, and tell me the first book's title and price." | off | 5 | 5 | 2 | 0 | 0 | 5.6 | 171,776 (29,005) | 28.8 |
+| | | on | 5 | 4 | 4 | 1.6 | 2 | 7.8 | 184,031 (30,149) | 41.1 |
+| luna | "Take a screenshot of books.toscrape.com for me." | off | 5 | 5 | 5 | 0 | 0 | 2.8 | 64,667 (20,046) | 15.4 |
+| | | on | 5 | 5 | 5 | 1.0 | 0 | 4.2 | 84,697 (14,118) | 20.5 |
+| nemotron | explicit browser count | off | 3 | 2 | 2 | 0 | 0 | 3.0 | 62,074 | 171.0 |
+| | | on | 3 | 3 | 3 | 1.0 | 1 | 4.7 | 100,062 | 83.2 |
+| nemotron | Poetry first book | off | 3 | 3 | 1 | 0 | 0 | 10.3 | 203,749 | 340.2 |
+| | | on | 3 | 1 | 2 | 0.33 | 0 | 7.3 | 146,385 | 199.2 |
+| nemotron | screenshot | off | 3 | 3 | 3 | 0 | 0 | 2.3 | 55,751 | 19.9 |
+| | | on | 3 | 2 | 2 | 1.0 | 0 | 6.0 | 96,282 | 216.4 |
+
+NIM reports no cached tokens, so nemotron's input is all uncached. Nemotron's failures in both arms are 420 s or 600 s timeouts on an overloaded endpoint (3 of 12 turns per arm), plus its pre-existing malformed output (below). The Poetry prompt does not require a browser; "Correct" counts a right answer from `web_fetch` too. Flag-off luna read the home page instead of the Poetry page twice: a model error, not the flag.
+
+- **Discovery failures (luna, flag on).** Asked to "Open books.toscrape.com in the browser…", luna answered without loading Playwright in 3 of 15 discovery runs, and again in the first turn of the compaction session (4 of 16). It replied "I can't open an interactive browser in this session", or "browser access isn't available in the tools currently loaded". Once it also gave the count from memory. The model's own thought shows what it checked: "This is a live website lookup, not frontend work in this repository; no listed skill matches." It checked the skills catalog and stopped there. The `OPTIONAL CAPABILITIES` directory sits directly after that catalog, at character 46,266 of a 65,874-character system prompt. With the flag off it found the browser 16 of 16 times. Nemotron loaded Playwright every time it reached a browser-needing step (no misses in 7 runs; one flag-on screenshot run timed out before any tool call, so that run can't be judged).
+- **Loader selection misses the obvious tools.** `select_tools` scores a query by word overlap with each tool's name *and* description, without weighting the name, so long descriptions that mention "page", "browser" or "click" outrank short ones. luna's query `"browser navigate inspect click page"` returned `browser_navigate_back`, `browser_click`, `browser_close`, `browser_emulate_media`: neither `browser_navigate` nor `browser_snapshot`. The model then calls the missing tool (refused as unloaded) or loads again by name. That is why luna averages 1.5 loads and up to 3 per browser turn, accounts for every luna unloaded refusal in the table (7 across 25 browser turns), and adds most of the extra requests and seconds. Loads by exact `tool_names` always returned what was asked for.
+- **Whole-turn cost on browser turns.** luna: +13% input on the explicit prompt (+5.6 s), +7% on the Poetry prompt (+12.3 s), +31% on the screenshot (+5.1 s). Uncached input is flat or lower (−30% on the screenshot), because every request starts from the smaller prefix. In the main suite's same-thread follow-up ("Open that book's page…"), the tools were already loaded and the turn cost 90,659 tokens with the flag on against 113,182 off (−20%).
+
+### Denied gate, follow-up and compaction
+
+- **Denied `mcp_tool` gate.** luna in both arms: one `browser_navigate` gate, rejected; the model stopped and said so without retrying (flag on: one extra `read_skill` and one load before it, 91,621 against 45,130 tokens). Nemotron flag off: rejected navigate, then tried the `fetch` server (also rejected), then explained. Nemotron flag on: rejected navigate and screenshot, then asked a clarifying question. The harness's "Use your best judgment" answer led it to retry both denied tools (rejected again), try `fetch` (rejected), and then probe the shell for a local browser (`which chromium … google-chrome`, allowed under `allow_all`) until the 600 s cap. The retry after the clarification is a harness confound. Probing the shell after a denial is a behavior to watch, but one flag-on run doesn't show it comes from the flag. No run executed a denied tool, and loading never bypassed a gate.
+- **Follow-up turn in the same thread** (main suite, "Open that book's page. How many copies are in stock?"): both models answered 22 in both arms. luna reused the loaded tools with no reload.
+- **Compaction, six browser turns at a 45k window.**
+
+| Model | Arm | Compaction events | Loads | Unloaded refusals | Correct turns | Input (sum of turns) |
+| --- | --- | --- | --- | --- | --- | --- |
+| luna | off | 7 | 0 | 0 | 3/6 | 680,037 |
+| luna | on | 2 | 5 | 2 | 5/6 | 611,211 |
+| nemotron | off | 7 | 0 | 0 | 4/6 (1 timeout) | 513,446 |
+| nemotron | on | 0 | 1 | 0 | 1/6 | 396,169 |
+
+  luna, flag on: turns 4 and 6 began after a compaction that evicted the bundle. The first browser call was refused as unloaded, the model reloaded with one `load_capabilities`, and it answered correctly. Recovery costs about one extra request and works without restoring bundles. Turn 1 is the discovery miss above. Flag-off luna's wrong answers came from truncated `browser_snapshot` output (counting 36 visible categories, listing 6 of 11 titles). Flag-on luna happened to use `browser_find`/`browser_evaluate`, which return less. The smaller prefix also compacted 2 times instead of 7.
+
+  Nemotron, flag on: the session never compacted. Turns 2–6 failed: three timeouts on NIM, and two turns ended after four malformed `tool_calls` in a row. The malformed actions are a pre-existing echo, not the flag: the loop stamps `batch_id` on each persisted `tool_calls` action (`controller_loop.py` `persisted = {**resp, "batch_id": …}`), nemotron copies it into its next action, and validation rejects the extra field as "tool_calls cannot be mixed with another action". Across every nemotron run, 21 of 77 flag-off and 17 of 76 flag-on `tool_calls` actions carried it. This session drew 11 of them. Compaction recovery is untested on nemotron.
+
+### Against the spec's criteria
+
+| Criterion | luna (ChatGPT plan) | nemotron (NIM, prompt-only JSON) |
+| --- | --- | --- |
+| No failure to discover or use required browser tools | **Fails**: 4 of 16 explicit browser requests answered without the browser (0 of 16 with the flag off) | No miss in 7 runs where a browser step was reached; 1 run unjudgeable (timeout) |
+| Lower initial payload on non-MCP turns | Passes: −5,530 tokens (−25%) per request | Passes: about −5,500 tokens per request (−25% estimated) |
+| No loss of correctness | Fails through the discovery misses; otherwise equal or better | Not established: compaction session 1/6 on vs 4/6 off; failures are endpoint timeouts and the pre-existing `batch_id` echo, and 3 runs per cell can't separate those from the flag |
+| Whole-task regressions visible and assessed | Browser turns +7% to +31% input and +5 to +12 s, mostly from re-loads caused by query selection; non-MCP turns −24% (example.com) and −33% (code question) | Browser turns ran slower on NIM in both arms; too noisy to attribute |
+
+### Recommendation: no-go for default
+
+Keep `CRUCIBLE_CAPABILITY_LOADING_ENABLED` off by default, on every model.
+
+- **luna: no-go.** The spec says a discovery failure blocks rollout, and luna missed the browser in a quarter of the requests that named it, then told the user browser access was unavailable. That is a correctness loss the flag-off arm never shows.
+- **nemotron: inconclusive, not a go.** It discovered the browser every time it got that far, but the free NIM endpoint timed out on 3 of 12 discovery turns per arm, and the pre-existing malformed `tool_calls` echo dominated the compaction session.
+
+Before re-running this evaluation, the measurable fixes are:
+1. Rank loader queries by tool name before description, so `"browser navigate …"` returns `browser_navigate`. This removes most re-loads, refusals and the whole-turn cost on browser turns.
+2. Make an unloaded capability impossible to read as "unavailable". For example, name the deferred namespaces where the model checks what it can do (next to TOOLS rather than after the skills catalog), and say plainly that a listed namespace is available to load.
+3. Fix the `batch_id` echo in persisted `tool_calls` (independent of this feature) and run nemotron again on a less loaded endpoint.
+
+Then repeat at least the discovery suite (≥15 runs per arm) on each model meant to get the default. The per-model rollback (flag off) stays as it is.
+
+## Re-runs after the fixes (2026-10-19, luna)
+
+Two re-runs, each with the discovery suite ×5 plus 10 more of the explicit-browser prompt (15 per arm), both arms in parallel, same harness, workspace and settings as above. The tree also held two concurrent changes, which both arms ran with: the loop drops a model-echoed `batch_id` (51bd64d6), and the MCP tool-catalog size cap was removed (the flag-off catalog was already under it). Raw results: [validation/capability-loading/rerun-2026-10-19/](validation/capability-loading/rerun-2026-10-19/), one folder per run.
+
+### What changed
+
+Kept in the final design:
+- **Directory placement and wording** (`chat/controller_prompts.py`). `OPTIONAL CAPABILITIES` now sits directly after the tool catalog, ahead of web guidance, memory, AGENTS.md and the skills catalog. It opens "available now, loaded on demand" and says the listed servers' tools are available in this turn. It also tells the model to check these namespaces before telling the user something is out of reach.
+- **Whole namespace by default** (`_CAPABILITY_BLOCK`, the `load_capabilities` description). The model loads a namespace by name alone and gets every tool. `query` and `tool_names` are offered only for a retry after a `bundle_too_large` refusal, and that refusal now says to retry with them. All three servers fit whole: Playwright's 25 tools come to 21,428 characters with guidance, against the 32,000 limit. `select_tools` is unchanged and remains the fallback path.
+- **The directory names every tool** (`capabilities/catalog.py`, cap 10 → 40). With 10, Playwright's line stopped at `fill_form, +15 more` and hid navigate, snapshot and click.
+
+Tried and dropped: name-first query ranking in `select_tools`. Run 1 below measured it. It cut luna's unloaded refusals from 7 to 1 in 25 browser turns. Whole-namespace loading removes the query from the normal path altogether.
+
+The flag-off prompt is byte-identical (the goldens are unchanged). With the flag on, the first request's system prompt is 66,676 characters against 91,006 off (−27%); the fuller directory and the longer block add about 800 characters over the first evaluation.
+
+### Run 1: wording + name-ranked queries (dropped design)
+
+| Prompt | Arm | Runs | Used browser | Correct | Loads per turn | Unloaded refusals | Requests | Input (uncached) | Seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Explicit browser count | off | 15 | 15 | 15 | 0 | 0 | 3.3 | 84,550 (23,400) | 20.1 |
+| | on | 15 | 15 | 15 | 1.07 | 1 | 4.1 | 89,230 (25,785) | 23.7 |
+| Poetry first book | off | 5 | 5 | 3 | 0 | 0 | 6.2 | 182,946 (39,790) | 39.6 |
+| | on | 5 | 5 | 3 | 1.0 | 0 | 9.4 | 262,453 (47,490) | 54.0 |
+| Screenshot | off | 5 | 5 | 5 | 0 | 0 | 3.0 | 69,441 (16,090) | 18.1 |
+| | on | 5 | 5 | 5 | 1.0 | 0 | 4.0 | 79,563 (16,587) | 22.7 |
+| example.com | off | 5 | 0 | 4 | 0 | 0 | 1.8 | 40,494 (14,638) | 11.8 |
+| | on | 5 | 0 | 5 | 0.6 | 0 | 3.4 | 61,561 (20,293) | 18.5 |
+
+Most loads were by exact `tool_names`, taken from the now-complete directory (16 of 29). The one refusal came from the query "browser navigate page and inspect visible content": word matching can't link "inspect" to `browser_snapshot`. On example.com, luna loaded the `fetch` server in 3 of 5 runs. Each time it first called a made-up `mcp.fetch__fetch` (the directory's namespace glued onto the call syntax), was refused with "tool must be visible and args must be an object", and recovered with one load.
+
+### Run 2: wording + whole-namespace loads (final design)
+
+| Prompt | Arm | Runs | Used browser | Correct | Loads per turn | Unloaded refusals | Requests | Input (uncached) | Seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Explicit browser count | off | 15 | **13** | 13 | 0 | 0 | 2.7 | 70,151 (14,181) | 14.4 |
+| | on | 15 | **14** | 14 | 0.93 | 0 | 3.8 | 87,524 (27,773) | 19.8 |
+| Poetry first book | off | 5 | 5 | 5 | 0 | 0 | 6.0 | 181,563 (27,425) | 34.9 |
+| | on | 5 | 5 | 5 | 1.0 | 0 | 7.2 | 211,757 (38,317) | 37.6 |
+| Screenshot | off | 5 | 5 | 5 | 0 | 0 | 3.0 | 69,428 (11,905) | 17.9 |
+| | on | 5 | 5 | 5 | 1.0 | 0 | 4.0 | 87,174 (26,656) | 22.7 |
+| example.com | off | 5 | 0 | 5 | 0 | 0 | 2.0 | 45,111 (1,949) | 12.0 |
+| | on | 5 | 0 | **3** | 0 | 0 | 1.6 | 27,328 (8,333) | 8.6 |
+
+- **Loading works as intended.** All 24 loads gave the namespace alone, none hit `bundle_too_large`, and there were no unloaded refusals or malformed corrections in either arm. The `mcp.fetch__fetch` error from run 1 did not recur: on example.com luna used the built-in `web_fetch` and loaded nothing.
+- **Discovery: the flag no longer makes it worse.** luna skipped the browser in 1 of 15 explicit requests with the flag on, and in **2 of 15 with it off**. The three misses look the same. On the first request the thought checks the skills catalog ("neither frontend-design nor impeccable applies"), and the model answers with no tool call: "I can't open an interactive browser in this session". Flag-off luna did this with every Playwright schema in its catalog, so this is luna's own first-step behavior, not a missing capability. Across both re-runs the explicit prompt used the browser in 29 of 30 turns with the flag on and 28 of 30 with it off, against 12 of 15 on before the fixes.
+- **New: 2 of 5 flag-on example.com answers declined without a tool.** One said "the web-fetch tool requires external-access approval, which hasn't been granted"; the built-in `web_fetch` needs no approval. Both thoughts again checked only the skills. Flag off answered 5 of 5, and flag on answered 5 of 5 in run 1 and in the first evaluation, so n = 5 can't separate this from the same first-step variance. It is possible that the block's sentence about approval for external tools primes the claim. Watch this in the next run.
+- **Cost on browser turns rose.** Counting only turns that used the browser: explicit +19% input (92,579 vs 77,542) and +5.0 s, screenshot +26% and +4.8 s, Poetry +17% and +2.7 s. Uncached input roughly doubles, because the request right after the load is the first to carry the new bundle. The full Playwright bundle (about 21k characters) is resent with every later request of the turn. In run 1 the bundles held 2 to 4 tools, and the cost was +6% (explicit) and +15% (screenshot). Non-MCP turns keep the −27% system-prompt saving.
+
+### Updated recommendation
+
+- **luna: meets the spec's criteria with the final design.** No discovery loss attributable to the flag (14 of 15 on vs 13 of 15 off; 29 of 30 vs 28 of 30 across both re-runs), equal correctness on every browser prompt, zero refusals and zero malformed loads. The trade-off is +17% to +26% input and +3 to +5 s on the first browser turn of a thread, against −27% on every request of a turn that needs no MCP tool. Later turns in the same thread reuse the loaded bundle, as shown above.
+- **Default: still no-go globally.** The flag is one process-wide setting, and nemotron has not been re-run with these fixes or the `batch_id` fix. The compaction suite, where luna's fourth discovery miss happened, has not been re-run either.
+- **Before flipping the default:**
+  1. Re-run the compaction suite on luna.
+  2. Re-run discovery on nemotron, on a less loaded endpoint.
+  3. Re-check the example.com prompt (n ≥ 15) for the "web fetch needs approval" refusal.

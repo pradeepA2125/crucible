@@ -13,6 +13,7 @@ from agentd.chat.controller_prompts import format_controller_system_prompt
 from agentd.chat.storage import ChatThreadStore
 from agentd.mcp.rules import McpRuleStore
 from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
+from agentd.skills.models import SkillManifest
 from agentd.tools.registry import ToolDefinition
 from tests.test_dispatch_integration import _controller as _dispatch_controller
 from tests.test_dispatch_integration import _dispatch
@@ -288,3 +289,36 @@ async def test_directory_lists_every_tool(tmp_path, on):
     ctrl, tid, _ = _setup(tmp_path, engine, manager=_Manager(many))
     await _run(ctrl, tid)
     assert "mcp.web (5 tools)" in str(engine.steps[0].directory)
+
+
+def test_directory_sits_right_after_the_tool_catalog():
+    # The rollout's discovery misses: the model checked the skills catalog, found no match
+    # and said the browser was unavailable; the directory came after that catalog.
+    tools = [{"name": "read_file", "description": "Read a file.", "parameters": {}}]
+    directory = "- mcp.playwright (2 tools): browser_navigate, browser_snapshot"
+    skill = SkillManifest(name="s", description="d", body_path=Path("x"), dir=Path("."))
+    parts: dict[str, int] = {}
+    system = format_controller_system_prompt(
+        tools, memory_enabled=True, project_instructions="Use tabs.", skills_catalog=[skill],
+        capability_directory=directory, component_sizes=parts)
+    catalog_end = system.index("]", system.index("Read a file."))
+    block = system.index("OPTIONAL CAPABILITIES")
+    listed = system.index(directory)
+    assert system[catalog_end + 1:block].strip() == ""
+    for later in ("AVAILABLE SKILLS", "Use tabs.", "MEMORY (durable across sessions)"):
+        assert listed < system.index(later)
+    text = system[block:listed]
+    assert "available" in text.lower() and "load_capabilities" in text
+    # The default load is the whole namespace; query/tool_names only after bundle_too_large.
+    assert "every tool" in text
+    assert text.index("bundle_too_large") < text.index("`query`")
+    assert sum(parts.values()) == len(system)
+    # The block's leading blank-line newline, its text, the directory and a final newline.
+    assert parts["capability_directory"] == 1 + len(text) + len(directory) + 1
+
+
+def test_flag_off_prompt_has_no_directory_block():
+    parts: dict[str, int] = {}
+    system = format_controller_system_prompt([], component_sizes=parts)
+    assert "OPTIONAL CAPABILITIES" not in system
+    assert parts["capability_directory"] == 0

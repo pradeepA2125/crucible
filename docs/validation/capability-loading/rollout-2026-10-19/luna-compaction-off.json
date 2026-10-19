@@ -1,0 +1,610 @@
+{
+ "model": "luna",
+ "flag": "off",
+ "suite": "compaction",
+ "window": "45000",
+ "started_utc": "2026-10-19T10:05:20Z",
+ "scenarios": [
+  {
+   "name": "long_browser_session",
+   "thread": "chat-ae0ced02ac68",
+   "turns": [
+    {
+     "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+     "tool_calls": [
+      {
+       "t": 5.3,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/"
+       }
+      },
+      {
+       "t": 13.71,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_snapshot",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      22111,
+      23154,
+      25294,
+      25389
+     ],
+     "compactions": [
+      {
+       "evicted": 0,
+       "anchor_version": 0
+      },
+      {
+       "evicted": 5,
+       "anchor_version": 1
+      }
+     ],
+     "answer": "I can\u2019t reliably count the categories from this truncated snapshot alone. It shows 36 category entries before truncation, so the complete sidebar count is not established here.",
+     "clarify": [],
+     "seconds": 31.7,
+     "usage": {
+      "requests": 5,
+      "input": 97175,
+      "output": 586,
+      "cached": 63616
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 1,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 21406,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 25147,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    },
+    {
+     "prompt": "Open the Travel category and list the book titles there.",
+     "tool_calls": [
+      {
+       "t": 6.08,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/catalogue/category/books/travel_2/index.html"
+       }
+      },
+      {
+       "t": 11.39,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_snapshot",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      26510,
+      27625,
+      26025
+     ],
+     "compactions": [
+      {
+       "evicted": 10,
+       "anchor_version": 2
+      }
+     ],
+     "answer": "The Travel category snapshot was truncated, so I can only confirm these titles from the visible portion:\n\n- A Summer In Europe\n- The Great Railway Bazaar\n- A Year in Provence (Provence #1)\n- The Road to Little Dribbling: Adventures of an American in Britain (Notes From a Small Island #2)\n- Neither Here nor There: Travels in Europe\n- 1,000 Places to See Before You Die",
+     "clarify": [],
+     "seconds": 32.8,
+     "usage": {
+      "requests": 4,
+      "input": 82601,
+      "output": 872,
+      "cached": 72448
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 25796,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 25681,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    },
+    {
+     "prompt": "Now the Mystery category: which book on its first page is the most expensive?",
+     "tool_calls": [
+      {
+       "t": 5.39,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/catalogue/category/books/mystery_3/index.html"
+       }
+      },
+      {
+       "t": 11.56,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {
+        "depth": 20
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_snapshot",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      27199,
+      28323,
+      26105,
+      26249
+     ],
+     "compactions": [
+      {
+       "evicted": 8,
+       "anchor_version": 3
+      }
+     ],
+     "answer": "The most expensive book on the first page is **Boar Island (Anna Pigeon #19)**, priced at **\u00a359.48**. It is higher than the other visible prices in the snapshot, including the next-highest visible price of \u00a352.30.",
+     "clarify": [],
+     "seconds": 38.5,
+     "usage": {
+      "requests": 5,
+      "input": 110590,
+      "output": 1025,
+      "cached": 73728
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 1,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 26032,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 26368,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    },
+    {
+     "prompt": "Go to the Historical Fiction category and tell me the price of its first book.",
+     "tool_calls": [
+      {
+       "t": 5.92,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/catalogue/category/books/historical-fiction_4/index.html"
+       }
+      },
+      {
+       "t": 14.75,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_snapshot",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      27387,
+      28522,
+      26162
+     ],
+     "compactions": [
+      {
+       "evicted": 10,
+       "anchor_version": 4
+      }
+     ],
+     "answer": "The first book listed in the Historical Fiction category is **The Last\u2026**? The snapshot excerpt is truncated before the first listing, so it does not show its title or price. I can\u2019t reliably determine the first book\u2019s price from this evidence.",
+     "clarify": [],
+     "seconds": 38.9,
+     "usage": {
+      "requests": 4,
+      "input": 85045,
+      "output": 1031,
+      "cached": 67840
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 25926,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 26583,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    },
+    {
+     "prompt": "Click into that book and tell me its UPC.",
+     "tool_calls": [
+      {
+       "t": 15.6,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/catalogue/category/books/historical-fiction_4/index.html"
+       }
+      },
+      {
+       "t": 20.45,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {
+        "depth": 8
+       }
+      },
+      {
+       "t": 44.37,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => { const first = document.querySelector('ol.row li article h3 a'); return first ? {title:first.title, href:first.href, text:first.textContent} : null; }"
+       }
+      },
+      {
+       "t": 63.26,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/catalogue/tipping-the-velvet_999/index.html"
+       }
+      },
+      {
+       "t": 74.95,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => [...document.querySelectorAll('table tr')].map(tr => ({label: tr.querySelector('th')?.textContent?.trim(), value: tr.querySelector('td')?.textContent?.trim()}))"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_snapshot",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      27294,
+      26977,
+      27925,
+      29043,
+      27107,
+      28213,
+      29352,
+      24148
+     ],
+     "compactions": [
+      {
+       "evicted": 3,
+       "anchor_version": 5
+      },
+      {
+       "evicted": 10,
+       "anchor_version": 6
+      }
+     ],
+     "answer": "The first book is *Tipping the Velvet*. Its UPC is **90fa61229261140a**.",
+     "clarify": [],
+     "seconds": 101.0,
+     "usage": {
+      "requests": 10,
+      "input": 225463,
+      "output": 2293,
+      "cached": 197120
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 2,
+     "rejected_types": [
+      "tool_calls"
+     ],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 23119,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 26386,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 26193,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 26553,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 26966,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    },
+    {
+     "prompt": "Go back to the home page in the browser. What's the title of the last book on the first page?",
+     "tool_calls": [
+      {
+       "t": 6.52,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/"
+       }
+      },
+      {
+       "t": 12.53,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => { const books=[...document.querySelectorAll('ol.row li article h3 a')]; const a=books.at(-1); return a ? {title:a.title, href:a.href} : null; }"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      25289,
+      26368,
+      27506
+     ],
+     "compactions": [],
+     "answer": "The last book on the home page\u2019s first page is *It\u2019s Only the Himalayas*.",
+     "clarify": [],
+     "seconds": 19.0,
+     "usage": {
+      "requests": 3,
+      "input": 79163,
+      "output": 299,
+      "cached": 75264
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 23609,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 23606,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 23975,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "mcp": {
+  "playwright": {
+   "state": "connected",
+   "tools": 25
+  },
+  "everything": {
+   "state": "connected",
+   "tools": 16
+  },
+  "fetch": {
+   "state": "connected",
+   "tools": 1
+  }
+ },
+ "config": {
+  "mcp_enabled": true,
+  "provider": {
+   "backend": "chatgpt",
+   "model": "gpt-6-luna",
+   "uses_chatgpt_plan": true,
+   "context_window": 45000,
+   "reasoning_effort": "medium",
+   "reasoning_effort_support": {
+    "supported": [
+     "high",
+     "low",
+     "max",
+     "medium",
+     "xhigh"
+    ],
+    "unsupported": {},
+    "control": {
+     "options": [
+      {
+       "value": "low",
+       "label": "Low",
+       "description": "Fast responses with lighter reasoning",
+       "state": "supported"
+      },
+      {
+       "value": "medium",
+       "label": "Medium",
+       "description": "Balances speed and reasoning depth for everyday tasks",
+       "state": "supported"
+      },
+      {
+       "value": "high",
+       "label": "High",
+       "description": "Greater reasoning depth for complex problems",
+       "state": "supported"
+      },
+      {
+       "value": "xhigh",
+       "label": "Extra high",
+       "description": "Extra high reasoning depth for complex problems",
+       "state": "supported"
+      },
+      {
+       "value": "max",
+       "label": "Max",
+       "description": "Maximum reasoning depth for the hardest problems",
+       "state": "supported"
+      }
+     ],
+     "source": "catalog",
+     "default": "medium",
+     "reason": null
+    }
+   },
+   "reasoning_effort_note": null
+  }
+ }
+}

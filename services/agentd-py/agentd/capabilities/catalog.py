@@ -6,7 +6,9 @@ import json
 from dataclasses import dataclass
 
 LOADER_TOOL = "load_capabilities"
-_DIRECTORY_NAMES = 10
+# High enough to name every tool of a typical server: a name left off the directory is a
+# name the model cannot ask for (with 10, Playwright's navigate and snapshot were hidden).
+_DIRECTORY_NAMES = 40
 
 
 def tool_version(definition: dict[str, object]) -> str:

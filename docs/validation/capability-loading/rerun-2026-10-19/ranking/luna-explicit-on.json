@@ -1,0 +1,780 @@
+{
+  "model": "luna",
+  "flag": "on",
+  "suite": "discovery",
+  "window": null,
+  "started_utc": "2026-10-19T12:28:15Z",
+  "scenarios": [
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-cc9b951bf00a",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 11.49,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright",
+                "tool_names": [
+                  "browser_navigate",
+                  "browser_snapshot"
+                ]
+              }
+            },
+            {
+              "t": 17.46,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com"
+              }
+            },
+            {
+              "t": 30.02,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16708,
+            18128,
+            19181,
+            28502
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories** (excluding the top-level \u201cBooks\u201d link).",
+          "clarify": [],
+          "seconds": 37.4,
+          "usage": {
+            "requests": 4,
+            "input": 82519,
+            "output": 298,
+            "cached": 53504
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-ee3fb8b085c4",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 5.46,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright",
+                "tool_names": [
+                  "browser_navigate",
+                  "browser_snapshot"
+                ]
+              }
+            },
+            {
+              "t": 12.25,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 18.38,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16708,
+            18119,
+            19173,
+            29425
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories**.",
+          "clarify": [],
+          "seconds": 23.1,
+          "usage": {
+            "requests": 4,
+            "input": 83425,
+            "output": 286,
+            "cached": 49920
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-3c6bd9c0a50a",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 4.64,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright"
+              }
+            },
+            {
+              "t": 9.08,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 14.85,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16708,
+            22423,
+            23471,
+            33728
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories**.",
+          "clarify": [],
+          "seconds": 18.8,
+          "usage": {
+            "requests": 4,
+            "input": 96330,
+            "output": 281,
+            "cached": 77568
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-0916d09f5351",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 5.32,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright",
+                "query": "browser navigate and inspect page snapshot"
+              }
+            },
+            {
+              "t": 13.04,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com"
+              }
+            },
+            {
+              "t": 17.27,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16708,
+            18443,
+            19509,
+            29757
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories** (excluding the parent \u201cBooks\u201d entry).",
+          "clarify": [],
+          "seconds": 22.3,
+          "usage": {
+            "requests": 4,
+            "input": 84417,
+            "output": 304,
+            "cached": 69632
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-7e2cb92cceb3",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 4.73,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright",
+                "query": "browser navigate page and inspect visible content"
+              }
+            },
+            {
+              "t": 9.39,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 18.54,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright",
+                "tool_names": [
+                  "browser_snapshot"
+                ]
+              }
+            },
+            {
+              "t": 24.75,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16708,
+            18360,
+            19405,
+            20326,
+            21465,
+            31721
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories** (not counting the \u201cBooks\u201d heading).",
+          "clarify": [],
+          "seconds": 32.9,
+          "usage": {
+            "requests": 6,
+            "input": 127985,
+            "output": 432,
+            "cached": 95232
+          },
+          "unloaded_refusals": 1,
+          "malformed_corrections": 0,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-d2602df16892",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 5.05,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright",
+                "tool_names": [
+                  "browser_navigate",
+                  "browser_snapshot"
+                ]
+              }
+            },
+            {
+              "t": 10.04,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 16.15,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16708,
+            18108,
+            19152,
+            29421
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories** (excluding the parent \u201cBooks\u201d link).",
+          "clarify": [],
+          "seconds": 20.7,
+          "usage": {
+            "requests": 4,
+            "input": 83389,
+            "output": 291,
+            "cached": 69888
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-22ce23a28e1b",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 4.76,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright",
+                "tool_names": [
+                  "browser_navigate",
+                  "browser_snapshot"
+                ]
+              }
+            },
+            {
+              "t": 10.45,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 14.68,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16708,
+            18111,
+            19147,
+            29391
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories** (excluding the parent \u201cBooks\u201d link).",
+          "clarify": [],
+          "seconds": 19.2,
+          "usage": {
+            "requests": 4,
+            "input": 83357,
+            "output": 298,
+            "cached": 66432
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-17ba4037339f",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 5.44,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright",
+                "query": "browser navigate, snapshot"
+              }
+            },
+            {
+              "t": 10.68,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com"
+              }
+            },
+            {
+              "t": 15.36,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16708,
+            18437,
+            19470,
+            29729
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories**.",
+          "clarify": [],
+          "seconds": 21.0,
+          "usage": {
+            "requests": 4,
+            "input": 84344,
+            "output": 293,
+            "cached": 37632
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-d28491721228",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 6.1,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright",
+                "tool_names": [
+                  "browser_navigate",
+                  "browser_snapshot"
+                ]
+              }
+            },
+            {
+              "t": 10.8,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 15.47,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16708,
+            18130,
+            19189,
+            29455
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories** (excluding the top-level \u201cBooks\u201d link).",
+          "clarify": [],
+          "seconds": 21.0,
+          "usage": {
+            "requests": 4,
+            "input": 83482,
+            "output": 312,
+            "cached": 53504
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-e261701d4d3b",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 4.66,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright"
+              }
+            },
+            {
+              "t": 9.28,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 14.48,
+              "tool": "mcp__playwright__browser_evaluate",
+              "args": {
+                "function": "\u2026"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_evaluate",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16708,
+            22393,
+            23448,
+            24879
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories** on books.toscrape.com.",
+          "clarify": [],
+          "seconds": 19.8,
+          "usage": {
+            "requests": 4,
+            "input": 87428,
+            "output": 346,
+            "cached": 78592
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    }
+  ],
+  "mcp": {
+    "playwright": {
+      "state": "connected",
+      "tools": 25
+    },
+    "everything": {
+      "state": "connected",
+      "tools": 16
+    },
+    "fetch": {
+      "state": "connected",
+      "tools": 1
+    }
+  },
+  "config": {
+    "mcp_enabled": true,
+    "provider": {
+      "backend": "chatgpt",
+      "model": "gpt-6-luna",
+      "uses_chatgpt_plan": true,
+      "context_window": 272000,
+      "reasoning_effort": "medium",
+      "reasoning_effort_support": {
+        "supported": [
+          "high",
+          "low",
+          "max",
+          "medium",
+          "xhigh"
+        ],
+        "unsupported": {},
+        "control": {
+          "options": [
+            {
+              "value": "low",
+              "label": "Low",
+              "description": "Fast responses with lighter reasoning",
+              "state": "supported"
+            },
+            {
+              "value": "medium",
+              "label": "Medium",
+              "description": "Balances speed and reasoning depth for everyday tasks",
+              "state": "supported"
+            },
+            {
+              "value": "high",
+              "label": "High",
+              "description": "Greater reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high",
+              "description": "Extra high reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "max",
+              "label": "Max",
+              "description": "Maximum reasoning depth for the hardest problems",
+              "state": "supported"
+            }
+          ],
+          "source": "catalog",
+          "default": "medium",
+          "reason": null
+        }
+      },
+      "reasoning_effort_note": null
+    }
+  }
+}

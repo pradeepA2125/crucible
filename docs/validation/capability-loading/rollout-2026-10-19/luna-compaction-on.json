@@ -1,0 +1,632 @@
+{
+ "model": "luna",
+ "flag": "on",
+ "suite": "compaction",
+ "window": "45000",
+ "started_utc": "2026-10-19T10:09:54Z",
+ "scenarios": [
+  {
+   "name": "long_browser_session",
+   "thread": "chat-b6504c65c3cf",
+   "turns": [
+    {
+     "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+     "tool_calls": [],
+     "tool_errors": [],
+     "gates": [],
+     "request_inputs": [
+      16581
+     ],
+     "compactions": [],
+     "answer": "I can\u2019t open a live browser in this chat right now, so I can\u2019t verify the sidebar count. If you share a screenshot or page content, I can count the categories for you.",
+     "clarify": [],
+     "seconds": 5.1,
+     "usage": {
+      "requests": 1,
+      "input": 16581,
+      "output": 104,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15876,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    },
+    {
+     "prompt": "Open the Travel category and list the book titles there.",
+     "tool_calls": [
+      {
+       "t": 5.14,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "browser navigate open URL inspect page text"
+       }
+      },
+      {
+       "t": 9.59,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "http://books.toscrape.com/catalogue/category/books/travel_2/index.html"
+       }
+      },
+      {
+       "t": 16.9,
+       "tool": "mcp__playwright__browser_find",
+       "args": {
+        "regex": ".*",
+        "filename": "travel-snapshot.yml"
+       }
+      },
+      {
+       "t": 22.7,
+       "tool": "mcp__playwright__browser_find",
+       "args": {
+        "regex": ".*",
+        "filename": "travel-snapshot.yml"
+       }
+      },
+      {
+       "t": 27.08,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "browser evaluate page text content"
+       }
+      },
+      {
+       "t": 32.17,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => Array.from(document.querySelectorAll('article.product_pod h3 a')).map(a => a.getAttribute('title'))"
+       }
+      }
+     ],
+     "tool_errors": [
+      {
+       "tool": null,
+       "output": "DUPLICATE BLOCKED (iter 3); reuse visible evidence or request the missing portion."
+      }
+     ],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_find",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      17682,
+      19302,
+      20359,
+      21312,
+      22255,
+      24054,
+      25238
+     ],
+     "compactions": [],
+     "answer": "The Travel category lists these 11 books:\n\n- *It's Only the Himalayas*\n- *Full Moon over Noah\u2019s Ark: An Odyssey to Mount Ararat and Beyond*\n- *See America: A Celebration of Our National Parks & Treasured Sites*\n- *Vagabonding: An Uncommon Guide to the Art of Long-Term World Travel*\n- *Under the Tuscan Sun*\n- *A Summer In Europe*\n- *The Great Railway Bazaar*\n- *A Year in Provence (Provence #1)*\n- *The Road to Little Dribbling: Adventures of an American in Britain (Notes From a Small Island #2)*\n- *Neither Here nor There: Travels in Europe*\n- *1,000 Places to See Before You Die*",
+     "clarify": [],
+     "seconds": 40.5,
+     "usage": {
+      "requests": 7,
+      "input": 150202,
+      "output": 740,
+      "cached": 140416
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 16006,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16578,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16922,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17170,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17407,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 18503,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 18963,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    },
+    {
+     "prompt": "Now the Mystery category: which book on its first page is the most expensive?",
+     "tool_calls": [
+      {
+       "t": 5.82,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "http://books.toscrape.com/catalogue/category/books/mystery_3/index.html"
+       }
+      },
+      {
+       "t": 12.7,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => Array.from(document.querySelectorAll('article.product_pod')).map(p => ({title:p.querySelector('h3 a')?.getAttribute('title'), price:p.querySelector('.price_color')?.textContent}))"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      26475,
+      27539,
+      29379
+     ],
+     "compactions": [],
+     "answer": "The most expensive book on the Mystery category\u2019s first page is **Boar Island (Anna Pigeon #19)** at **\u00a359.48**.",
+     "clarify": [],
+     "seconds": 18.1,
+     "usage": {
+      "requests": 3,
+      "input": 83393,
+      "output": 289,
+      "cached": 78720
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 19571,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 19566,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 20603,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    },
+    {
+     "prompt": "Go to the Historical Fiction category and tell me the price of its first book.",
+     "tool_calls": [
+      {
+       "t": 24.77,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "tool_names": [
+         "browser_navigate",
+         "browser_evaluate"
+        ]
+       }
+      },
+      {
+       "t": 29.71,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "http://books.toscrape.com/catalogue/category/books/historical-fiction_4/index.html"
+       }
+      },
+      {
+       "t": 36.55,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => { const p=document.querySelector('article.product_pod'); return {title:p?.querySelector('h3 a')?.getAttribute('title'), price:p?.querySelector('.price_color')?.textContent}; }"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      19656,
+      20649,
+      22094,
+      23161,
+      24281
+     ],
+     "compactions": [
+      {
+       "evicted": 13,
+       "anchor_version": 1
+      }
+     ],
+     "answer": "The first book in the Historical Fiction category is *Tipping the Velvet*, priced at **\u00a353.74**.",
+     "clarify": [],
+     "seconds": 41.4,
+     "usage": {
+      "requests": 6,
+      "input": 112970,
+      "output": 969,
+      "cached": 84864
+     },
+     "unloaded_refusals": 1,
+     "malformed_corrections": 0,
+     "rejected_types": [
+      "tool_calls"
+     ],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 19946,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    },
+    {
+     "prompt": "Click into that book and tell me its UPC.",
+     "tool_calls": [
+      {
+       "t": 4.66,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "tool_names": [
+         "browser_navigate",
+         "browser_evaluate"
+        ]
+       }
+      },
+      {
+       "t": 11.55,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => { const a=Array.from(document.querySelectorAll('article.product_pod h3 a')).find(a=>a.getAttribute('title')==='Tipping the Velvet'); return a?.href; }"
+       }
+      },
+      {
+       "t": 20.68,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "http://books.toscrape.com/catalogue/tipping-the-velvet_999/index.html"
+       }
+      },
+      {
+       "t": 27.19,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => Array.from(document.querySelectorAll('table tr')).map(r => Array.from(r.cells).map(c => c.textContent.trim())).find(row => row[0] === 'UPC')?.[1]"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      25362,
+      26310,
+      27395,
+      28464,
+      29536
+     ],
+     "compactions": [],
+     "answer": "The UPC for *Tipping the Velvet* is **90fa61229261140a**.",
+     "clarify": [],
+     "seconds": 33.0,
+     "usage": {
+      "requests": 5,
+      "input": 137067,
+      "output": 442,
+      "cached": 130944
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 20387,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 20278,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 20628,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 20982,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 21316,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    },
+    {
+     "prompt": "Go back to the home page in the browser. What's the title of the last book on the first page?",
+     "tool_calls": [
+      {
+       "t": 23.0,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "tool_names": [
+         "browser_navigate",
+         "browser_evaluate"
+        ]
+       }
+      },
+      {
+       "t": 27.39,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "http://books.toscrape.com/"
+       }
+      },
+      {
+       "t": 34.8,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => document.querySelectorAll('article.product_pod h3 a').item(document.querySelectorAll('article.product_pod h3 a').length - 1)?.getAttribute('title')"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      18873,
+      19854,
+      21298,
+      22333,
+      23414
+     ],
+     "compactions": [
+      {
+       "evicted": 21,
+       "anchor_version": 2
+      }
+     ],
+     "answer": "The last book on the first page is *It's Only the Himalayas*.",
+     "clarify": [],
+     "seconds": 39.9,
+     "usage": {
+      "requests": 6,
+      "input": 110998,
+      "output": 917,
+      "cached": 97024
+     },
+     "unloaded_refusals": 1,
+     "malformed_corrections": 0,
+     "rejected_types": [
+      "tool_calls"
+     ],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 19006,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "mcp": {
+  "playwright": {
+   "state": "connected",
+   "tools": 25
+  },
+  "everything": {
+   "state": "connected",
+   "tools": 16
+  },
+  "fetch": {
+   "state": "connected",
+   "tools": 1
+  }
+ },
+ "config": {
+  "mcp_enabled": true,
+  "provider": {
+   "backend": "chatgpt",
+   "model": "gpt-6-luna",
+   "uses_chatgpt_plan": true,
+   "context_window": 45000,
+   "reasoning_effort": "medium",
+   "reasoning_effort_support": {
+    "supported": [
+     "high",
+     "low",
+     "max",
+     "medium",
+     "xhigh"
+    ],
+    "unsupported": {},
+    "control": {
+     "options": [
+      {
+       "value": "low",
+       "label": "Low",
+       "description": "Fast responses with lighter reasoning",
+       "state": "supported"
+      },
+      {
+       "value": "medium",
+       "label": "Medium",
+       "description": "Balances speed and reasoning depth for everyday tasks",
+       "state": "supported"
+      },
+      {
+       "value": "high",
+       "label": "High",
+       "description": "Greater reasoning depth for complex problems",
+       "state": "supported"
+      },
+      {
+       "value": "xhigh",
+       "label": "Extra high",
+       "description": "Extra high reasoning depth for complex problems",
+       "state": "supported"
+      },
+      {
+       "value": "max",
+       "label": "Max",
+       "description": "Maximum reasoning depth for the hardest problems",
+       "state": "supported"
+      }
+     ],
+     "source": "catalog",
+     "default": "medium",
+     "reason": null
+    }
+   },
+   "reasoning_effort_note": null
+  }
+ }
+}

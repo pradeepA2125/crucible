@@ -1,0 +1,1113 @@
+{
+ "model": "luna",
+ "flag": "on",
+ "suite": "discovery",
+ "window": null,
+ "started_utc": "2026-10-19T10:49:34Z",
+ "scenarios": [
+  {
+   "name": "explicit_browser_count",
+   "thread": "chat-502a493c2585",
+   "turns": [
+    {
+     "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+     "tool_calls": [
+      {
+       "t": 4.81,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "browser open navigate page inspect text"
+       }
+      },
+      {
+       "t": 13.53,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "navigate to URL inspect page snapshot accessibility"
+       }
+      },
+      {
+       "t": 18.49,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/"
+       }
+      },
+      {
+       "t": 18.49,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_snapshot",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      16581,
+      18405,
+      19362,
+      20939,
+      30605
+     ],
+     "compactions": [],
+     "answer": "The sidebar lists **50 book categories** (excluding the parent \u201cBooks\u201d link).",
+     "clarify": [],
+     "seconds": 25.8,
+     "usage": {
+      "requests": 5,
+      "input": 105892,
+      "output": 436,
+      "cached": 74496
+     },
+     "unloaded_refusals": 1,
+     "malformed_corrections": 0,
+     "rejected_types": [
+      "tool_calls"
+     ],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15876,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16664,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16929,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17818,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 26796,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "explicit_browser_count",
+   "thread": "chat-109c6f39ef49",
+   "turns": [
+    {
+     "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+     "tool_calls": [],
+     "tool_errors": [],
+     "gates": [],
+     "request_inputs": [
+      16581
+     ],
+     "compactions": [],
+     "answer": "I can count the categories, but browser access isn\u2019t available in the tools currently loaded. If you share a screenshot or the sidebar text, I can count them for you.",
+     "clarify": [],
+     "seconds": 5.1,
+     "usage": {
+      "requests": 1,
+      "input": 16581,
+      "output": 117,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15876,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "explicit_browser_count",
+   "thread": "chat-14ae6e7222e7",
+   "turns": [
+    {
+     "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+     "tool_calls": [
+      {
+       "t": 5.72,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "open URL browser and inspect page content"
+       }
+      },
+      {
+       "t": 11.21,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => { location.href = 'https://books.toscrape.com/'; return 'Navigating to books.toscrape.com'; }"
+       }
+      },
+      {
+       "t": 17.48,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => ({title: document.title, url: location.href, categories: [...document.querySelectorAll('.side_categories ul li ul li a')].map(a => a.textContent.trim())})"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      16581,
+      18517,
+      19584,
+      21043
+     ],
+     "compactions": [],
+     "answer": "The sidebar lists **50 book categories**. I counted the category links on the loaded Books to Scrape homepage.",
+     "clarify": [],
+     "seconds": 22.5,
+     "usage": {
+      "requests": 4,
+      "input": 75725,
+      "output": 372,
+      "cached": 54144
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15876,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16775,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17129,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17865,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "explicit_browser_count",
+   "thread": "chat-80220d5ab262",
+   "turns": [
+    {
+     "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+     "tool_calls": [
+      {
+       "t": 5.44,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "open navigate browser page and inspect text"
+       }
+      },
+      {
+       "t": 9.81,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "browser navigate to URL, inspect page snapshot or evaluate DOM"
+       }
+      },
+      {
+       "t": 14.32,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/"
+       }
+      },
+      {
+       "t": 20.26,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "\u2026"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      16581,
+      18402,
+      19983,
+      21018,
+      22442
+     ],
+     "compactions": [],
+     "answer": "The sidebar lists **50 book categories**.",
+     "clarify": [],
+     "seconds": 26.0,
+     "usage": {
+      "requests": 5,
+      "input": 98426,
+      "output": 433,
+      "cached": 90624
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15876,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16660,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17550,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17900,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 18581,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "explicit_browser_count",
+   "thread": "chat-4251cc8595ce",
+   "turns": [
+    {
+     "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+     "tool_calls": [
+      {
+       "t": 5.32,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "open webpage navigate browser and inspect page content"
+       }
+      },
+      {
+       "t": 10.11,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "browser navigate to URL and inspect accessibility snapshot"
+       }
+      },
+      {
+       "t": 14.51,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/"
+       }
+      },
+      {
+       "t": 18.57,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_snapshot",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      16581,
+      18395,
+      20194,
+      21242,
+      31491
+     ],
+     "compactions": [],
+     "answer": "The sidebar lists **50 book categories** (excluding the parent \u201cBooks\u201d link).",
+     "clarify": [],
+     "seconds": 23.3,
+     "usage": {
+      "requests": 5,
+      "input": 107903,
+      "output": 394,
+      "cached": 75648
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15876,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16653,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17764,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 18127,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 27746,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "explicit_browser_count",
+   "thread": "chat-ad4a2b52505d",
+   "turns": [
+    {
+     "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+     "tool_calls": [
+      {
+       "t": 5.29,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "browser navigate open URL inspect page content"
+       }
+      },
+      {
+       "t": 9.37,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/"
+       }
+      },
+      {
+       "t": 18.33,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "tool_names": [
+         "browser_evaluate"
+        ]
+       }
+      },
+      {
+       "t": 22.78,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => Array.from(document.querySelectorAll('.side_categories a')).map(a => a.textContent.trim()).filter(Boolean)"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      16581,
+      18231,
+      19285,
+      20275,
+      21430,
+      22720
+     ],
+     "compactions": [],
+     "answer": "The sidebar lists **50 book categories** (excluding the \u201cBooks\u201d heading).",
+     "clarify": [],
+     "seconds": 27.8,
+     "usage": {
+      "requests": 6,
+      "input": 118522,
+      "output": 523,
+      "cached": 74752
+     },
+     "unloaded_refusals": 1,
+     "malformed_corrections": 0,
+     "rejected_types": [
+      "tool_calls"
+     ],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15876,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16488,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16849,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17130,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17593,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 18174,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "explicit_browser_count",
+   "thread": "chat-8d9360e59a5a",
+   "turns": [
+    {
+     "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+     "tool_calls": [],
+     "tool_errors": [],
+     "gates": [],
+     "request_inputs": [
+      16581
+     ],
+     "compactions": [],
+     "answer": "I can\u2019t access a live browser from the tools currently available, so I can\u2019t verify the sidebar count directly. If you share a screenshot or the page text, I can count them for you.",
+     "clarify": [],
+     "seconds": 6.0,
+     "usage": {
+      "requests": 1,
+      "input": 16581,
+      "output": 109,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15876,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "explicit_browser_count",
+   "thread": "chat-c5c74e9ff0d1",
+   "turns": [
+    {
+     "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+     "tool_calls": [
+      {
+       "t": 5.72,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "open browser navigate page inspect text"
+       }
+      },
+      {
+       "t": 10.36,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "browser navigate URL and inspect page snapshot"
+       }
+      },
+      {
+       "t": 16.65,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/"
+       }
+      },
+      {
+       "t": 20.97,
+       "tool": "mcp__playwright__browser_find",
+       "args": {
+        "regex": "Categories|Travel|Mystery"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_find",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      16581,
+      18409,
+      20075,
+      21113,
+      22269
+     ],
+     "compactions": [],
+     "answer": "The sidebar lists **50 book categories** (excluding the top-level \u201cBooks\u201d link).",
+     "clarify": [],
+     "seconds": 26.2,
+     "usage": {
+      "requests": 5,
+      "input": 98447,
+      "output": 386,
+      "cached": 91776
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15876,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16669,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17649,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 18002,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 18477,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "explicit_browser_count",
+   "thread": "chat-315d403d2335",
+   "turns": [
+    {
+     "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+     "tool_calls": [
+      {
+       "t": 4.93,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "open browser navigate URL inspect page text"
+       }
+      },
+      {
+       "t": 9.3,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com"
+       }
+      },
+      {
+       "t": 13.56,
+       "tool": "mcp__playwright__browser_find",
+       "args": {
+        "text": "Categories"
+       }
+      },
+      {
+       "t": 19.17,
+       "tool": "mcp__playwright__browser_find",
+       "args": {
+        "regex": "Books|Travel|Mystery"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_find",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_find",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      16581,
+      18193,
+      19234,
+      20139,
+      21416
+     ],
+     "compactions": [],
+     "answer": "The sidebar lists 50 book categories.",
+     "clarify": [],
+     "seconds": 23.5,
+     "usage": {
+      "requests": 5,
+      "input": 95563,
+      "output": 358,
+      "cached": 53504
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15876,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16451,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16801,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17023,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17613,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "explicit_browser_count",
+   "thread": "chat-c25a540b12af",
+   "turns": [
+    {
+     "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+     "tool_calls": [
+      {
+       "t": 5.68,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "open website navigate browser page inspect visible text"
+       }
+      },
+      {
+       "t": 10.11,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "browser navigate open URL goto"
+       }
+      },
+      {
+       "t": 14.37,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com"
+       }
+      },
+      {
+       "t": 18.66,
+       "tool": "mcp__playwright__browser_find",
+       "args": {
+        "text": "Categories"
+       }
+      },
+      {
+       "t": 22.96,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "browser snapshot page content accessibility snapshot"
+       }
+      },
+      {
+       "t": 26.94,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_find",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_snapshot",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      16581,
+      18422,
+      19712,
+      20762,
+      21677,
+      23525,
+      33774
+     ],
+     "compactions": [],
+     "answer": "The sidebar lists **50 book categories**.",
+     "clarify": [],
+     "seconds": 32.3,
+     "usage": {
+      "requests": 7,
+      "input": 154453,
+      "output": 504,
+      "cached": 119680
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15876,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16672,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17270,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17629,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17860,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 19017,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 28628,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "mcp": {
+  "playwright": {
+   "state": "connected",
+   "tools": 25
+  },
+  "everything": {
+   "state": "connected",
+   "tools": 16
+  },
+  "fetch": {
+   "state": "connected",
+   "tools": 1
+  }
+ },
+ "config": {
+  "mcp_enabled": true,
+  "provider": {
+   "backend": "chatgpt",
+   "model": "gpt-6-luna",
+   "uses_chatgpt_plan": true,
+   "context_window": 272000,
+   "reasoning_effort": "medium",
+   "reasoning_effort_support": {
+    "supported": [
+     "high",
+     "low",
+     "max",
+     "medium",
+     "xhigh"
+    ],
+    "unsupported": {},
+    "control": {
+     "options": [
+      {
+       "value": "low",
+       "label": "Low",
+       "description": "Fast responses with lighter reasoning",
+       "state": "supported"
+      },
+      {
+       "value": "medium",
+       "label": "Medium",
+       "description": "Balances speed and reasoning depth for everyday tasks",
+       "state": "supported"
+      },
+      {
+       "value": "high",
+       "label": "High",
+       "description": "Greater reasoning depth for complex problems",
+       "state": "supported"
+      },
+      {
+       "value": "xhigh",
+       "label": "Extra high",
+       "description": "Extra high reasoning depth for complex problems",
+       "state": "supported"
+      },
+      {
+       "value": "max",
+       "label": "Max",
+       "description": "Maximum reasoning depth for the hardest problems",
+       "state": "supported"
+      }
+     ],
+     "source": "catalog",
+     "default": "medium",
+     "reason": null
+    }
+   },
+   "reasoning_effort_note": null
+  }
+ }
+}

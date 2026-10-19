@@ -1,0 +1,1422 @@
+{
+  "model": "luna",
+  "flag": "off",
+  "suite": "discovery",
+  "window": null,
+  "started_utc": "2026-10-19T12:17:55Z",
+  "scenarios": [
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-6106408d15e6",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 5.82,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com"
+              }
+            },
+            {
+              "t": 16.77,
+              "tool": "mcp__playwright__browser_find",
+              "args": {
+                "text": "Categories"
+              }
+            },
+            {
+              "t": 21.15,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_find",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22111,
+            23151,
+            24073,
+            29214
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories** (not counting the \u201cBooks\u201d parent link).",
+          "clarify": [],
+          "seconds": 25.4,
+          "usage": {
+            "requests": 4,
+            "input": 98549,
+            "output": 283,
+            "cached": 68864
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "multistep_first_turn",
+      "thread": "chat-cc4a8078418f",
+      "turns": [
+        {
+          "prompt": "Go to books.toscrape.com, open the Poetry category, and tell me the first book's title and price.",
+          "tool_calls": [
+            {
+              "t": 6.54,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 11.38,
+              "tool": "mcp__playwright__browser_find",
+              "args": {
+                "text": "Poetry"
+              }
+            },
+            {
+              "t": 19.69,
+              "tool": "mcp__playwright__browser_click",
+              "args": {
+                "target": "f1e63",
+                "element": "Poetry category link"
+              }
+            },
+            {
+              "t": 25.03,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {
+                "depth": 5
+              }
+            },
+            {
+              "t": 29.9,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {
+                "depth": 10
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_find",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_click",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22119,
+            23180,
+            24320,
+            25403,
+            26726,
+            36700
+          ],
+          "compactions": [],
+          "answer": "The first book in the Poetry category is **A Light in the Attic**, priced at **\u00a351.77**.",
+          "clarify": [],
+          "seconds": 35.7,
+          "usage": {
+            "requests": 6,
+            "input": 158448,
+            "output": 450,
+            "cached": 120832
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "screenshot",
+      "thread": "chat-719b0313fa2b",
+      "turns": [
+        {
+          "prompt": "Take a screenshot of books.toscrape.com for me.",
+          "tool_calls": [
+            {
+              "t": 5.53,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 11.49,
+              "tool": "mcp__playwright__browser_take_screenshot",
+              "args": {
+                "fullPage": true,
+                "scale": "css",
+                "type": "png"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_take_screenshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22095,
+            23146,
+            24221
+          ],
+          "compactions": [],
+          "answer": "Captured a full-page PNG screenshot of books.toscrape.com: [View screenshot](.playwright-mcp/page-2026-10-19T12-19-10-196Z.png).",
+          "clarify": [],
+          "seconds": 19.2,
+          "usage": {
+            "requests": 3,
+            "input": 69462,
+            "output": 252,
+            "cached": 44800
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-815fda5d0c70",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 4.54,
+              "tool": "mcp__fetch__fetch",
+              "args": {
+                "url": "https://example.com",
+                "max_length": 3000
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "fetch",
+              "server": "fetch",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22085,
+            23020
+          ],
+          "compactions": [],
+          "answer": "I fetched example.com just now. It says: \u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d",
+          "clarify": [],
+          "seconds": 13.6,
+          "usage": {
+            "requests": 2,
+            "input": 45105,
+            "output": 175,
+            "cached": 21888
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-17272c0f0915",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 4.56,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com"
+              }
+            },
+            {
+              "t": 9.31,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22111,
+            23161,
+            33420
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories** (excluding the parent \u201cBooks\u201d link).",
+          "clarify": [],
+          "seconds": 13.8,
+          "usage": {
+            "requests": 3,
+            "input": 78692,
+            "output": 215,
+            "cached": 66816
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "multistep_first_turn",
+      "thread": "chat-cecb1759d586",
+      "turns": [
+        {
+          "prompt": "Go to books.toscrape.com, open the Poetry category, and tell me the first book's title and price.",
+          "tool_calls": [
+            {
+              "t": 5.43,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "http://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 14.92,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            },
+            {
+              "t": 19.75,
+              "tool": "mcp__playwright__browser_click",
+              "args": {
+                "target": "f5e63"
+              }
+            },
+            {
+              "t": 26.34,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            },
+            {
+              "t": 31.85,
+              "tool": "mcp__playwright__browser_find",
+              "args": {
+                "text": "Poetry"
+              }
+            }
+          ],
+          "tool_errors": [
+            {
+              "tool": null,
+              "output": "DUPLICATE BLOCKED (iter 2); reuse visible evidence or request the missing portion."
+            }
+          ],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_click",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_find",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22119,
+            23125,
+            33367,
+            34387,
+            35307,
+            37690
+          ],
+          "compactions": [],
+          "answer": "The first book in the Poetry category is **Quarter Life Poetry: Poems for the Young, Broke and Hangry**, priced at **\u00a350.89**.",
+          "clarify": [],
+          "seconds": 39.5,
+          "usage": {
+            "requests": 6,
+            "input": 185995,
+            "output": 430,
+            "cached": 147200
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "screenshot",
+      "thread": "chat-cdb15279921a",
+      "turns": [
+        {
+          "prompt": "Take a screenshot of books.toscrape.com for me.",
+          "tool_calls": [
+            {
+              "t": 5.6,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com"
+              }
+            },
+            {
+              "t": 10.84,
+              "tool": "mcp__playwright__browser_take_screenshot",
+              "args": {
+                "fullPage": true,
+                "scale": "css",
+                "type": "png"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_take_screenshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22095,
+            23124,
+            24189
+          ],
+          "compactions": [],
+          "answer": "Captured a full-page screenshot of books.toscrape.com: [View screenshot](.playwright-mcp/page-2026-10-19T12-20-39-734Z.png)\n\nRecap: Opened the books.toscrape.com site and captured its full page as a PNG.",
+          "clarify": [],
+          "seconds": 21.4,
+          "usage": {
+            "requests": 3,
+            "input": 69408,
+            "output": 310,
+            "cached": 44800
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-a6295f93c38f",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [],
+          "tool_errors": [],
+          "gates": [],
+          "request_inputs": [
+            22085
+          ],
+          "compactions": [],
+          "answer": "I\u2019ll check example.com now.",
+          "clarify": [],
+          "seconds": 4.6,
+          "usage": {
+            "requests": 1,
+            "input": 22085,
+            "output": 72,
+            "cached": 0
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-30ee3f35c22d",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 4.94,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com"
+              }
+            },
+            {
+              "t": 9.74,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22111,
+            23145,
+            33394
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories**. I counted the category links beneath \u201cBooks.\u201d",
+          "clarify": [],
+          "seconds": 14.4,
+          "usage": {
+            "requests": 3,
+            "input": 78650,
+            "output": 219,
+            "cached": 44800
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "multistep_first_turn",
+      "thread": "chat-07c617d7e394",
+      "turns": [
+        {
+          "prompt": "Go to books.toscrape.com, open the Poetry category, and tell me the first book's title and price.",
+          "tool_calls": [
+            {
+              "t": 6.76,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com"
+              }
+            },
+            {
+              "t": 11.46,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            },
+            {
+              "t": 16.36,
+              "tool": "mcp__playwright__browser_click",
+              "args": {
+                "target": "f9e63"
+              }
+            },
+            {
+              "t": 21.32,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            },
+            {
+              "t": 29.85,
+              "tool": "mcp__playwright__browser_evaluate",
+              "args": {
+                "function": "\u2026"
+              }
+            }
+          ],
+          "tool_errors": [
+            {
+              "tool": null,
+              "output": "DUPLICATE BLOCKED (iter 2); reuse visible evidence or request the missing portion."
+            }
+          ],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_click",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_evaluate",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22119,
+            23173,
+            33424,
+            34488,
+            35418,
+            36564
+          ],
+          "compactions": [],
+          "answer": "The first book in the Poetry category is **A Light in the Attic**, priced at **\u00a351.77**.",
+          "clarify": [],
+          "seconds": 35.0,
+          "usage": {
+            "requests": 6,
+            "input": 185186,
+            "output": 480,
+            "cached": 147712
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "screenshot",
+      "thread": "chat-bf8d3acf819f",
+      "turns": [
+        {
+          "prompt": "Take a screenshot of books.toscrape.com for me.",
+          "tool_calls": [
+            {
+              "t": 6.01,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 11.28,
+              "tool": "mcp__playwright__browser_take_screenshot",
+              "args": {
+                "fullPage": true,
+                "scale": "css",
+                "type": "png"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_take_screenshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22095,
+            23139,
+            24218
+          ],
+          "compactions": [],
+          "answer": "Captured a full-page PNG screenshot of books.toscrape.com: [View screenshot](.playwright-mcp/page-2026-10-19T12-21-59-445Z.png)\n\nRecap: Opened books.toscrape.com and saved a full-page screenshot.",
+          "clarify": [],
+          "seconds": 17.0,
+          "usage": {
+            "requests": 3,
+            "input": 69452,
+            "output": 269,
+            "cached": 66688
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-c441a14bb87a",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 5.64,
+              "tool": "mcp__fetch__fetch",
+              "args": {
+                "url": "https://example.com",
+                "max_length": 5000
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "fetch",
+              "server": "fetch",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22085,
+            23011
+          ],
+          "compactions": [],
+          "answer": "As of the live fetch, example.com says: \u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d",
+          "clarify": [],
+          "seconds": 13.2,
+          "usage": {
+            "requests": 2,
+            "input": 45096,
+            "output": 172,
+            "cached": 42752
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-549a3bf1acde",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 5.44,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com"
+              }
+            },
+            {
+              "t": 10.96,
+              "tool": "mcp__playwright__browser_find",
+              "args": {
+                "text": "Categories"
+              }
+            },
+            {
+              "t": 18.71,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_find",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22111,
+            23161,
+            24068,
+            34315
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists 50 book categories.",
+          "clarify": [],
+          "seconds": 23.5,
+          "usage": {
+            "requests": 4,
+            "input": 103655,
+            "output": 282,
+            "cached": 89728
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "multistep_first_turn",
+      "thread": "chat-d61e98277d7f",
+      "turns": [
+        {
+          "prompt": "Go to books.toscrape.com, open the Poetry category, and tell me the first book's title and price.",
+          "tool_calls": [
+            {
+              "t": 8.76,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com"
+              }
+            },
+            {
+              "t": 14.8,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            },
+            {
+              "t": 20.87,
+              "tool": "mcp__playwright__browser_click",
+              "args": {
+                "target": "f13e63",
+                "element": "Poetry category link"
+              }
+            },
+            {
+              "t": 28.77,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            },
+            {
+              "t": 35.57,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            },
+            {
+              "t": 48.78,
+              "tool": "mcp__playwright__browser_evaluate",
+              "args": {
+                "function": "() => ({url: location.href, title: document.querySelector('h1')?.innerText, book: document.querySelector('article.product_pod')?.innerText})"
+              }
+            }
+          ],
+          "tool_errors": [
+            {
+              "tool": null,
+              "output": "DUPLICATE BLOCKED (iter 2); reuse visible evidence or request the missing portion."
+            },
+            {
+              "tool": null,
+              "output": "DUPLICATE BLOCKED (iter 2); reuse visible evidence or request the missing portion."
+            }
+          ],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_click",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_evaluate",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22119,
+            23157,
+            33401,
+            34469,
+            35375,
+            36292,
+            36409,
+            37529
+          ],
+          "compactions": [],
+          "answer": "The first listing in the Poetry category is **A Light in the Attic** \u2014 **\u00a351.77**.",
+          "clarify": [],
+          "seconds": 58.8,
+          "usage": {
+            "requests": 8,
+            "input": 258751,
+            "output": 607,
+            "cached": 205696
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 1,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "screenshot",
+      "thread": "chat-b237f175d776",
+      "turns": [
+        {
+          "prompt": "Take a screenshot of books.toscrape.com for me.",
+          "tool_calls": [
+            {
+              "t": 4.47,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com"
+              }
+            },
+            {
+              "t": 9.28,
+              "tool": "mcp__playwright__browser_take_screenshot",
+              "args": {
+                "fullPage": true,
+                "scale": "css",
+                "type": "png"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_take_screenshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22095,
+            23135,
+            24199
+          ],
+          "compactions": [],
+          "answer": "Captured a full-page screenshot of books.toscrape.com: [View screenshot](.playwright-mcp/page-2026-10-19T12-23-54-079Z.png)",
+          "clarify": [],
+          "seconds": 15.0,
+          "usage": {
+            "requests": 3,
+            "input": 69429,
+            "output": 257,
+            "cached": 44800
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-aea00dbfcec4",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 6.03,
+              "tool": "mcp__fetch__fetch",
+              "args": {
+                "url": "https://example.com",
+                "max_length": 5000
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "fetch",
+              "server": "fetch",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22085,
+            23018
+          ],
+          "compactions": [],
+          "answer": "example.com currently says: \u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d",
+          "clarify": [],
+          "seconds": 11.3,
+          "usage": {
+            "requests": 2,
+            "input": 45103,
+            "output": 173,
+            "cached": 21888
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-18ea21ce9e78",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 5.09,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com"
+              }
+            },
+            {
+              "t": 11.57,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22111,
+            23159,
+            33411
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories** (not counting the parent \u201cBooks\u201d link).",
+          "clarify": [],
+          "seconds": 15.8,
+          "usage": {
+            "requests": 3,
+            "input": 78681,
+            "output": 233,
+            "cached": 44928
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "multistep_first_turn",
+      "thread": "chat-b8d8531eaeff",
+      "turns": [
+        {
+          "prompt": "Go to books.toscrape.com, open the Poetry category, and tell me the first book's title and price.",
+          "tool_calls": [
+            {
+              "t": 5.96,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 11.02,
+              "tool": "mcp__playwright__browser_find",
+              "args": {
+                "text": "Poetry"
+              }
+            },
+            {
+              "t": 15.97,
+              "tool": "mcp__playwright__browser_click",
+              "args": {
+                "target": "f17e63",
+                "element": "Poetry category link"
+              }
+            },
+            {
+              "t": 20.74,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {
+                "depth": 8
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_find",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_click",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22119,
+            23152,
+            24316,
+            25391,
+            31370
+          ],
+          "compactions": [],
+          "answer": "The first Poetry listing is **A Light in the Attic**. I can\u2019t confirm its price from the snapshot because the price wasn\u2019t included; I\u2019ll check the visible listing details before giving you a price.",
+          "clarify": [],
+          "seconds": 28.8,
+          "usage": {
+            "requests": 5,
+            "input": 126348,
+            "output": 421,
+            "cached": 94336
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "screenshot",
+      "thread": "chat-c95146dab0bb",
+      "turns": [
+        {
+          "prompt": "Take a screenshot of books.toscrape.com for me.",
+          "tool_calls": [
+            {
+              "t": 5.53,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 10.33,
+              "tool": "mcp__playwright__browser_take_screenshot",
+              "args": {
+                "fullPage": true,
+                "scale": "css",
+                "type": "png"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_take_screenshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22095,
+            23146,
+            24211
+          ],
+          "compactions": [],
+          "answer": "Captured a full-page screenshot of books.toscrape.com: [View screenshot](.playwright-mcp/page-2026-10-19T12-25-10-305Z.png)",
+          "clarify": [],
+          "seconds": 18.1,
+          "usage": {
+            "requests": 3,
+            "input": 69452,
+            "output": 269,
+            "cached": 65664
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-1ac15f275694",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 10.07,
+              "tool": "mcp__fetch__fetch",
+              "args": {
+                "url": "https://example.com",
+                "max_length": 5000
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "fetch",
+              "server": "fetch",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22085,
+            22997
+          ],
+          "compactions": [],
+          "answer": "example.com currently says: \u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d",
+          "clarify": [],
+          "seconds": 16.3,
+          "usage": {
+            "requests": 2,
+            "input": 45082,
+            "output": 180,
+            "cached": 42752
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    }
+  ],
+  "mcp": {
+    "playwright": {
+      "state": "connected",
+      "tools": 25
+    },
+    "everything": {
+      "state": "connected",
+      "tools": 16
+    },
+    "fetch": {
+      "state": "connected",
+      "tools": 1
+    }
+  },
+  "config": {
+    "mcp_enabled": true,
+    "provider": {
+      "backend": "chatgpt",
+      "model": "gpt-6-luna",
+      "uses_chatgpt_plan": true,
+      "context_window": 272000,
+      "reasoning_effort": "medium",
+      "reasoning_effort_support": {
+        "supported": [
+          "high",
+          "low",
+          "max",
+          "medium",
+          "xhigh"
+        ],
+        "unsupported": {},
+        "control": {
+          "options": [
+            {
+              "value": "low",
+              "label": "Low",
+              "description": "Fast responses with lighter reasoning",
+              "state": "supported"
+            },
+            {
+              "value": "medium",
+              "label": "Medium",
+              "description": "Balances speed and reasoning depth for everyday tasks",
+              "state": "supported"
+            },
+            {
+              "value": "high",
+              "label": "High",
+              "description": "Greater reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high",
+              "description": "Extra high reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "max",
+              "label": "Max",
+              "description": "Maximum reasoning depth for the hardest problems",
+              "state": "supported"
+            }
+          ],
+          "source": "catalog",
+          "default": "medium",
+          "reason": null
+        }
+      },
+      "reasoning_effort_note": null
+    }
+  }
+}

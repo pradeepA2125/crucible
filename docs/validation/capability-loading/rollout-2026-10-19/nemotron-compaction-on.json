@@ -1,0 +1,474 @@
+{
+ "model": "nemotron",
+ "flag": "on",
+ "suite": "compaction",
+ "window": "45000",
+ "started_utc": "2026-10-19T11:04:56Z",
+ "scenarios": [
+  {
+   "name": "long_browser_session",
+   "thread": "chat-ad3ba768f6d2",
+   "turns": [
+    {
+     "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+     "tool_calls": [
+      {
+       "t": 6.74,
+       "tool": "load_capabilities",
+       "args": {
+        "namespace": "mcp.playwright",
+        "query": "browser navigate click evaluate"
+       }
+      },
+      {
+       "t": 10.64,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/"
+       }
+      },
+      {
+       "t": 32.88,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "\u2026"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      16872,
+      17542,
+      17926,
+      19784
+     ],
+     "compactions": [],
+     "answer": "The sidebar on books.toscrape.com lists **50 book categories**. They are:\n\nTravel, Mystery, Historical Fiction, Sequential Art, Classics, Philosophy, Romance, Womens Fiction, Fiction, Childrens, Religion, Nonfiction, Music, Default, Science Fiction, Sports and Games, Add a comment, Fantasy, New Adult, Young Adult, Science, Poetry, Paranormal, Art, Psychology, Autobiography, Parenting, Adult Fiction, Humor, Horror, History, Food and Drink, Christian Fiction, Business, Biography, Thriller, Contemporary, Spirituality, Academic, Self Help, Historical, Christian, Suspense, Short Stories, Novels, Health, Politics, Cultural, Erotica, Crime\n\nThis count excludes the parent \"Books\" link and only counts the individual category links in the sidebar.",
+     "clarify": [],
+     "seconds": 63.2,
+     "usage": {
+      "requests": 4,
+      "input": 72124,
+      "output": 898,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15876,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16513,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 16839,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 17658,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    },
+    {
+     "prompt": "Open the Travel category and list the book titles there.",
+     "tool_calls": [
+      {
+       "t": 16.59,
+       "tool": "mcp__playwright__browser_click",
+       "args": {
+        "target": "a:has-text('Travel')",
+        "element": "Travel category link in sidebar"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_click",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      20462,
+      20388,
+      20941,
+      21335,
+      21487
+     ],
+     "compactions": [],
+     "answer": "\u2717 Stopped",
+     "clarify": [],
+     "seconds": 600.0,
+     "usage": {
+      "requests": 6,
+      "input": 61791,
+      "output": 863,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 4,
+     "rejected_types": [
+      "tool_calls",
+      "tool_calls"
+     ],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 18267,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 18205,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 18676,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    },
+    {
+     "prompt": "Now the Mystery category: which book on its first page is the most expensive?",
+     "tool_calls": [
+      {
+       "t": 30.37,
+       "tool": "mcp__playwright__browser_click",
+       "args": {
+        "target": "a:has-text('Mystery')",
+        "element": "Mystery category link in sidebar"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_click",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      22063,
+      22289,
+      22425,
+      22704
+     ],
+     "compactions": [],
+     "answer": "\u2717 Stopped",
+     "clarify": [],
+     "seconds": 600.0,
+     "usage": {
+      "requests": 5,
+      "input": 67192,
+      "output": 779,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 3,
+     "rejected_types": [
+      "tool_calls",
+      "tool_calls"
+     ],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 19642,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 19949,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 20182,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    },
+    {
+     "prompt": "Go to the Historical Fiction category and tell me the price of its first book.",
+     "tool_calls": [
+      {
+       "t": 52.41,
+       "tool": "mcp__playwright__browser_click",
+       "args": {
+        "target": "a:has-text('Historical Fiction')",
+        "element": "Historical Fiction category link in sidebar"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_click",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      23551,
+      23401,
+      23679,
+      24093,
+      24477,
+      24622,
+      24756
+     ],
+     "compactions": [],
+     "answer": "\u26a0\ufe0f The turn failed and had to stop: Controller returned 4 consecutive malformed responses (last type='tool_calls')",
+     "clarify": [],
+     "seconds": 116.4,
+     "usage": {
+      "requests": 7,
+      "input": 119480,
+      "output": 1366,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 6,
+     "rejected_types": [
+      "tool_calls",
+      "tool_calls",
+      "tool_calls",
+      "tool_calls"
+     ],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 20917,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 20785,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 21002,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 21352,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 21921,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    },
+    {
+     "prompt": "Click into that book and tell me its UPC.",
+     "tool_calls": [],
+     "tool_errors": [],
+     "gates": [],
+     "request_inputs": [
+      25178,
+      24919,
+      25191,
+      25472
+     ],
+     "compactions": [],
+     "answer": "\u26a0\ufe0f The turn failed and had to stop: Controller returned 4 consecutive malformed responses (last type='tool_calls')",
+     "clarify": [],
+     "seconds": 19.0,
+     "usage": {
+      "requests": 4,
+      "input": 75582,
+      "output": 805,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 4,
+     "rejected_types": [
+      "tool_calls",
+      "tool_calls",
+      "tool_calls"
+     ],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 22056,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 22290,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 22517,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    },
+    {
+     "prompt": "Go back to the home page in the browser. What's the title of the last book on the first page?",
+     "tool_calls": [],
+     "tool_errors": [],
+     "gates": [],
+     "request_inputs": [],
+     "compactions": [],
+     "answer": "\u2717 Stopped",
+     "clarify": [],
+     "seconds": 600.0,
+     "usage": {
+      "requests": 1,
+      "input": 0,
+      "output": 0,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": []
+    }
+   ]
+  }
+ ],
+ "mcp": {
+  "playwright": {
+   "state": "connected",
+   "tools": 25
+  },
+  "everything": {
+   "state": "connected",
+   "tools": 16
+  },
+  "fetch": {
+   "state": "connected",
+   "tools": 1
+  }
+ },
+ "config": {
+  "mcp_enabled": true,
+  "provider": {
+   "backend": "openai_compatible",
+   "model": "nvidia/nemotron-3-ultra-550b-a55b",
+   "uses_chatgpt_plan": false,
+   "context_window": 45000,
+   "reasoning_effort": null,
+   "reasoning_effort_support": {
+    "supported": [],
+    "unsupported": {
+     "max": "OpenAI-compatible endpoints top out at 'high'"
+    },
+    "control": {
+     "options": [
+      {
+       "value": "off",
+       "label": "Off",
+       "description": "",
+       "state": "unknown"
+      },
+      {
+       "value": "low",
+       "label": "Low",
+       "description": "",
+       "state": "unknown"
+      },
+      {
+       "value": "medium",
+       "label": "Medium",
+       "description": "",
+       "state": "unknown"
+      },
+      {
+       "value": "high",
+       "label": "High",
+       "description": "",
+       "state": "unknown"
+      }
+     ],
+     "source": "fallback",
+     "default": null,
+     "reason": null
+    }
+   },
+   "reasoning_effort_note": null
+  }
+ }
+}

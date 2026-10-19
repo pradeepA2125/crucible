@@ -1,0 +1,321 @@
+{
+ "model": "nemotron",
+ "flag": "on",
+ "suite": "main",
+ "window": null,
+ "started_utc": "2026-10-19T11:38:35Z",
+ "scenarios": [
+  {
+   "name": "greeting",
+   "thread": "chat-fc83dc329f36",
+   "turns": [
+    {
+     "prompt": "hi",
+     "tool_calls": [],
+     "tool_errors": [],
+     "gates": [],
+     "request_inputs": [
+      16835
+     ],
+     "compactions": [],
+     "answer": "Hi! How can I help you today?",
+     "clarify": [],
+     "seconds": 8.9,
+     "usage": {
+      "requests": 1,
+      "input": 16835,
+      "output": 185,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15838,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "code_question",
+   "thread": "chat-abbb4c362cc1",
+   "turns": [
+    {
+     "prompt": "Where is the default compaction reserve (in tokens) set for the memory harness, and what is it?",
+     "tool_calls": [
+      {
+       "t": 8.46,
+       "tool": "search_code",
+       "args": {
+        "pattern": "compaction.*reserve|reserve.*compaction"
+       }
+      },
+      {
+       "t": 8.46,
+       "tool": "search_code",
+       "args": {
+        "pattern": "memory.*harness|harness.*memory"
+       }
+      },
+      {
+       "t": 13.95,
+       "tool": "search_code",
+       "args": {
+        "pattern": "COMPACT_RESERVE_TOKENS|compaction.*reserve|reserve_tokens"
+       }
+      },
+      {
+       "t": 13.95,
+       "tool": "read_file",
+       "args": {
+        "path": "services/agentd-py/agentd/memory/config.py"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [],
+     "request_inputs": [
+      16876,
+      22330,
+      27740
+     ],
+     "compactions": [],
+     "answer": "The default compaction reserve is **28,000 tokens**.\n\nIt's set in `services/agentd-py/agentd/memory/config.py` at line 50 in the `MemoryConfig.from_env()` method:\n```python\nreserve_tokens=int(env.get(\"CRUCIBLE_MEMORY_COMPACT_RESERVE_TOKENS\", \"28000\")),\n```\n\nThe environment variable `CRUCIBLE_MEMORY_COMPACT_RESERVE_TOKENS` controls it, with a default value of `28000` (28k tokens). This reserve represents \"room kept above the trigger for the next response\" as documented in CLAUDE.md (the Budget Model section).",
+     "clarify": [],
+     "seconds": 60.6,
+     "usage": {
+      "requests": 3,
+      "input": 66946,
+      "output": 1161,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15878,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 20515,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 24348,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "greeting",
+   "thread": "chat-d75172050fd0",
+   "turns": [
+    {
+     "prompt": "hi",
+     "tool_calls": [],
+     "tool_errors": [],
+     "gates": [],
+     "request_inputs": [
+      17778
+     ],
+     "compactions": [],
+     "answer": "Hi! How can I help you today?",
+     "clarify": [],
+     "seconds": 3.6,
+     "usage": {
+      "requests": 1,
+      "input": 17778,
+      "output": 189,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15838,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "code_question",
+   "thread": "chat-ed3c44a6acab",
+   "turns": [
+    {
+     "prompt": "Where is the default compaction reserve (in tokens) set for the memory harness, and what is it?",
+     "tool_calls": [
+      {
+       "t": 3.19,
+       "tool": "search_code",
+       "args": {
+        "pattern": "compaction reserve",
+        "path_filter": "**"
+       }
+      },
+      {
+       "t": 3.19,
+       "tool": "search_code",
+       "args": {
+        "pattern": "memory harness",
+        "path_filter": "**"
+       }
+      },
+      {
+       "t": 6.92,
+       "tool": "search_code",
+       "args": {
+        "pattern": "compaction.*reserve|reserve.*compaction|COMPACTION_RESERVE",
+        "path_filter": "**"
+       }
+      },
+      {
+       "t": 6.92,
+       "tool": "search_code",
+       "args": {
+        "pattern": "harness\\.py",
+        "path_filter": "**/memory/**"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [],
+     "request_inputs": [
+      17819,
+      20523,
+      23421
+     ],
+     "compactions": [],
+     "answer": "The default compaction reserve for the memory harness is **28,000 tokens**, set via the environment variable `CRUCIBLE_MEMORY_COMPACT_RESERVE_TOKENS` (documented in CLAUDE.md line 799).",
+     "clarify": [],
+     "seconds": 10.3,
+     "usage": {
+      "requests": 3,
+      "input": 61763,
+      "output": 787,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 15878,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 18199,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      },
+      {
+       "est_tokens": 20644,
+       "system_tokens": 14874,
+       "tool_catalog_chars": 21903,
+       "mcp_guidance_chars": 0,
+       "capability_directory_chars": 1170
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "mcp": {
+  "playwright": {
+   "state": "connected",
+   "tools": 25
+  },
+  "everything": {
+   "state": "connected",
+   "tools": 16
+  },
+  "fetch": {
+   "state": "connected",
+   "tools": 1
+  }
+ },
+ "config": {
+  "mcp_enabled": true,
+  "provider": {
+   "backend": "openai_compatible",
+   "model": "nvidia/nemotron-3-ultra-550b-a55b",
+   "uses_chatgpt_plan": false,
+   "context_window": 128000,
+   "reasoning_effort": null,
+   "reasoning_effort_support": {
+    "supported": [],
+    "unsupported": {
+     "max": "OpenAI-compatible endpoints top out at 'high'"
+    },
+    "control": {
+     "options": [
+      {
+       "value": "off",
+       "label": "Off",
+       "description": "",
+       "state": "unknown"
+      },
+      {
+       "value": "low",
+       "label": "Low",
+       "description": "",
+       "state": "unknown"
+      },
+      {
+       "value": "medium",
+       "label": "Medium",
+       "description": "",
+       "state": "unknown"
+      },
+      {
+       "value": "high",
+       "label": "High",
+       "description": "",
+       "state": "unknown"
+      }
+     ],
+     "source": "fallback",
+     "default": null,
+     "reason": null
+    }
+   },
+   "reasoning_effort_note": null
+  }
+ }
+}

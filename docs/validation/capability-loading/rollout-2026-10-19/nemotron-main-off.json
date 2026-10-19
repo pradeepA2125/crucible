@@ -1,0 +1,785 @@
+{
+ "model": "nemotron",
+ "flag": "off",
+ "suite": "main",
+ "window": null,
+ "started_utc": "2026-10-19T10:01:08Z",
+ "scenarios": [
+  {
+   "name": "greeting",
+   "thread": "chat-fe46ebec0b51",
+   "turns": [
+    {
+     "prompt": "hi",
+     "tool_calls": [],
+     "tool_errors": [],
+     "gates": [],
+     "request_inputs": [
+      24370,
+      22513
+     ],
+     "compactions": [],
+     "answer": "Hi! How can I help you today?",
+     "clarify": [],
+     "seconds": 13.3,
+     "usage": {
+      "requests": 2,
+      "input": 22513,
+      "output": 99,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 1,
+     "rejected_types": [],
+     "provider_retries": 1,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 21129,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "code_question",
+   "thread": "chat-c809d91bbaa5",
+   "turns": [
+    {
+     "prompt": "Where is the default compaction reserve (in tokens) set for the memory harness, and what is it?",
+     "tool_calls": [],
+     "tool_errors": [],
+     "gates": [],
+     "request_inputs": [],
+     "compactions": [],
+     "answer": "\u2717 Stopped",
+     "clarify": [],
+     "seconds": 600.0,
+     "usage": {
+      "requests": 1,
+      "input": 0,
+      "output": 0,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": []
+    }
+   ]
+  },
+  {
+   "name": "vague_browser",
+   "thread": "chat-ae913d4e50cf",
+   "turns": [
+    {
+     "prompt": "what does example.com say right now?",
+     "tool_calls": [
+      {
+       "t": 16.22,
+       "tool": "mcp__fetch__fetch",
+       "args": {
+        "url": "https://example.com",
+        "max_length": 5000
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "fetch",
+       "server": "fetch",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      23735,
+      23593
+     ],
+     "compactions": [],
+     "answer": "example.com currently says:\n\n> \"This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\"",
+     "clarify": [],
+     "seconds": 25.7,
+     "usage": {
+      "requests": 2,
+      "input": 47328,
+      "output": 369,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 21380,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 21247,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "browser_multistep",
+   "thread": "chat-6e36f2120084",
+   "turns": [
+    {
+     "prompt": "Go to books.toscrape.com, open the Poetry category, and tell me the first book's title and price.",
+     "tool_calls": [
+      {
+       "t": 10.63,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "http://books.toscrape.com/"
+       }
+      },
+      {
+       "t": 22.3,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      },
+      {
+       "t": 28.28,
+       "tool": "mcp__playwright__browser_click",
+       "args": {
+        "target": "e62"
+       }
+      },
+      {
+       "t": 28.28,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      },
+      {
+       "t": 35.51,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      },
+      {
+       "t": 59.21,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "http://books.toscrape.com/catalogue/category/books/poetry_23/index.html"
+       }
+      },
+      {
+       "t": 65.04,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      },
+      {
+       "t": 95.96,
+       "tool": "read_file",
+       "args": {
+        "path": ".playwright-mcp/page-2026-10-19T10-12-51-336Z.yml"
+       }
+      },
+      {
+       "t": 107.59,
+       "tool": "read_file",
+       "args": {
+        "path": ".playwright-mcp/page-2026-10-19T10-12-51-336Z.yml"
+       }
+      },
+      {
+       "t": 110.58,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      },
+      {
+       "t": 157.94,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      }
+     ],
+     "tool_errors": [
+      {
+       "tool": null,
+       "output": "DUPLICATE BLOCKED (iter 2); reuse visible evidence or request the missing portion."
+      },
+      {
+       "tool": null,
+       "output": "DUPLICATE BLOCKED (iter 2); reuse visible evidence or request the missing portion."
+      },
+      {
+       "tool": null,
+       "output": "DUPLICATE BLOCKED (iter 2); reuse visible evidence or request the missing portion."
+      },
+      {
+       "tool": null,
+       "output": "Error: file not found: .playwright-mcp/page-2026-10-19T10-12-51-336Z.yml"
+      },
+      {
+       "tool": null,
+       "output": "DUPLICATE BLOCKED (iter 9): the file is unchanged since that read and its content is above; work from it. A narrower or shifted range returns the same lines. Read again only a specific start_line/end_line range your earlier reads do not already cover."
+      },
+      {
+       "tool": null,
+       "output": "DUPLICATE BLOCKED (iter 2); reuse visible evidence or request the missing portion."
+      },
+      {
+       "tool": null,
+       "output": "DUPLICATE BLOCKED (iter 2); reuse visible evidence or request the missing portion."
+      }
+     ],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_snapshot",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_click",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      23767,
+      23687,
+      33735,
+      34239,
+      34483,
+      34907,
+      35267,
+      35499,
+      35735,
+      35995,
+      36139,
+      36428,
+      36672,
+      36907,
+      37334,
+      37588,
+      37830
+     ],
+     "compactions": [],
+     "answer": "\u2717 Stopped",
+     "clarify": [],
+     "seconds": 600.0,
+     "usage": {
+      "requests": 18,
+      "input": 550217,
+      "output": 6106,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 7,
+     "rejected_types": [
+      "tool_calls",
+      "tool_calls",
+      "tool_calls",
+      "tool_calls",
+      "tool_calls",
+      "tool_calls"
+     ],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 21414,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 21354,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 29985,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 30419,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 30611,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 30953,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 31248,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 31448,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 31634,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 31963,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 32192,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 32387,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 32567,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 32920,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 33124,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 33315,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    },
+    {
+     "prompt": "Open that book's page. How many copies are in stock?",
+     "tool_calls": [
+      {
+       "t": 5.0,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      },
+      {
+       "t": 23.97,
+       "tool": "mcp__playwright__browser_click",
+       "args": {
+        "target": "f1e145"
+       }
+      },
+      {
+       "t": 83.4,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      },
+      {
+       "t": 90.59,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      },
+      {
+       "t": 137.0,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      }
+     ],
+     "tool_errors": [
+      {
+       "tool": null,
+       "output": "DUPLICATE BLOCKED (iter 1); reuse visible evidence or request the missing portion."
+      },
+      {
+       "tool": null,
+       "output": "DUPLICATE BLOCKED (iter 1); reuse visible evidence or request the missing portion."
+      },
+      {
+       "tool": null,
+       "output": "DUPLICATE BLOCKED (iter 1); reuse visible evidence or request the missing portion."
+      }
+     ],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_snapshot",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_click",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      38480,
+      48394,
+      48750,
+      48974,
+      49227,
+      49474,
+      49700,
+      49929,
+      50172,
+      50297,
+      50537,
+      50792,
+      51071,
+      51347
+     ],
+     "compactions": [],
+     "answer": "\u26a0\ufe0f The turn failed and had to stop: Controller failed 4 consecutive times \u2014 last error: OpenAI-compatible output is not valid JSON for controller_step_response (Expecting ',' delimiter: line 1 column 12 (char 11)). Near the error: {\"type\":\"{\"\u25c0HERE\u25b6tool_calls\":[{\"id\":\"get_book_stock\",\"tool\":\"mcp__playwright__browser_s\u2026",
+     "clarify": [],
+     "seconds": 212.2,
+     "usage": {
+      "requests": 14,
+      "input": 585625,
+      "output": 3492,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 9,
+     "rejected_types": [
+      "tool_calls",
+      "tool_calls",
+      "tool_calls",
+      "tool_calls",
+      "tool_calls",
+      "tool_calls",
+      "tool_calls"
+     ],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 33874,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 42472,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 42769,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 42947,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 43145,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 43355,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 43540,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 43735,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 44025,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 44211,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 44411,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 44627,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "denied_gate",
+   "thread": "chat-588e1179c964",
+   "turns": [
+    {
+     "prompt": "Take a screenshot of books.toscrape.com for me.",
+     "tool_calls": [
+      {
+       "t": 4.32,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com"
+       }
+      },
+      {
+       "t": 4.32,
+       "tool": "mcp__playwright__browser_take_screenshot",
+       "args": {
+        "scale": "css",
+        "fullPage": true
+       }
+      },
+      {
+       "t": 61.74,
+       "tool": "mcp__fetch__fetch",
+       "args": {
+        "url": "https://books.toscrape.com",
+        "max_length": 5000
+       }
+      }
+     ],
+     "tool_errors": [
+      {
+       "tool": null,
+       "output": "MCP tool call rejected by user: playwright.browser_navigate. Do not retry the same call \u2014 adapt your approach or ask."
+      },
+      {
+       "tool": null,
+       "output": "Not executed: unsuccessful dependencies: navigate"
+      },
+      {
+       "tool": null,
+       "output": "MCP tool call rejected by user: fetch.fetch. Do not retry the same call \u2014 adapt your approach or ask."
+      }
+     ],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "reject"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "fetch",
+       "server": "fetch",
+       "decision": "reject"
+      }
+     ],
+     "request_inputs": [
+      23743,
+      23772,
+      23942,
+      24195,
+      24278,
+      24528,
+      24943,
+      25426,
+      25686
+     ],
+     "compactions": [],
+     "answer": "I'm unable to take a screenshot of books.toscrape.com because both available methods for accessing external websites have been rejected:\n\n1. **Playwright browser tools** (navigate + screenshot) - rejected by user\n2. **Fetch tool** (HTTP request) - rejected by user\n\nSince you've declined both approaches, I don't have a way to access the website to capture a screenshot. Could you clarify if there's a specific approach you'd prefer, or if this should be done differently?",
+     "clarify": [
+      "The Playwright browser tools were rejected. Would you like me to try navigating to books.toscrape.com again, or would you prefer a different approach (like fetching the page content as text/markdown)?"
+     ],
+     "seconds": 94.9,
+     "usage": {
+      "requests": 9,
+      "input": 172546,
+      "output": 2730,
+      "cached": 0
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 5,
+     "rejected_types": [
+      "tool_calls",
+      "tool_calls",
+      "tool_calls"
+     ],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 21390,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 21546,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "mcp": {
+  "playwright": {
+   "state": "connected",
+   "tools": 25
+  },
+  "everything": {
+   "state": "connected",
+   "tools": 16
+  },
+  "fetch": {
+   "state": "connected",
+   "tools": 1
+  }
+ },
+ "config": {
+  "mcp_enabled": true,
+  "provider": {
+   "backend": "openai_compatible",
+   "model": "nvidia/nemotron-3-ultra-550b-a55b",
+   "uses_chatgpt_plan": false,
+   "context_window": 128000,
+   "reasoning_effort": null,
+   "reasoning_effort_support": {
+    "supported": [],
+    "unsupported": {
+     "max": "OpenAI-compatible endpoints top out at 'high'"
+    },
+    "control": {
+     "options": [
+      {
+       "value": "off",
+       "label": "Off",
+       "description": "",
+       "state": "unknown"
+      },
+      {
+       "value": "low",
+       "label": "Low",
+       "description": "",
+       "state": "unknown"
+      },
+      {
+       "value": "medium",
+       "label": "Medium",
+       "description": "",
+       "state": "unknown"
+      },
+      {
+       "value": "high",
+       "label": "High",
+       "description": "",
+       "state": "unknown"
+      }
+     ],
+     "source": "fallback",
+     "default": null,
+     "reason": null
+    }
+   },
+   "reasoning_effort_note": null
+  }
+ }
+}

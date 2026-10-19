@@ -19,12 +19,12 @@ _MAX_QUERY_CHARS = 1600
 LOAD_CAPABILITIES = ToolDefinition(
     name=LOADER_TOOL,
     description=(
-        "Load the tool schemas of a deferred namespace from OPTIONAL CAPABILITIES. The "
-        "result is the schemas, not an execution: the loaded tools are callable from your "
-        "next step. Call it alone in its step. Give only `namespace` to load a small server "
-        "whole, `query` to pick the tools matching a few words, or exact unprefixed "
-        "`tool_names`. Loading grants no permission: every call still goes through the "
-        "usual approval."
+        "Load the tool schemas of a deferred namespace from OPTIONAL CAPABILITIES. Give just "
+        "`namespace`: that loads every tool of the server. The result is the schemas, not an "
+        "execution: the loaded tools are callable from your next step. Call it alone in its "
+        "step. Only when a whole-namespace load is refused as bundle_too_large, retry with a "
+        "`query` (a few words naming the tools you need) or exact unprefixed `tool_names`. "
+        "Loading grants no permission: every call still goes through the usual approval."
     ),
     parameters={
         "type": "object",
@@ -105,6 +105,7 @@ class CapabilityToolSource:
         bundle = render_bundle(namespace, selected, guidance)
         if len(bundle) > MAX_BUNDLE_CHARS:
             return _error(f"bundle_too_large: {len(selected)} tools of {namespace} come to "
-                          f"{len(bundle)} characters (limit {MAX_BUNDLE_CHARS}). Ask for a "
-                          "`query` or fewer `tool_names`.")
+                          f"{len(bundle)} characters (limit {MAX_BUNDLE_CHARS}). Retry with a "
+                          "`query` naming the tools you need, or exact unprefixed `tool_names` "
+                          "from the namespace's directory line.")
         return ToolOutput(output=bundle, whole=True)

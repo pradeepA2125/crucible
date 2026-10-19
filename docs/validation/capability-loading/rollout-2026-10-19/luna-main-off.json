@@ -1,0 +1,543 @@
+{
+ "model": "luna",
+ "flag": "off",
+ "suite": "main",
+ "window": null,
+ "started_utc": "2026-10-19T10:01:10Z",
+ "scenarios": [
+  {
+   "name": "greeting",
+   "thread": "chat-93d4e47bf68b",
+   "turns": [
+    {
+     "prompt": "hi",
+     "tool_calls": [],
+     "tool_errors": [],
+     "gates": [],
+     "request_inputs": [
+      22072,
+      21792
+     ],
+     "compactions": [],
+     "answer": "Hi! What can I help you with?",
+     "clarify": [],
+     "seconds": 7.3,
+     "usage": {
+      "requests": 2,
+      "input": 43864,
+      "output": 66,
+      "cached": 20864
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 1,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 21122,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "code_question",
+   "thread": "chat-875e2a1e1095",
+   "turns": [
+    {
+     "prompt": "Where is the default compaction reserve (in tokens) set for the memory harness, and what is it?",
+     "tool_calls": [
+      {
+       "t": 8.97,
+       "tool": "search_code",
+       "args": {
+        "pattern": "compaction reserve|compaction_reserve|reserve.*tokens|reserve_tokens",
+        "context_lines": 3
+       }
+      },
+      {
+       "t": 17.97,
+       "tool": "read_file",
+       "args": {
+        "path": "CLAUDE.md",
+        "start_line": 648,
+        "end_line": 653
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [],
+     "request_inputs": [
+      22113,
+      21816,
+      24873,
+      27163
+     ],
+     "compactions": [],
+     "answer": "The memory-harness default is documented in `CLAUDE.md` at line 652: `reserve_tokens` defaults to **28,000 tokens**. It participates in the compaction trigger as `max(window \u00d7 trigger_frac, window \u2212 reserve_tokens)`.",
+     "clarify": [],
+     "seconds": 22.9,
+     "usage": {
+      "requests": 4,
+      "input": 95965,
+      "output": 360,
+      "cached": 67200
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 1,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 21145,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 23432,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 24980,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "vague_browser",
+   "thread": "chat-69e5626cc8d7",
+   "turns": [
+    {
+     "prompt": "what does example.com say right now?",
+     "tool_calls": [
+      {
+       "t": 5.29,
+       "tool": "mcp__fetch__fetch",
+       "args": {
+        "url": "https://example.com",
+        "max_length": 5000
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "fetch",
+       "server": "fetch",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      22085,
+      23008
+     ],
+     "compactions": [],
+     "answer": "example.com currently says: \u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d",
+     "clarify": [],
+     "seconds": 13.9,
+     "usage": {
+      "requests": 2,
+      "input": 45093,
+      "output": 177,
+      "cached": 21888
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 21380,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 21281,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "browser_multistep",
+   "thread": "chat-6bea59ee9a5e",
+   "turns": [
+    {
+     "prompt": "Go to books.toscrape.com, open the Poetry category, and tell me the first book's title and price.",
+     "tool_calls": [
+      {
+       "t": 4.74,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com"
+       }
+      },
+      {
+       "t": 15.8,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      },
+      {
+       "t": 19.95,
+       "tool": "mcp__playwright__browser_click",
+       "args": {
+        "target": "e63"
+       }
+      },
+      {
+       "t": 25.25,
+       "tool": "mcp__playwright__browser_snapshot",
+       "args": {}
+      },
+      {
+       "t": 30.13,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => document.querySelector('article.product_pod h3 a')?.getAttribute('title') + ' | ' + document.querySelector('article.product_pod .price_color')?.textContent"
+       }
+      }
+     ],
+     "tool_errors": [
+      {
+       "tool": null,
+       "output": "DUPLICATE BLOCKED (iter 2); reuse visible evidence or request the missing portion."
+      }
+     ],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_snapshot",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_click",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      22119,
+      23171,
+      32502,
+      33546,
+      34456,
+      35534
+     ],
+     "compactions": [],
+     "answer": "The first book shown in the Poetry category is **A Light in the Attic**, priced at **\u00a351.77**.",
+     "clarify": [],
+     "seconds": 35.9,
+     "usage": {
+      "requests": 6,
+      "input": 181328,
+      "output": 464,
+      "cached": 145024
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 21414,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 21421,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 30111,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 30466,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 30692,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 31038,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    },
+    {
+     "prompt": "Open that book's page. How many copies are in stock?",
+     "tool_calls": [
+      {
+       "t": 6.21,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html"
+       }
+      },
+      {
+       "t": 11.48,
+       "tool": "mcp__playwright__browser_evaluate",
+       "args": {
+        "function": "() => document.querySelector('.instock.availability')?.textContent.trim()"
+       }
+      }
+     ],
+     "tool_errors": [],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "approve"
+      },
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_evaluate",
+       "server": "playwright",
+       "decision": "approve"
+      }
+     ],
+     "request_inputs": [
+      36645,
+      37768,
+      38769
+     ],
+     "compactions": [],
+     "answer": "The book page shows **22 copies available**.",
+     "clarify": [],
+     "seconds": 19.0,
+     "usage": {
+      "requests": 3,
+      "input": 113182,
+      "output": 236,
+      "cached": 109440
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 31519,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 31562,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 31839,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "denied_gate",
+   "thread": "chat-2f7cfbce523b",
+   "turns": [
+    {
+     "prompt": "Take a screenshot of books.toscrape.com for me.",
+     "tool_calls": [
+      {
+       "t": 5.25,
+       "tool": "mcp__playwright__browser_navigate",
+       "args": {
+        "url": "https://books.toscrape.com"
+       }
+      }
+     ],
+     "tool_errors": [
+      {
+       "tool": null,
+       "output": "MCP tool call rejected by user: playwright.browser_navigate. Do not retry the same call \u2014 adapt your approach or ask."
+      }
+     ],
+     "gates": [
+      {
+       "kind": "mcp_tool",
+       "tool": "browser_navigate",
+       "server": "playwright",
+       "decision": "reject"
+      }
+     ],
+     "request_inputs": [
+      22095,
+      23035
+     ],
+     "compactions": [],
+     "answer": "I couldn\u2019t take the screenshot because the browser navigation request to books.toscrape.com was denied. If you\u2019d like, allow the browser request and I can try again.",
+     "clarify": [],
+     "seconds": 10.8,
+     "usage": {
+      "requests": 2,
+      "input": 45130,
+      "output": 189,
+      "cached": 42752
+     },
+     "unloaded_refusals": 0,
+     "malformed_corrections": 0,
+     "rejected_types": [],
+     "provider_retries": 0,
+     "overflow": 0,
+     "artifact_requests": [
+      {
+       "est_tokens": 21390,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      },
+      {
+       "est_tokens": 21294,
+       "system_tokens": 20404,
+       "tool_catalog_chars": 47519,
+       "mcp_guidance_chars": 686,
+       "capability_directory_chars": 0
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "mcp": {
+  "playwright": {
+   "state": "connected",
+   "tools": 25
+  },
+  "everything": {
+   "state": "connected",
+   "tools": 16
+  },
+  "fetch": {
+   "state": "connected",
+   "tools": 1
+  }
+ },
+ "config": {
+  "mcp_enabled": true,
+  "provider": {
+   "backend": "chatgpt",
+   "model": "gpt-6-luna",
+   "uses_chatgpt_plan": true,
+   "context_window": 272000,
+   "reasoning_effort": "medium",
+   "reasoning_effort_support": {
+    "supported": [
+     "high",
+     "low",
+     "max",
+     "medium",
+     "xhigh"
+    ],
+    "unsupported": {},
+    "control": {
+     "options": [
+      {
+       "value": "low",
+       "label": "Low",
+       "description": "Fast responses with lighter reasoning",
+       "state": "supported"
+      },
+      {
+       "value": "medium",
+       "label": "Medium",
+       "description": "Balances speed and reasoning depth for everyday tasks",
+       "state": "supported"
+      },
+      {
+       "value": "high",
+       "label": "High",
+       "description": "Greater reasoning depth for complex problems",
+       "state": "supported"
+      },
+      {
+       "value": "xhigh",
+       "label": "Extra high",
+       "description": "Extra high reasoning depth for complex problems",
+       "state": "supported"
+      },
+      {
+       "value": "max",
+       "label": "Max",
+       "description": "Maximum reasoning depth for the hardest problems",
+       "state": "supported"
+      }
+     ],
+     "source": "catalog",
+     "default": "medium",
+     "reason": null
+    }
+   },
+   "reasoning_effort_note": null
+  }
+ }
+}

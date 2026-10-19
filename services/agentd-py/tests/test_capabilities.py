@@ -36,10 +36,10 @@ def test_split_routes_mcp_tools_to_their_server():
 
 
 def test_directory_lines():
-    many = [_d(f"mcp__big__t{i:02d}") for i in range(12)]
+    many = [_d(f"mcp__big__t{i:02d}") for i in range(42)]
     text = render_directory({"mcp.web": [_d("mcp__web__fetch")], "mcp.big": many})
     assert text.splitlines() == [
-        "- mcp.big (12 tools): t00, t01, t02, t03, t04, t05, t06, t07, t08, t09, +2 more",
+        "- mcp.big (42 tools): " + ", ".join(f"t{i:02d}" for i in range(40)) + ", +2 more",
         "- mcp.web (1 tool): fetch",
     ]
     assert render_directory({}) == ""
@@ -246,6 +246,15 @@ async def test_bundle_too_large_activates_nothing():
     out = await CapabilityToolSource(session).execute("load_capabilities", {"namespace": "mcp.big"})
     assert out.is_error and "bundle_too_large" in out.output
     assert "capability_bundle" not in out.output
+    assert "retry" in out.output.lower()
+    assert "`query`" in out.output and "`tool_names`" in out.output
+
+
+def test_loader_description_defaults_to_the_whole_namespace():
+    text = LOAD_CAPABILITIES.description
+    assert "every tool" in text
+    # query/tool_names are the fallback after a too-large refusal, not a first choice.
+    assert text.index("bundle_too_large") < text.index("`query`")
 
 
 @pytest.mark.asyncio
