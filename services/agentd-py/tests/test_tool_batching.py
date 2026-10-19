@@ -290,6 +290,56 @@ def test_restart_closes_only_abandoned_members_without_replaying():
     assert original[1]["status"] == "pending"
 
 
+class _BatchIdEchoEngine(ScriptedReasoningEngine):
+    """Copies the batch_id of the last persisted tool_calls action into its next batch, as
+    nemotron on NIM does when it reads its own history."""
+
+    def __init__(self):
+        super().__init__(None, [], controller_step_responses=[{"type": "answer", "answer": "x"}])
+        self.steps = 0
+
+    async def create_controller_step(self, plan_context, history, tool_definitions, **kwargs):
+        self.steps += 1
+        if self.steps > 1:
+            return {"type": "answer", "answer": "done"}
+        echoed = next(json.loads(h["content"])["batch_id"] for h in reversed(history)
+                      if h["role"] == "assistant"
+                      and json.loads(h["content"]).get("type") == "tool_calls")
+        return {"type": "tool_calls", "thought": "next", "batch_id": echoed,
+                "calls": [{"id": "b", "tool": "read_file", "args": {"path": "b.py"}}]}
+
+
+@pytest.mark.asyncio
+async def test_echoed_batch_id_from_replayed_history_is_ignored(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRUCIBLE_TOOL_BATCHING_ENABLED", "1")
+    for name in ("a.py", "b.py"):
+        (tmp_path / name).write_text(name)
+    seed = [
+        {"role": "assistant", "content": json.dumps({
+            "type": "tool_calls", "batch_id": "bold",
+            "calls": [{"id": "a", "tool": "read_file", "args": {"path": "a.py"}}]})},
+        {"role": "tool_result", "tool": "read_file", "call_id": "bold_a", "batch_id": "bold",
+         "id": "a", "status": "success", "is_error": False, "content": "a.py"},
+    ]
+    registry = AggregatingToolRegistry(
+        [BuiltinToolSource(shadow_root=tmp_path, real_workspace_path=tmp_path)]
+    )
+    loop = ControllerLoop(_BatchIdEchoEngine(), registry, EventBroadcaster(), channel_id="echo",
+                          phase_sm=ControllerPhaseSM())
+    result = await loop.run({"goal": "read b", "workspace_path": str(tmp_path)},
+                            max_iters=4, seed_history=seed)
+    new = result.history[len(seed):]
+    assert not any("Invalid tool batch" in str(h.get("content")) for h in new)
+    action = json.loads(new[0]["content"])
+    assert action["type"] == "tool_calls" and action["batch_id"] not in {"", "bold"}
+    results = [h for h in new if h["role"] == "tool_result"]
+    assert [(h["id"], h["batch_id"], h["status"]) for h in results] == [
+        ("b", action["batch_id"], "success")]
+    # The planner-context pairing still matches each batch to its own results.
+    assert [e["args"] for e in _explore_context_from_history(result.history)] == [
+        {"path": "a.py"}, {"path": "b.py"}]
+
+
 @pytest.mark.asyncio
 async def test_dispatch_wait_does_not_deadlock_children_using_same_pool(tmp_path):
     pool = ExecutionPool(1)

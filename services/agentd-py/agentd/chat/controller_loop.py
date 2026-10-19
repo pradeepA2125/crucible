@@ -1953,6 +1953,13 @@ class ControllerLoop:
                 _fold_call_tokens_into_turn()
 
             atype = str(resp.get("type", ""))
+            # batch_id is loop-owned: _execute_batch stamps a fresh one on every persisted
+            # tool_calls action, and _explore_context_from_history, the native replay and
+            # restart recovery all pair results by it. Models that read their own history
+            # (nemotron on NIM) copy it into their next action, which the tool_calls
+            # mixed-field check then rejected. Drop it here so an echo is never rejected
+            # and never survives into history; the persisted id always comes from the loop.
+            resp.pop("batch_id", None)
             if getattr(self._memory_harness, "recall_v2", False) and self._agent is None and (
                 atype in {"answer", "submit_changes"}
             ):
