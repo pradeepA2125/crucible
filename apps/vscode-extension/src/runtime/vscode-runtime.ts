@@ -50,6 +50,7 @@ const SETTING_ENV_MAP: Record<string, string> = {
   "crucible.performance.toolBatching": "CRUCIBLE_TOOL_BATCHING_ENABLED",
   "crucible.performance.adaptiveReads": "CRUCIBLE_ADAPTIVE_READS_ENABLED",
   "crucible.performance.compactContext": "CRUCIBLE_COMPACT_CONTEXT_ENABLED",
+  "crucible.performance.mcpOnDemand": "CRUCIBLE_CAPABILITY_LOADING_ENABLED",
   "crucible.webSearch.enabled": "CRUCIBLE_WEB_SEARCH_ENABLED",
   "crucible.webFetch.enabled": "CRUCIBLE_WEB_FETCH_ENABLED",
   "crucible.memory.enabled": "CRUCIBLE_MEMORY_ENABLED",

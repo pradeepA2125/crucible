@@ -52,3 +52,31 @@ describe.each([
     expect(env[envKey]).toBe(value === undefined ? "1" : String(value));
   });
 });
+
+describe("crucible.performance.mcpOnDemand", () => {
+  const key = "crucible.performance.mcpOnDemand";
+  const envKey = "CRUCIBLE_CAPABILITY_LOADING_ENABLED";
+
+  it("is declared off by default", () => {
+    const property = manifest.contributes.configuration.properties[key];
+    expect(property.type).toBe("boolean");
+    expect(property.default).toBe(false);
+  });
+
+  it.each([
+    [undefined, undefined],
+    [true, "true"],
+    [false, "false"],
+  ])("setting %s maps to %s", (value, expected) => {
+    getConfiguration.mockReturnValue({
+      inspect: (setting: string) => setting === key ? { globalValue: value } : undefined,
+      get: (setting: string, fallback?: unknown) => setting === key ? value : fallback,
+    });
+    const mapper = RuntimeManager.prototype as unknown as {
+      extraEnvFromSettings(): Record<string, string>;
+    };
+    const extraEnv = mapper.extraEnvFromSettings();
+    const env = buildBackendEnv("/ws", { backend: "gemini", model: "m", extraEnv }, "/rt", "darwin-arm64");
+    expect(env[envKey]).toBe(expected);
+  });
+});
