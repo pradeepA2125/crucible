@@ -43,5 +43,6 @@ def render_directory(namespaces: dict[str, list[dict[str, object]]]) -> str:
         shown = ", ".join(names[:_DIRECTORY_NAMES])
         more = len(names) - _DIRECTORY_NAMES
         suffix = f", +{more} more" if more > 0 else ""
-        lines.append(f"- {ns} ({len(names)} tools): {shown}{suffix}")
+        count = f"{len(names)} tool" if len(names) == 1 else f"{len(names)} tools"
+        lines.append(f"- {ns} ({count}): {shown}{suffix}")
     return "\n".join(lines)

@@ -23,11 +23,12 @@ FETCH = ToolDefinition(name="mcp__web__fetch", description="Fetch a URL",
 
 
 class _Manager:
-    def __init__(self) -> None:
+    def __init__(self, defs: list[ToolDefinition] | None = None) -> None:
         self.calls: list[tuple[str, str, dict]] = []
+        self._defs = defs if defs is not None else [FETCH]
 
     def tool_definitions(self) -> list[ToolDefinition]:
-        return [FETCH]
+        return list(self._defs)
 
     def refusal(self, server: str, tool: str) -> str | None:
         return None
@@ -57,11 +58,14 @@ class _Recording(ScriptedReasoningEngine):
         super().__init__(None, [], controller_step_responses=responses,
                          agent_scripts=agent_scripts)
         self.steps: list[_Step] = []
+        self.result_budget: int | None = None
 
     async def create_controller_step(  # type: ignore[override]
             self, plan_context, history, tool_definitions, *,
             capability_directory: str | None = None, **kwargs):
         ctx = kwargs.get("render_ctx")
+        if self.result_budget is not None:
+            plan_context["tool_result_budget"] = self.result_budget
         self.steps.append(_Step(
             label=getattr(ctx, "agent_label", "") if ctx is not None else "",
             names=[str(d.get("name")) for d in tool_definitions],
@@ -173,7 +177,7 @@ async def test_unloaded_after_eviction_is_refused(tmp_path, on):
 
 @pytest.mark.asyncio
 async def test_loaded_in_earlier_turn_is_callable(tmp_path, on):
-    bundle = render_bundle("mcp.web", [FETCH.model_dump()], None)
+    bundle = render_bundle("mcp.web", [FETCH.model_dump()], "guidance")
     seed = [{"role": "tool_result", "tool": "load_capabilities", "is_error": False,
              "content": bundle}]
     engine = _Recording([FETCH_CALL, ANSWER])
@@ -261,3 +265,28 @@ def test_bundle_guidance_points_at_the_bundle():
     assert text.startswith("EXTERNAL MCP TOOLS")
     assert "in TOOLS" not in text and "in this bundle" in text
     assert "approval card" in text
+
+
+@pytest.mark.asyncio
+async def test_large_bundle_reaches_history_whole_under_a_small_result_budget(tmp_path, on):
+    big = [ToolDefinition(name=f"mcp__web__t{i}", description="y" * 3700,
+                          parameters={"type": "object", "properties": {}}) for i in range(8)]
+    engine = _Recording([LOAD, ANSWER])
+    engine.result_budget = 16_000
+    ctrl, tid, _ = _setup(tmp_path, engine, manager=_Manager(big))
+    await _run(ctrl, tid)
+    content = str(_results(engine.steps[1].history)[-1]["content"])
+    assert 16_000 < len(content) <= 32_000
+    assert len(json.loads(content)["tools"]) == 8
+
+
+@pytest.mark.asyncio
+async def test_tiny_mcp_budget_still_lists_every_tool_in_the_directory(
+        tmp_path, on, monkeypatch):
+    monkeypatch.setenv("CRUCIBLE_MCP_TOOLS_MAX_CHARS", "10")
+    many = [ToolDefinition(name=f"mcp__web__t{i}", description="d" * 100,
+                           parameters={"type": "object", "properties": {}}) for i in range(5)]
+    engine = _Recording([ANSWER])
+    ctrl, tid, _ = _setup(tmp_path, engine, manager=_Manager(many))
+    await _run(ctrl, tid)
+    assert "mcp.web (5 tools)" in str(engine.steps[0].directory)

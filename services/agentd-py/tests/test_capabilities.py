@@ -40,7 +40,7 @@ def test_directory_lines():
     text = render_directory({"mcp.web": [_d("mcp__web__fetch")], "mcp.big": many})
     assert text.splitlines() == [
         "- mcp.big (12 tools): t00, t01, t02, t03, t04, t05, t06, t07, t08, t09, +2 more",
-        "- mcp.web (1 tools): fetch",
+        "- mcp.web (1 tool): fetch",
     ]
     assert render_directory({}) == ""
 
@@ -73,14 +73,26 @@ def test_bundle_round_trips():
 def test_loaded_versions_from_history():
     history = [
         {"role": "user", "content": "go"},
-        _bundle_result("mcp.pw", BROWSER[:1]),
+        _bundle_result("mcp.pw", BROWSER[:1], guidance="g"),
         _bundle_result("mcp.pw", BROWSER[1:2], is_error=True),
         {"role": "tool_result", "tool": "load_capabilities", "content": "Already loaded: x"},
     ]
     assert loaded_versions(history) == {"mcp__pw__browser_click": tool_version(BROWSER[0])}
     changed = {**BROWSER[0], "description": "new"}
-    history.append(_bundle_result("mcp.pw", [changed]))
+    history.append(_bundle_result("mcp.pw", [changed], guidance="g"))
     assert loaded_versions(history)["mcp__pw__browser_click"] == tool_version(changed)
+
+
+def test_nothing_is_loaded_once_the_guidance_bundle_is_evicted():
+    only_b = [_bundle_result("mcp.pw", BROWSER[1:2])]  # guidance null: A was evicted
+    assert loaded_versions(only_b) == {}
+    by_name = {d["name"]: d for d in BROWSER}
+    assert unloaded_reason("mcp__pw__browser_type", by_name, loaded_versions(only_b)) is not None
+    both = [_bundle_result("mcp.pw", BROWSER[:1], guidance="g"),
+            _bundle_result("mcp.pw", BROWSER[1:2])]
+    assert loaded_versions(both) == {
+        BROWSER[0]["name"]: tool_version(BROWSER[0]),
+        BROWSER[1]["name"]: tool_version(BROWSER[1])}
 
 
 def test_guidance_visible():
@@ -193,7 +205,7 @@ async def test_query_respects_limit():
 
 @pytest.mark.asyncio
 async def test_already_loaded_is_a_receipt():
-    history = [_bundle_result("mcp.pw", BROWSER[:1])]
+    history = [_bundle_result("mcp.pw", BROWSER[:1], guidance="g")]
     _, source = _source(history)
     out = await source.execute("load_capabilities", {
         "namespace": "mcp.pw", "tool_names": ["browser_click"]})
@@ -203,9 +215,25 @@ async def test_already_loaded_is_a_receipt():
 
 
 @pytest.mark.asyncio
+async def test_guidance_less_bundle_alone_reloads_with_guidance():
+    _, source = _source([_bundle_result("mcp.pw", BROWSER[:1])])
+    out = await source.execute("load_capabilities", {
+        "namespace": "mcp.pw", "tool_names": ["browser_click"]})
+    assert out.whole and json.loads(out.output)["guidance"] == "Approvals apply."
+
+
+def test_select_accepts_prefixed_names():
+    picked = select_tools(BROWSER, query=None,
+                          tool_names=["mcp__pw__browser_type", "browser_click"], limit=4)
+    assert [d["name"] for d in picked] == ["mcp__pw__browser_type", "mcp__pw__browser_click"]
+    with pytest.raises(KeyError, match="mcp__pw__nope"):
+        select_tools(BROWSER, query=None, tool_names=["mcp__pw__nope"], limit=4)
+
+
+@pytest.mark.asyncio
 async def test_changed_schema_reloads():
     old = {**BROWSER[0], "description": "old"}
-    _, source = _source([_bundle_result("mcp.pw", [old])])
+    _, source = _source([_bundle_result("mcp.pw", [old], guidance="g")])
     out = await source.execute("load_capabilities", {
         "namespace": "mcp.pw", "tool_names": ["browser_click"]})
     assert json.loads(out.output)["tools"] == [BROWSER[0]]

@@ -770,6 +770,7 @@ Spec: `docs/superpowers/specs/2026-10-06-chatgpt-plan-usage-design.md` (built fr
 - `CRUCIBLE_SKILLS_ENABLED` — discover + offer `.crucible/skills/*/SKILL.md` to the controller (catalog + `read_skill` + `/skill` forced-load). Default **OFF**; opt in with `1/true/yes/on`. See "Agent Skills (P2)".
 - `CRUCIBLE_SKILLS_CATALOG_MAX_CHARS` (default `16000`; order-truncates the catalog) + `CRUCIBLE_SKILLS_BODY_MAX_CHARS` (default `20000`; caps a loaded skill body).
 - `CRUCIBLE_MCP_ENABLED` — connect external MCP servers from `.crucible/mcp.json` and offer their tools to the controller. Default **OFF**; opt in with `1/true/yes/on`. See "MCP client (P3)".
+- `CRUCIBLE_CAPABILITY_LOADING_ENABLED` — on-demand MCP tool loading for the main agent only (`load_capabilities`; default **OFF**; needs `CRUCIBLE_MCP_ENABLED`). See the "On-demand loading pilot" bullet under MCP client (P3).
 - `CRUCIBLE_MCP_DECISION_TIMEOUT_SEC` — seconds to wait for the user's mcp_tool gate decision; `0` (default) = wait forever; timeout → reject.
 - `CRUCIBLE_MCP_TOOLS_MAX_CHARS` — char budget for MCP tool definitions in tools_json (default `64000`, raised from 16000 on 2026-10-19: 16000 chars ≈ 4k tokens cut this workspace's 39 connected tools to 21; order-truncation).
 - `CRUCIBLE_MCP_CONNECT_TIMEOUT_SEC` — per-server connect wait at startup before continuing without it (default `30`).

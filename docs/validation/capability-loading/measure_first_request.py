@@ -1,15 +1,20 @@
 """Measure the first-request system prompt with on-demand MCP loading off vs on."""
 import json
+import os
 import sys
 from pathlib import Path
 
 import tiktoken
 
-from agentd.capabilities.bundle import render_bundle
-from agentd.capabilities.catalog import render_directory, split_definitions
-from agentd.capabilities.tool_source import LOAD_CAPABILITIES
-from agentd.chat.controller_prompts import format_controller_system_prompt, mcp_bundle_guidance
-from agentd.prompting.tagged import RenderContext
+# Set before importing agentd: the recorded numbers were produced with both on.
+os.environ.setdefault("CRUCIBLE_COMPACT_CONTEXT_ENABLED", "1")
+os.environ.setdefault("CRUCIBLE_TOOL_BATCHING_ENABLED", "1")
+
+from agentd.capabilities.bundle import render_bundle  # noqa: E402
+from agentd.capabilities.catalog import render_directory, split_definitions  # noqa: E402
+from agentd.capabilities.tool_source import LOAD_CAPABILITIES  # noqa: E402
+from agentd.chat.controller_prompts import format_controller_system_prompt, mcp_bundle_guidance  # noqa: E402
+from agentd.prompting.tagged import RenderContext  # noqa: E402
 
 artifact, out = Path(sys.argv[1]), Path(sys.argv[2])
 system = json.loads(artifact.read_text())["system_instructions"]
@@ -53,7 +58,8 @@ result["first_request_saving_tokens"] = n(off) - n(on)
 result["loading_whole_namespace_bundle_tokens"] = {
     ns: n(render_bundle(ns, defs, mcp_bundle_guidance(RenderContext.main())))
     for ns, defs in split.namespaces.items()}
-result["settings"] = {"CRUCIBLE_COMPACT_CONTEXT_ENABLED": "1", "CRUCIBLE_TOOL_BATCHING_ENABLED": "1"}
+result["settings"] = {k: os.environ[k] for k in (
+    "CRUCIBLE_COMPACT_CONTEXT_ENABLED", "CRUCIBLE_TOOL_BATCHING_ENABLED")}
 out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text(json.dumps(result, indent=2) + "\n")
 print(json.dumps(result, indent=2))

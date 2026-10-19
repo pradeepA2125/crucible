@@ -74,6 +74,13 @@ def test_definitions_pass_through_and_budget_truncates(monkeypatch):
     assert [d.name for d in kept] == [d.name for d in defs[: len(kept)]]  # order-truncation
 
 
+def test_unbudgeted_source_returns_every_definition(monkeypatch):
+    defs = [_def(f"mcp__s__t{i}", desc="x" * 200) for i in range(10)]
+    monkeypatch.setenv("CRUCIBLE_MCP_TOOLS_MAX_CHARS", "700")
+    assert len(McpToolSource(_StubManager(defs), _approve, budgeted=False).definitions()) == 10
+    assert len(McpToolSource(_StubManager(defs), _approve).definitions()) < 10
+
+
 @pytest.mark.asyncio
 async def test_execute_approved_flattens_text_blocks():
     mgr = _StubManager([_def("mcp__gh__ci")],

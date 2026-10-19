@@ -41,14 +41,17 @@ class McpToolSource:
 
     def __init__(
         self, manager: object, approval_callback: McpApprovalCallback, *,
-        render_ctx: RenderContext | None = None,
+        render_ctx: RenderContext | None = None, budgeted: bool = True,
     ) -> None:
+        self._budgeted = budgeted
         self._manager = manager
         self._approve = approval_callback
         self._render_ctx = render_ctx or RenderContext.main()
 
     def definitions(self) -> list[ToolDefinition]:
         defs: list[ToolDefinition] = self._manager.tool_definitions()  # type: ignore[attr-defined]
+        if not self._budgeted:  # deferred tools are sent as a bundle, never in tools_json
+            return list(defs)
         budget = mcp_tools_max_chars()
         out: list[ToolDefinition] = []
         used = 0

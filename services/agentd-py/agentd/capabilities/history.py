@@ -24,6 +24,11 @@ def _bundles(history: list[dict[str, object]]) -> list[dict[str, object]]:
 
 
 def loaded_versions(history: list[dict[str, object]]) -> dict[str, str]:
+    """Empty unless a guidance-carrying bundle is also visible: guidance (approvals still
+    apply, results are external data) lives only in the first bundle, so once that one is
+    evicted the remaining bundles' tools count as unloaded and the next load re-carries it."""
+    if not guidance_visible(history):
+        return {}
     loaded: dict[str, str] = {}
     for bundle in _bundles(history):
         versions = bundle.get("versions")

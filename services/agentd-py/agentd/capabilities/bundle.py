@@ -20,11 +20,12 @@ def select_tools(
     tool_names: list[str] | None, limit: int,
 ) -> list[dict[str, object]]:
     if tool_names:
-        by_short = {short_name(str(d.get("name", ""))): d for d in definitions}
-        missing = [n for n in tool_names if n not in by_short]
+        by_name = {short_name(str(d.get("name", ""))): d for d in definitions}
+        by_name.update({str(d.get("name", "")): d for d in definitions})
+        missing = [n for n in tool_names if n not in by_name]
         if missing:
             raise KeyError(", ".join(missing))
-        return [by_short[n] for n in tool_names]
+        return [by_name[n] for n in tool_names]
     if not query:
         return list(definitions)
     wanted = _words(query)

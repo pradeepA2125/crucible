@@ -106,6 +106,10 @@ def warn_if_incoherent_flags(logger: logging.Logger) -> None:
         logger.warning(
             "incoherent flags: CRUCIBLE_TEAMS_ENABLED is on but sub-agents are off — "
             "teams need CRUCIBLE_SUBAGENTS_ENABLED.")
+    if is_capability_loading_enabled() and not is_mcp_enabled():
+        logger.warning(
+            "incoherent flags: CRUCIBLE_CAPABILITY_LOADING_ENABLED is on but "
+            "CRUCIBLE_MCP_ENABLED is off — there are no MCP tools to load on demand.")
 
 
 def select_chat_handler(

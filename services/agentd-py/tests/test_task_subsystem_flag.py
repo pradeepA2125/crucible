@@ -36,3 +36,17 @@ def test_no_warn_when_task_off_but_controller_on(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         warn_if_incoherent_flags(logging.getLogger("test"))
     assert not caplog.records
+
+
+def test_capability_loading_without_mcp_warns(monkeypatch, caplog):
+    monkeypatch.setenv("CRUCIBLE_TASK_SUBSYSTEM", "1")
+    monkeypatch.setenv("CRUCIBLE_CAPABILITY_LOADING_ENABLED", "1")
+    monkeypatch.delenv("CRUCIBLE_MCP_ENABLED", raising=False)
+    with caplog.at_level(logging.WARNING):
+        warn_if_incoherent_flags(logging.getLogger("test"))
+    assert any("CRUCIBLE_CAPABILITY_LOADING_ENABLED" in r.message for r in caplog.records)
+    caplog.clear()
+    monkeypatch.setenv("CRUCIBLE_MCP_ENABLED", "1")
+    with caplog.at_level(logging.WARNING):
+        warn_if_incoherent_flags(logging.getLogger("test"))
+    assert not any("CRUCIBLE_CAPABILITY_LOADING_ENABLED" in r.message for r in caplog.records)
