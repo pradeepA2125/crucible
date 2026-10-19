@@ -79,6 +79,13 @@ def is_mcp_enabled() -> bool:
     return os.getenv("CRUCIBLE_MCP_ENABLED", "0").strip().lower() in _TRUTHY
 
 
+def is_capability_loading_enabled() -> bool:
+    """Whether the main agent's MCP tool schemas are deferred behind load_capabilities
+    (on-demand capability loading pilot). Default OFF; opt in with
+    CRUCIBLE_CAPABILITY_LOADING_ENABLED=1."""
+    return os.getenv("CRUCIBLE_CAPABILITY_LOADING_ENABLED", "0").strip().lower() in _TRUTHY
+
+
 def warn_if_incoherent_flags(logger: logging.Logger) -> None:
     """Task-subsystem OFF only works when the controller is ON (the legacy ChatAgent's
     large_change branch has nowhere to go without create_task). Warn — do not fail."""

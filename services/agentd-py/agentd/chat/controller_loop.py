@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agentd.capabilities.catalog import LOADER_TOOL, render_directory, split_definitions
+from agentd.capabilities.history import loaded_versions, unloaded_reason
 from agentd.chat.edit_session import StaleWriteError
 from agentd.chat.protected_paths import ProtectedPathError
 from agentd.chat.todo_ledger import TodoLedger
@@ -48,6 +50,7 @@ from agentd.teams.tools import MAIN_TOOL_NAMES, MEMBER_TOOL_NAMES
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from agentd.capabilities.tool_source import CapabilitySession
     from agentd.chat.controller_phase import ControllerPhaseSM
     from agentd.chat.edit_session import TurnEditSession
     from agentd.domain.models import DiffEntry
@@ -736,8 +739,13 @@ class ControllerLoop:
         report_statuses: frozenset[str] = LONE_REPORT_STATUSES,
         context_observer_factory: Callable[[], object] | None = None,
         context_invalidate: Callable[[], None] | None = None,
+        capabilities: CapabilitySession | None = None,
     ) -> None:
         self._reasoning = reasoning
+        # On-demand MCP loading (main agent, flag-gated): None keeps the full catalog.
+        self._capabilities = capabilities
+        self._deferred_defs: dict[str, dict[str, object]] = {}
+        self._capability_directory: str | None = None
         self._context_observer_factory = context_observer_factory
         self._context_invalidate = context_invalidate
         self._registry = registry
@@ -1317,6 +1325,8 @@ class ControllerLoop:
         # Expose the live list NOW (before _iterate can raise) so a cancel mid-turn still
         # leaves the caller a readable partial (Q2). _iterate mutates this same object.
         self._history = history
+        if self._capabilities is not None:
+            tool_defs = self._defer_capabilities(tool_defs, history)
         if getattr(self._memory_harness, "recall_v2", False):
             plan_context["memory_v2"] = True
             self._memory_harness.begin_recall(
@@ -1418,6 +1428,23 @@ class ControllerLoop:
             # exhaustion, exhaustion-raise, or a patch crash) — no shadow leak.
             if self._edit is not None:
                 await self._edit.close()
+
+    def _defer_capabilities(
+        self, tool_defs: list[dict[str, object]], history: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Keep MCP schemas out of the catalog the engine sees: the model gets a directory
+        and loads a namespace with load_capabilities. Execution validation still sees the
+        whole registry; the batch guard refuses a deferred tool that is not loaded."""
+        assert self._capabilities is not None
+        split = split_definitions(tool_defs)
+        self._capabilities.namespaces = split.namespaces
+        self._capabilities.history = history
+        self._deferred_defs = {str(d.get("name", "")): d
+                               for defs in split.namespaces.values() for d in defs}
+        self._capability_directory = render_directory(split.namespaces) or None
+        if split.namespaces:
+            return split.core
+        return [d for d in split.core if d.get("name") != LOADER_TOOL]
 
     async def _iterate(
         self,
@@ -1828,6 +1855,8 @@ class ControllerLoop:
                     seam_kwargs["persona"] = self._agent.persona
                 if accepts_kwarg(step_fn, "image_assets") and projection.image_assets:
                     seam_kwargs["image_assets"] = projection.image_assets
+                if self._capability_directory and accepts_kwarg(step_fn, "capability_directory"):
+                    seam_kwargs["capability_directory"] = self._capability_directory
                 self._image_projection_revision = projection.revision
                 resp = await step_fn(
                     plan_context=plan_context, history=projection.history,
@@ -1982,12 +2011,24 @@ class ControllerLoop:
                     if any(value not in (None, "", [], {}) for key, value in resp.items()
                            if key not in {"type", "thought", "calls", "provider_call_id"}):
                         raise ValueError("tool_calls cannot be mixed with another action")
-                    def batch_guard(node):
+                    raw_calls = resp.get("calls")
+                    if (self._capabilities is not None and isinstance(raw_calls, list)
+                            and len(raw_calls) > 1
+                            and any(isinstance(n, dict) and n.get("tool") == LOADER_TOOL
+                                    for n in raw_calls)):
+                        raise ValueError(f"{LOADER_TOOL} must run alone in its step; call it "
+                                         "by itself, then use the loaded tools next step")
+                    # Loaded = a bundle with the tool's current schema is in the history
+                    # being sent; read once per batch, before any member runs.
+                    loaded = loaded_versions(history) if self._deferred_defs else {}
+
+                    def batch_guard(node, loaded=loaded):
                         self._registry.validate_call(node["tool"], node["args"])
                         return (_reserved_tool_name_correction(node, "tool_calls", self._render_ctx)
                             or _decide_state_change_correction(
                                 {**node, "type": "tool_calls"}, self._sm.phase)
-                            or _permission_correction(node, "tool_calls", self._render_ctx))
+                            or _permission_correction(node, "tool_calls", self._render_ctx)
+                            or unloaded_reason(node["tool"], self._deferred_defs, loaded))
                     remaining = self._max_tool_calls - self._executed_tool_calls
                     batch_calls = validate_calls(resp.get("calls"), self._registry.definitions(),
                                                  remaining=min(

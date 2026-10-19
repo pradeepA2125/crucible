@@ -27,6 +27,7 @@ from agentd.chat.approval import (
     ApprovalState,
 )
 from agentd.chat.controller_factory import (
+    is_capability_loading_enabled,
     is_skills_enabled,
     is_subagents_enabled,
     is_task_subsystem_enabled,
@@ -995,6 +996,15 @@ class ChatController:
         if dispatch_sources and turn_id and is_teams_enabled() and self._teams is not None:
             dispatch_sources.append(self._main_team_source(
                 thread_id, turn_id, can_execute=lambda: sm.phase == "ACTIVE"))
+        # On-demand MCP loading (pilot, main agent only): MCP schemas leave the catalog and
+        # the model loads a server's tools with load_capabilities when it needs them.
+        capabilities = None
+        if is_capability_loading_enabled() and self._mcp_manager is not None:
+            from agentd.capabilities.tool_source import CapabilitySession, CapabilityToolSource
+            from agentd.chat.controller_prompts import mcp_bundle_guidance
+
+            capabilities = CapabilitySession(guidance=mcp_bundle_guidance(RenderContext.main()))
+            dispatch_sources.append(CapabilityToolSource(capabilities))
         loop = ControllerLoop(
             self._reasoning,
             self._build_registry(command_cb, ledger, todo_persist_cb,
@@ -1022,7 +1032,8 @@ class ChatController:
             # message landed in between (the loop owns WHEN — see mark_pills_boundary).
             pills_seal_cb=(
                 partial(self._store.seal_inflight_pills, thread_id, turn_id)
-                if turn_id else None))
+                if turn_id else None),
+            capabilities=capabilities)
         plan_context: dict[str, object] = {
             "goal": goal, "workspace_path": self._workspace_path,
             # run_id keys the per-thread compaction segments + anchored summary.

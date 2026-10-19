@@ -789,6 +789,34 @@ exposes.
 """)
 
 
+# On-demand capability loading (main agent only, flag-gated). Core duties stay here; the
+# MCP teaching itself rides the bundle (mcp_bundle_guidance).
+_CAPABILITY_BLOCK = """
+
+OPTIONAL CAPABILITIES
+Tools of the connected external MCP servers are deferred: their schemas are not in TOOLS.
+Each namespace below is one server. When the user's request needs one, call
+load_capabilities alone in its step with that namespace, and optionally a `query` (a few
+words naming the actions you need) or exact unprefixed `tool_names`. The result holds the
+tool schemas and their guidance; the loaded tools are callable from your next step as
+`mcp__<server>__<tool>`. Loading only shows schemas: it grants no permission, and every
+call to an external tool still pauses for the user's approval when approval applies. If a
+call is refused because a tool is not loaded, load its namespace again.
+"""
+
+_MCP_SCHEMAS_IN_TOOLS = "Their parameter schemas are in TOOLS like any other\ntool;"
+
+
+def mcp_bundle_guidance(render_ctx: RenderContext) -> str:
+    """The EXTERNAL MCP TOOLS block as a capability bundle carries it: the schemas sit in
+    the bundle, not in TOOLS."""
+    text = render_prompt(_MCP_BLOCK, render_ctx)
+    if _MCP_SCHEMAS_IN_TOOLS not in text:
+        raise ValueError("_MCP_BLOCK changed: update mcp_bundle_guidance")
+    return text.replace(_MCP_SCHEMAS_IN_TOOLS,
+                        "Their parameter schemas are in this bundle;").strip("\n")
+
+
 _SESSIONS_BLOCK = tagged("_SESSIONS_BLOCK", """
 
 BACKGROUND PROCESS SESSIONS
@@ -1162,6 +1190,7 @@ def format_controller_system_prompt(
     render_ctx: RenderContext | None = None,
     persona: str | None = None,
     component_sizes: dict[str, int] | None = None,
+    capability_directory: str | None = None,
 ) -> str:
     """Assemble the controller system prompt. The propose_mode mode-vocabulary block is
     swapped by the task-subsystem flag (default resolved from env) — see the spec. The
@@ -1247,6 +1276,9 @@ def format_controller_system_prompt(
            for d in tool_definitions if isinstance(d, dict)):
         base += render_prompt(_MCP_BLOCK, ctx)
     record("mcp_guidance")
+    if capability_directory:
+        base += _CAPABILITY_BLOCK + capability_directory + "\n"
+    record("capability_directory")
     # exec-session teaching block: keyed off the merged tool definitions (same
     # pattern as the MCP block) so no separate flag parameter is needed.
     if any(str((d or {}).get("name", "")) == "start_session"

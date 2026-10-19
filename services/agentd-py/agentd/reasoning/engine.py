@@ -316,6 +316,7 @@ class DefaultReasoningEngine(ReasoningEngine):
         on_context_input: object | None = None,
         image_attachments: list[dict[str, object]] | None = None,
         image_assets: dict[str, dict[str, object]] | None = None,
+        capability_directory: str | None = None,
     ) -> dict[str, object]:
         from agentd.chat.controller_prompts import (
             build_controller_step_payload,
@@ -343,6 +344,7 @@ class DefaultReasoningEngine(ReasoningEngine):
             tool_definitions, project_instructions=instructions, skills_catalog=skills_catalog,
             render_ctx=render_ctx, persona=persona, component_sizes=component_sizes,
             memory_v2=bool(plan_context.get("memory_v2")),
+            capability_directory=capability_directory,
         )
         user_payload = build_controller_step_payload(
             plan_context, history, tool_definitions, phase=phase,
