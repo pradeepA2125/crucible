@@ -25,9 +25,26 @@ With `CRUCIBLE_CAPABILITY_LOADING_ENABLED=1` (extension setting `crucible.perfor
 
 This is one workspace's estimate, not a billing figure. The recorded request showed 21 of the server's tools because the old 16,000-character MCP budget cut the rest; with the current 64,000-character budget more tools are listed, so both the saving and a whole-namespace bundle grow. A turn that loads the namespace pays the bundle once and replays it with history until compaction, so the saving is real only for turns that never need the server, or load a few tools with a `query`.
 
+## Live run (2026-10-19)
+
+The installed extension's managed backend, on the ChatGPT plan with `gpt-6-luna`, with Playwright (25 tools), `everything` (16) and `fetch` (1) connected. The same message was sent in a new thread with the flag off, then on. Counts are the provider's own input tokens per request. Raw data: [validation/capability-loading/live-2026-10-19.json](validation/capability-loading/live-2026-10-19.json). One run per cell.
+
+| Turn | Flag off | Flag on | Change |
+| --- | --- | --- | --- |
+| Plain turn, first request | 22,676 | 17,106 | −5,570 (−24.6%) |
+| Plain turn, all input (2 requests) | 45,065 | 33,925 | −11,140 (−24.7%) |
+| Browser turn, requests | 2 | 3 | +1 (`load_capabilities`) |
+| Browser turn, all input | 46,406 | 55,825 | +9,419 (+20%) |
+| Browser turn, uncached input | 23,878 | 20,113 | −3,765 (−16%) |
+| Browser turn, time | 15.3 s | 22.4 s | +7.1 s |
+
+- Every request in a turn that uses no MCP tool is about 5,570 tokens smaller: the 42 connected tools' schemas and the MCP guidance, minus the loader and the directory.
+- In the browser turn the model loaded Playwright with a query (`"browser navigate open URL read page title"`), got a 2,873-character bundle of 4 tools, called `browser_navigate` next and answered correctly. The load costs one extra request, so total input went up; uncached input went down, because every request in the turn started from the smaller prefix.
+- Both plain turns took 2 requests because the model answered "ready" as text without calling a function and the loop retried. That happens with the flag off too.
+
 ## Not measured, and deferred
 
-- No model-behavior evaluation yet: whether models load the right namespace, pick useful queries, or try unloaded tools. That evaluation, including weaker models, comes before any change of default.
+- Model behavior beyond one live run on `gpt-6-luna` (above): whether models generally load the right namespace, pick useful queries, or try unloaded tools. That evaluation, including weaker models, comes before any change of default.
 - Restoring bundles for work still in progress after compaction (spec "Lifetime" row 3). Today the model reloads the namespace.
 - Children, team members and the task path.
 - Provider cache effects of the smaller stable prefix plus appended bundles.

@@ -1,0 +1,16 @@
+{
+  "note": "Live managed backend from the installed VSIX (install-local.sh), ChatGPT plan, gpt-6-luna, this repository. Input tokens are the provider's own counts from the [cache] log line of each request. One run per cell.",
+  "connected_mcp": {"playwright": 25, "everything": 16, "fetch": 1, "web": "failed"},
+  "plain_turn": {
+    "message": "Reply with exactly one word: ready.",
+    "flag_off": {"thread": "chat-732bc0e56bc0", "requests": [{"input": 22676, "cached": 0}, {"input": 22389, "cached": 20864}], "input": 45065, "cached": 20864, "output": 51},
+    "flag_on": {"thread": "chat-466d149948ed", "requests": [{"input": 17106, "cached": 0}, {"input": 16819, "cached": 15232}], "input": 33925, "cached": 15232, "output": 53},
+    "second_request_cause": "both runs: the model replied 'ready' as text without calling a function, so the loop retried (pre-existing, not caused by the flag)"
+  },
+  "browser_turn": {
+    "message": "Use the browser to open https://example.com and tell me the page title.",
+    "flag_off": {"thread": "chat-210863a9ca26", "tools": ["mcp__playwright__browser_navigate"], "requests": [{"input": 22719, "cached": 0}, {"input": 23687, "cached": 22528}], "input": 46406, "cached": 22528, "output": 147, "seconds": 15.3},
+    "flag_on": {"thread": "chat-e378508230e8", "tools": ["load_capabilities", "mcp__playwright__browser_navigate"], "load_args": {"namespace": "mcp.playwright", "query": "browser navigate open URL read page title"}, "bundle_chars": 2873, "requests": [{"input": 17189, "cached": 0}, {"input": 18832, "cached": 17024}, {"input": 19804, "cached": 18688}], "input": 55825, "cached": 35712, "output": 226, "seconds": 22.4},
+    "answer_both": "The page title is **Example Domain**."
+  }
+}
