@@ -1,0 +1,28 @@
+{
+  "note": "One workspace's estimate (this repo, the MCP servers connected on 2026-10-19), o200k_base tokens of the controller system prompt built with the same inputs (no AGENTS.md, skills or memory blocks). Not a billing figure.",
+  "source_artifact": "controller-turn-00.json",
+  "tools_total": 58,
+  "mcp_tools": 21,
+  "namespaces": {
+    "mcp.playwright": 21
+  },
+  "flag_off": {
+    "system_prompt_tokens": 16783,
+    "mcp_schema_tokens": 3405,
+    "mcp_guidance_tokens": 156
+  },
+  "flag_on": {
+    "system_prompt_tokens": 13613,
+    "loader_schema_tokens": 189,
+    "capability_block_and_directory_tokens": 207,
+    "directory": "- mcp.playwright (21 tools): browser_close, browser_resize, browser_console_messages, browser_handle_dialog, browser_emulate_media, browser_evaluate, browser_file_upload, browser_drop, browser_find, browser_fill_form, +11 more"
+  },
+  "first_request_saving_tokens": 3170,
+  "loading_whole_namespace_bundle_tokens": {
+    "mcp.playwright": 3974
+  },
+  "settings": {
+    "CRUCIBLE_COMPACT_CONTEXT_ENABLED": "1",
+    "CRUCIBLE_TOOL_BATCHING_ENABLED": "1"
+  }
+}
