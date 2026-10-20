@@ -1,0 +1,822 @@
+{
+  "model": "luna",
+  "flag": "on",
+  "suite": "discovery",
+  "window": null,
+  "registration": "reg_753b274021f0",
+  "started_utc": "2026-10-20T05:57:20Z",
+  "scenarios": [
+    {
+      "name": "vague_page",
+      "thread": "chat-5ad95b1de120",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [],
+          "tool_errors": [],
+          "gates": [],
+          "request_inputs": [
+            16950
+          ],
+          "compactions": [],
+          "answer": "I can\u2019t access the live site from this chat right now. If you share a URL fetch result or enable browsing, I can tell you exactly what it says.",
+          "clarify": [],
+          "seconds": 4.7,
+          "usage": {
+            "requests": 1,
+            "input": 16950,
+            "output": 91,
+            "cached": 0
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-df531f313e10",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 3.75,
+              "tool": "web_fetch",
+              "args": {
+                "url": "https://example.com",
+                "format": "markdown"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "web_fetch",
+              "server": "Web",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            17894
+          ],
+          "compactions": [],
+          "answer": "As of the fetch, example.com says: **\u201cExample Domain\u201d** and explains that the domain is for use in documentation examples without needing permission. It adds: \u201cThis is not a service; avoid relying on it for testing and monitoring purposes.\u201d\n\nSource: https://example.com\n\nRecap: You asked what example.com says right now; I fetched the page and summarized its text.",
+          "clarify": [],
+          "seconds": 10.4,
+          "usage": {
+            "requests": 2,
+            "input": 34844,
+            "output": 218,
+            "cached": 16768
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-398fe76f2591",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 8.29,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.fetch"
+              }
+            },
+            {
+              "t": 12.3,
+              "tool": "mcp__fetch__fetch",
+              "args": {
+                "url": "https://example.com",
+                "max_length": 5000
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "fetch",
+              "server": "fetch",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            17861,
+            19186,
+            20102
+          ],
+          "compactions": [],
+          "answer": "I fetched https://example.com just now. It says: \u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d",
+          "clarify": [],
+          "seconds": 18.1,
+          "usage": {
+            "requests": 4,
+            "input": 74099,
+            "output": 312,
+            "cached": 53504
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 1,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-8c71167e4b0b",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 3.75,
+              "tool": "web_fetch",
+              "args": {
+                "url": "https://example.com",
+                "format": "markdown"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "web_fetch",
+              "server": "Web",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            17908
+          ],
+          "compactions": [],
+          "answer": "As fetched from https://example.com, it says:\n\n**Example Domain**\n\n\u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d",
+          "clarify": [],
+          "seconds": 8.4,
+          "usage": {
+            "requests": 2,
+            "input": 34858,
+            "output": 188,
+            "cached": 33536
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-3241997f76a9",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 4.71,
+              "tool": "web_fetch",
+              "args": {
+                "url": "https://example.com",
+                "format": "markdown"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "web_fetch",
+              "server": "Web",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            17902
+          ],
+          "compactions": [],
+          "answer": "As fetched from [example.com](https://example.com), it says **\u201cExample Domain\u201d** and explains that the domain is for documentation examples, not a service, and should not be relied on for testing or monitoring. JavaScript was not executed.",
+          "clarify": [],
+          "seconds": 9.5,
+          "usage": {
+            "requests": 2,
+            "input": 34852,
+            "output": 186,
+            "cached": 0
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-02f13cd1bb02",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 3.95,
+              "tool": "web_fetch",
+              "args": {
+                "url": "https://example.com",
+                "format": "text"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "web_fetch",
+              "server": "Web",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            17888
+          ],
+          "compactions": [],
+          "answer": "As of my fetch, example.com says: \u201cExample Domain. This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d Source: https://example.com",
+          "clarify": [],
+          "seconds": 8.6,
+          "usage": {
+            "requests": 2,
+            "input": 34838,
+            "output": 178,
+            "cached": 33536
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-fb24effdf66f",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 4.49,
+              "tool": "web_fetch",
+              "args": {
+                "url": "https://example.com",
+                "format": "markdown"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "web_fetch",
+              "server": "Web",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            17899
+          ],
+          "compactions": [],
+          "answer": "As of my fetch, [example.com](https://example.com) says:\n\n**Example Domain**\n\n\u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d",
+          "clarify": [],
+          "seconds": 10.6,
+          "usage": {
+            "requests": 2,
+            "input": 34849,
+            "output": 187,
+            "cached": 16768
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-a99c999ffb64",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 5.26,
+              "tool": "web_search",
+              "args": {
+                "query": "example.com"
+              }
+            },
+            {
+              "t": 10.81,
+              "tool": "web_fetch",
+              "args": {
+                "url": "https://example.com/",
+                "format": "text"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "web_search",
+              "server": "Exa",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "web_fetch",
+              "server": "Web",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            20001,
+            20949
+          ],
+          "compactions": [],
+          "answer": "As fetched just now, example.com says:\n\n> **Example Domain**\n> This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\n\nSource: https://example.com/",
+          "clarify": [],
+          "seconds": 16.0,
+          "usage": {
+            "requests": 3,
+            "input": 57900,
+            "output": 268,
+            "cached": 36608
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-77d3e9b26742",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 8.44,
+              "tool": "web_fetch",
+              "args": {
+                "url": "https://example.com",
+                "format": "markdown"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "web_fetch",
+              "server": "Web",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            17811,
+            18756
+          ],
+          "compactions": [],
+          "answer": "As of my fetch of https://example.com, the page says:\n\n**Example Domain**\n\n\u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d\n\nSource: https://example.com",
+          "clarify": [],
+          "seconds": 13.5,
+          "usage": {
+            "requests": 3,
+            "input": 53517,
+            "output": 258,
+            "cached": 34432
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 1,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-882250495e96",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 4.72,
+              "tool": "web_fetch",
+              "args": {
+                "url": "https://example.com",
+                "format": "text"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "web_fetch",
+              "server": "Web",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            17898
+          ],
+          "compactions": [],
+          "answer": "As fetched from https://example.com, it says:\n\n**Example Domain**\n\n\u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d\n\nRecap: Retrieved and summarized the current text at example.com.",
+          "clarify": [],
+          "seconds": 9.2,
+          "usage": {
+            "requests": 2,
+            "input": 34848,
+            "output": 186,
+            "cached": 16768
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-558e994ae61c",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 8.89,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.fetch"
+              }
+            },
+            {
+              "t": 12.81,
+              "tool": "mcp__fetch__fetch",
+              "args": {
+                "url": "https://example.com",
+                "max_length": 5000
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "fetch",
+              "server": "fetch",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            17885,
+            19227,
+            20160
+          ],
+          "compactions": [],
+          "answer": "I fetched https://example.com just now. It says: \u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d\n\nRecap: You asked what example.com says right now; live page text retrieved.",
+          "clarify": [],
+          "seconds": 18.3,
+          "usage": {
+            "requests": 4,
+            "input": 74222,
+            "output": 331,
+            "cached": 53504
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 1,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-4bdff76999eb",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 8.43,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.fetch"
+              }
+            },
+            {
+              "t": 12.06,
+              "tool": "mcp__fetch__fetch",
+              "args": {
+                "url": "https://example.com"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "fetch",
+              "server": "fetch",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            17863,
+            19182,
+            20109
+          ],
+          "compactions": [],
+          "answer": "I fetched example.com just now. It says: \u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d",
+          "clarify": [],
+          "seconds": 17.5,
+          "usage": {
+            "requests": 4,
+            "input": 74104,
+            "output": 318,
+            "cached": 53504
+          },
+          "unloaded_refusals": 1,
+          "malformed_corrections": 0,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-f5b139c6d8e7",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 4.1,
+              "tool": "web_fetch",
+              "args": {
+                "url": "https://example.com",
+                "format": "markdown"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "web_fetch",
+              "server": "Web",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            17898
+          ],
+          "compactions": [],
+          "answer": "I fetched https://example.com. It says:\n\n> Example Domain\n>\n> This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\n\nSource: https://example.com",
+          "clarify": [],
+          "seconds": 9.8,
+          "usage": {
+            "requests": 2,
+            "input": 34848,
+            "output": 194,
+            "cached": 32512
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-b439627edc41",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 10.37,
+              "tool": "web_fetch",
+              "args": {
+                "url": "https://example.com",
+                "format": "markdown"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "web_fetch",
+              "server": "Web",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            17798,
+            18732
+          ],
+          "compactions": [],
+          "answer": "Right now, example.com says:\n\n**Example Domain**\n\n\u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d\n\nSource: https://example.com",
+          "clarify": [],
+          "seconds": 16.4,
+          "usage": {
+            "requests": 3,
+            "input": 53480,
+            "output": 254,
+            "cached": 51200
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 1,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-ca47c24c4aea",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 5.13,
+              "tool": "web_fetch",
+              "args": {
+                "url": "https://example.com",
+                "format": "markdown"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "web_fetch",
+              "server": "Web",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            16950,
+            17893
+          ],
+          "compactions": [],
+          "answer": "Right now, [example.com](https://example.com) says:\n\n> **Example Domain**\n>\n> This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.",
+          "clarify": [],
+          "seconds": 10.6,
+          "usage": {
+            "requests": 2,
+            "input": 34843,
+            "output": 182,
+            "cached": 16768
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    }
+  ],
+  "mcp": {
+    "playwright": {
+      "state": "connected",
+      "tools": 25
+    },
+    "everything": {
+      "state": "connected",
+      "tools": 16
+    },
+    "fetch": {
+      "state": "connected",
+      "tools": 1
+    }
+  },
+  "config": {
+    "mcp_enabled": true,
+    "provider": {
+      "backend": "chatgpt",
+      "model": "gpt-6-luna",
+      "uses_chatgpt_plan": true,
+      "context_window": 272000,
+      "reasoning_effort": "medium",
+      "reasoning_effort_support": {
+        "supported": [
+          "high",
+          "low",
+          "max",
+          "medium",
+          "xhigh"
+        ],
+        "unsupported": {},
+        "control": {
+          "options": [
+            {
+              "value": "low",
+              "label": "Low",
+              "description": "Fast responses with lighter reasoning",
+              "state": "supported"
+            },
+            {
+              "value": "medium",
+              "label": "Medium",
+              "description": "Balances speed and reasoning depth for everyday tasks",
+              "state": "supported"
+            },
+            {
+              "value": "high",
+              "label": "High",
+              "description": "Greater reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high",
+              "description": "Extra high reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "max",
+              "label": "Max",
+              "description": "Maximum reasoning depth for the hardest problems",
+              "state": "supported"
+            }
+          ],
+          "source": "catalog",
+          "default": "medium",
+          "reason": null
+        }
+      },
+      "reasoning_effort_note": null
+    }
+  }
+}

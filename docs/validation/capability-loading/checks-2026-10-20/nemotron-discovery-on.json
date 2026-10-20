@@ -1,0 +1,114 @@
+{
+  "model": "nemotron",
+  "flag": "on",
+  "suite": "discovery",
+  "window": null,
+  "started_utc": "2026-10-20T05:26:23Z",
+  "scenarios": [
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-1333d3da337b",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 38.76,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [],
+          "request_inputs": [
+            17053,
+            17836,
+            18093
+          ],
+          "compactions": [],
+          "answer": "\u2717 Stopped",
+          "clarify": [],
+          "seconds": 600.0,
+          "usage": {
+            "requests": 4,
+            "input": 52982,
+            "output": 494,
+            "cached": 0
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 2,
+          "rejected_types": [
+            "tool_calls",
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    }
+  ],
+  "mcp": {
+    "playwright": {
+      "state": "connected",
+      "tools": 25
+    },
+    "everything": {
+      "state": "connected",
+      "tools": 16
+    },
+    "fetch": {
+      "state": "connected",
+      "tools": 1
+    }
+  },
+  "config": {
+    "mcp_enabled": true,
+    "provider": {
+      "backend": "openai_compatible",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "uses_chatgpt_plan": false,
+      "context_window": 128000,
+      "reasoning_effort": null,
+      "reasoning_effort_support": {
+        "supported": [],
+        "unsupported": {
+          "max": "OpenAI-compatible endpoints top out at 'high'"
+        },
+        "control": {
+          "options": [
+            {
+              "value": "off",
+              "label": "Off",
+              "description": "",
+              "state": "unknown"
+            },
+            {
+              "value": "low",
+              "label": "Low",
+              "description": "",
+              "state": "unknown"
+            },
+            {
+              "value": "medium",
+              "label": "Medium",
+              "description": "",
+              "state": "unknown"
+            },
+            {
+              "value": "high",
+              "label": "High",
+              "description": "",
+              "state": "unknown"
+            }
+          ],
+          "source": "fallback",
+          "default": null,
+          "reason": null
+        }
+      },
+      "reasoning_effort_note": null
+    }
+  }
+}

@@ -1,0 +1,45 @@
+- mcp.everything (16 tools): Audience: These instructions are written for an LLM or autonomous agent integrating with the Everything MCP Server.
+  mcp__everything__echo: Echoes back the input string
+  mcp__everything__get-annotated-message: Demonstrates how annotations can be used to provide metadata about content.
+  mcp__everything__get-env: Returns all environment variables, helpful for debugging MCP server configuration
+  mcp__everything__get-header-params: Returns its region argument and the Mcp-Param-Region HTTP header it arrived in.
+  mcp__everything__get-resource-links: Returns up to ten resource links that reference different types of resources
+  mcp__everything__get-resource-reference: Returns a resource reference that can be used by MCP clients
+  mcp__everything__get-structured-content: Returns structured content along with an output schema for client data validation
+  mcp__everything__get-sum: Returns the sum of two numbers
+  mcp__everything__get-tiny-image: Returns a tiny MCP logo image.
+  mcp__everything__gzip-file-as-resource: Compresses a single file using gzip compression.
+  mcp__everything__trigger-list-changed: Sends a notifications/<list>/list_changed for the tool, prompt or resource list.
+  mcp__everything__trigger-log-messages: Sends one log message at each logging level during the call.
+  mcp__everything__trigger-long-running-operation: Demonstrates a long running operation with progress updates.
+  mcp__everything__trigger-resource-update: Sends a notifications/resources/updated for a resource URI.
+  mcp__everything__toggle-simulated-logging: Toggles simulated, random-leveled logging on or off.
+  mcp__everything__toggle-subscriber-updates: Toggles simulated resource subscription updates on or off.
+- mcp.fetch (1 tool):
+  mcp__fetch__fetch: Fetches a URL from the internet and optionally extracts its contents as markdown.
+- mcp.playwright (25 tools):
+  mcp__playwright__browser_close: Close the page
+  mcp__playwright__browser_resize: Resize the browser window
+  mcp__playwright__browser_console_messages: Returns all console messages
+  mcp__playwright__browser_handle_dialog: Handle a dialog
+  mcp__playwright__browser_emulate_media: Emulate CSS media features for the page, for example switch between the light and dark color scheme.
+  mcp__playwright__browser_evaluate: Evaluate JavaScript expression on page or element
+  mcp__playwright__browser_file_upload: Upload one or multiple files
+  mcp__playwright__browser_drop: Drop files or MIME-typed data onto an element, as if dragged from outside the page.
+  mcp__playwright__browser_find: Search the accessibility snapshot of the current page for text or a regular expression.
+  mcp__playwright__browser_fill_form: Fill multiple form fields
+  mcp__playwright__browser_press_key: Press a key on the keyboard
+  mcp__playwright__browser_type: Type text into editable element
+  mcp__playwright__browser_navigate: Navigate to a URL
+  mcp__playwright__browser_navigate_back: Go back to the previous page in the history
+  mcp__playwright__browser_network_requests: Returns a numbered list of network requests since loading the page.
+  mcp__playwright__browser_network_request: Returns full details (headers and body) of a single network request, or a single part if `part` is set.
+  mcp__playwright__browser_run_code_unsafe: Run a Playwright code snippet.
+  mcp__playwright__browser_take_screenshot: Take a screenshot of the current page.
+  mcp__playwright__browser_snapshot: Capture accessibility snapshot of the current page, this is better than screenshot
+  mcp__playwright__browser_click: Perform click on a web page
+  mcp__playwright__browser_drag: Perform drag and drop between two elements
+  mcp__playwright__browser_hover: Hover over element on page
+  mcp__playwright__browser_select_option: Select an option in a dropdown
+  mcp__playwright__browser_tabs: List, create, close, or select a browser tab.
+  mcp__playwright__browser_wait_for: Wait for text to appear or disappear or a specified time to pass

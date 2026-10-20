@@ -1,6 +1,6 @@
 # On-demand MCP capability loading (pilot)
 
-With `CRUCIBLE_CAPABILITY_LOADING_ENABLED=1` (extension setting `crucible.performance.mcpOnDemand`, default off), the main chat agent no longer receives MCP tool schemas or the MCP guidance block in its first request. Its system prompt instead lists one line per connected MCP server under `OPTIONAL CAPABILITIES`, and the agent calls `load_capabilities` when the user's request needs one. Spec: [docs/superpowers/specs/2026-10-19-on-demand-capability-loading.md](superpowers/specs/2026-10-19-on-demand-capability-loading.md); plan: [docs/superpowers/plans/2026-10-19-on-demand-capability-loading.md](superpowers/plans/2026-10-19-on-demand-capability-loading.md), Part B.
+With `CRUCIBLE_CAPABILITY_LOADING_ENABLED` on (the default since 2026-10-20; extension setting `crucible.performance.mcpOnDemand`, default true; set `0` to turn it off), the main chat agent no longer receives MCP tool schemas or the MCP guidance block in its first request. Its system prompt instead lists one line per connected MCP server under `OPTIONAL CAPABILITIES`, and the agent calls `load_capabilities` when the user's request needs one. Spec: [docs/superpowers/specs/2026-10-19-on-demand-capability-loading.md](superpowers/specs/2026-10-19-on-demand-capability-loading.md); plan: [docs/superpowers/plans/2026-10-19-on-demand-capability-loading.md](superpowers/plans/2026-10-19-on-demand-capability-loading.md), Part B.
 
 ## How it works
 
@@ -192,3 +192,88 @@ Most loads were by exact `tool_names`, taken from the now-complete directory (16
   1. Re-run the compaction suite on luna.
   2. Re-run discovery on nemotron, on a less loaded endpoint.
   3. Re-check the example.com prompt (n ≥ 15) for the "web fetch needs approval" refusal.
+
+## Pre-default checks (2026-10-20)
+
+The three checks the updated recommendation listed, run on the final design (c6bcc067) with the same harness and workspace. Raw results: [validation/capability-loading/checks-2026-10-20/](validation/capability-loading/checks-2026-10-20/).
+
+- **Account.** The evaluation's ChatGPT registration had signed out, so luna ran on another signed-in account (`reg_753b274021f0`; `eval_rollout.py --chatgpt-registration`). Same model (`gpt-6-luna`), effort and route.
+- **Arms.** The flag-off luna arm was stopped after the compaction session and 3 example.com runs. The flag-off prompt is byte-identical to the earlier runs, so the earlier flag-off results are the control for the rest.
+- **Nemotron: not run.** NIM held requests open with no tokens until the 600 s turn cap: 2 of 3 turns timed out (one flag-on, right after a successful `load_capabilities`). It was stopped after 2 and 1 turns, which is too few to judge.
+
+### Compaction, six browser turns at a 45k window (luna)
+
+| Arm | Correct turns | Compactions | Loads | Unloaded refusals | Requests | Input (sum of turns) |
+| --- | --- | --- | --- | --- | --- | --- |
+| off (today) | 3/6 | 10 | 0 | 0 | 37 | 764,931 |
+| on (today) | 5/6 | 6 | 9 | 6 | 39 | 798,237 |
+| off (2026-10-19) | 3/6 | 7 | 0 | 0 | — | 680,037 |
+| on, query loader (2026-10-19) | 5/6 | 2 | 5 | 2 | — | 611,211 |
+
+**Passes.** Turn 1 used the browser (the earlier fourth discovery miss happened here). Every refusal came after a compaction that evicted the bundle, and each one ended in a reload and a correct answer. Both arms missed the Travel turn the same way, on a truncated `browser_snapshot`. Flag-off also gave the wrong Historical Fiction book, and then the wrong UPC. Whole-namespace loads make eviction cost more: 9 loads and 6 refusals against 5 and 2 with the query loader, and +4% input over flag-off. 45k is an artificial window; luna runs at 272k.
+
+### "what does example.com say right now?" (luna)
+
+| Arm | Runs | Answered from the page | Declined without a tool call | Route when answered |
+| --- | --- | --- | --- | --- |
+| off (today + 2026-10-19 runs) | 3 + 10 | 2 + 10 | 1 + 0 | `fetch` MCP server |
+| on (today) | 15 | **8** | **7** | `web_fetch` 4, load `mcp.fetch` then fetch 4 |
+| on (2026-10-19, both rounds) | 10 | 8 | 2 | |
+
+**Fails.** Flag-on luna declined 7 of 15 times ("I can't access the live site from this chat right now"), against 1 of 13 with the flag off. In 6 of the 7, its first step was the same as luna's discovery miss: the thought checks the skills catalog ("no installed skill applies"), and it answers without calling any tool. The built-in `web_fetch` was in its catalog every time.
+
+The seventh shows a second, fixable failure. **Luna never called `load_capabilities` first.** In all 5 runs where it reached for the `fetch` server, its first action called a name it built from the directory line: `mcp.fetch__fetch` (3 runs) or `mcp.fetch.fetch` (2), gluing the namespace onto the tool name (run 1 saw the same thing). The batch validator refused each with the generic "tool must be visible and args must be an object", which never says the namespace must be loaded first. In 4 of the 5 runs, luna then loaded `mcp.fetch`, called `mcp__fetch__fetch` and answered, one load and one refused call more than needed. In the fifth it answered that the fetch "was rejected".
+
+### Fixes and rerun
+
+Three changes, then the flag-on example.com prompt ×15 again (same account, workspace and harness):
+
+1. **Namespace-aware refusal** (`capabilities/history.py::misnamed_reason`, checked in `ControllerLoop` before batch validation). A call to `mcp.<server>__<tool>`, `mcp.<server>.<tool>`, `mcp.<server>` or `mcp__<server>` for a deferred server is refused with "`mcp.fetch__fetch` is not a tool name: `mcp.fetch` is a namespace. Call load_capabilities with namespace "mcp.fetch" alone in its step, then call the tool as `mcp__fetch__fetch`." The generic "tool must be visible" no longer applies to these calls.
+2. **Real call names in the directory** (`capabilities/catalog.py::render_directory`). The line reads `- mcp.fetch (1 tool): mcp__fetch__fetch` instead of `fetch`, and the block tells the model to call loaded tools by the names on that line, and that a call made before the load is refused. This adds about 800 characters for the three servers.
+3. **The block no longer says that loading grants no permission** ("…every call to an external tool still pauses for the user's approval…"). The same guidance arrives with every loaded bundle (`_MCP_BLOCK`), and the loader's description still says it.
+
+**Replay first.** The captured flag-on first step of a declined run was resent to luna 8 times per arm, interleaved, on a fresh transport per trial ([replay-first-step.jsonl](validation/capability-loading/checks-2026-10-20/replay-first-step.jsonl)). With changes 1 and 2: `web_fetch` 5, a misnamed or unloaded fetch-server call 2, no-tool answer 1. With change 3 added: `web_fetch` 8 of 8. The live result before the changes is the reference (7 of 15 no-tool), so no unchanged arm was replayed.
+
+**Live rerun, flag on, all three changes:**
+
+| Runs | Answered from the page | Declined without a tool call | Route |
+| --- | --- | --- | --- |
+| 15 | **14** | **1** | `web_fetch` 10, `web_search` then `web_fetch` 1, load `mcp.fetch` then fetch 3 |
+
+The misnamed calls still happened (`mcp.fetch__fetch`, `mcp.fetch.fetch`), along with one call to `mcp__fetch__fetch` before loading. Each got the new refusal, loaded `mcp.fetch` in the next step and answered. The one decline is the same no-tool first step that flag-off luna showed in 1 of 13 runs. Turns averaged 2.5 requests, 45,536 input tokens and 12.1 s. Two other refusals were `web_search` argument mismatches, unrelated to the flag. Raw: [luna-examplecom-on-fixed.json](validation/capability-loading/checks-2026-10-20/luna-examplecom-on-fixed.json).
+
+### Result
+
+- **Compaction:** passes (5/6 flag-on vs 3/6 flag-off). Run before the three changes, which touch only the directory, the block and the refusal text.
+- **example.com:** passes after the changes. 14 of 15 answered with the flag on, against 12 of 13 off. Before the changes it was 8 of 15.
+- **Discovery on luna:** passed earlier (29 of 30 on vs 28 of 30 off).
+- **Nemotron:** not evaluated on this design. NIM timed out, and the run was stopped by decision. The prompt-only JSON path is untested with the flag on.
+
+### Tool descriptions and server summaries in the directory
+
+Names alone tell the model nothing about tools like `trigger-resource-update` or a server's generic `search`. Each directory line now carries the first sentence of the tool's description, capped at 120 characters. Each server header also carries the first prose sentence of the server's own MCP `instructions` (`InitializeResult.instructions`, kept by `McpConnectionManager.server_instructions()`), when the server sends them; Markdown headings are skipped. Of the three servers, only `everything` sends instructions. The directory grows from about 1,600 to 4,009 characters, about 600 tokens, against the roughly 5,500-token first-request saving. The full rendering is in [directory-with-descriptions.txt](validation/capability-loading/checks-2026-10-20/directory-with-descriptions.txt).
+
+**Replay** (the current captured first step with only the directory swapped, 8 trials per prompt):
+
+| Directory | Prompt | Tried a tool | No-tool decline | MCP call before loading |
+| --- | --- | --- | --- | --- |
+| names only (shipped before) | example.com | 8/8 | 0 | 0 |
+| with descriptions | example.com | 8/8 | 0 | 2 (`mcp.fetch__fetch`) |
+| with descriptions | explicit browser | 8/8 | 0 | 3 |
+| with descriptions + "not loaded: load_capabilities first" header | explicit browser | 8/8 | 0 | 0 |
+| with descriptions + "not loaded…" header | example.com | 5/8 (+1 error) | **2** | 0 |
+
+Descriptions make the lines read as callable, so the model sometimes calls before loading. The refusal recovers that every time, at the cost of one extra request. A "not loaded" header stopped those calls on the browser prompt, but brought back the declines on example.com ("not loaded" reads as "not available"), so it was not adopted. Raw: [replay-descriptions.jsonl](validation/capability-loading/checks-2026-10-20/replay-descriptions.jsonl), [replay-descriptions-not-loaded-header.jsonl](validation/capability-loading/checks-2026-10-20/replay-descriptions-not-loaded-header.jsonl).
+
+**Live, flag on, headed Playwright** (the eval workspace's `mcp.json` without `--headless`), discovery suite ×4 plus an open → snapshot → screenshot thread:
+
+| Prompt | Runs | Used browser | Correct | Loads per turn | Calls before load | Requests | Input | Seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| explicit browser count | 4 | 4 | 4 | 1.0 | 0 | 4.0 | 95,840 | 18.0 |
+| Poetry first book | 4 | 4 | 4 | 1.0 | 1 | 6.0 | 173,408 | 32.2 |
+| screenshot | 4 | 4 | 4 | 1.0 | 1 | 4.2 | 95,373 | 19.3 |
+| example.com | 4 | 0 | 4 | 0.25 | 1 | 2.5 | 45,913 | 12.2 |
+
+16 of 16 were correct, with no declines and no misnamed calls; each of the 3 calls made before loading was refused and recovered. In the three-turn thread, luna loaded Playwright once in turn 1 (`browser_navigate`), then reused it for `browser_snapshot` (correct first three categories) and `browser_take_screenshot`. Input per turn: 85,013, 61,700 and 74,239. Raw: [luna-discovery-on-desc.json](validation/capability-loading/checks-2026-10-20/luna-discovery-on-desc.json), [luna-actions-on-desc.json](validation/capability-loading/checks-2026-10-20/luna-actions-on-desc.json).
+
+**Decision (2026-10-20): default ON**, by user decision, with the kill-switch kept (`CRUCIBLE_CAPABILITY_LOADING_ENABLED=0`, or `crucible.performance.mcpOnDemand: false`). The evidence covers luna on the ChatGPT plan (native function calling) only. **Nemotron and every other provider are untested with the flag on**, including the prompt-only JSON path (`openai_compatible`, Ollama, Gemini, Anthropic and the rest). If a model there misses tools it should find, turn the flag off first.

@@ -1,0 +1,159 @@
+{
+  "model": "nemotron",
+  "flag": "off",
+  "suite": "discovery",
+  "window": null,
+  "started_utc": "2026-10-20T05:26:22Z",
+  "scenarios": [
+    {
+      "name": "explicit_browser_count",
+      "thread": "chat-5681158b8ddd",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser and tell me how many book categories the sidebar lists.",
+          "tool_calls": [
+            {
+              "t": 4.34,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            },
+            {
+              "t": 10.93,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22816,
+            23723,
+            33773
+          ],
+          "compactions": [],
+          "answer": "The sidebar lists **50 book categories** (sub-categories under the 'Books' parent category). These range from Travel, Mystery, and Historical Fiction through to Crime, with all 50 categories visible in the sidebar navigation.",
+          "clarify": [],
+          "seconds": 16.9,
+          "usage": {
+            "requests": 3,
+            "input": 80312,
+            "output": 1102,
+            "cached": 0
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "multistep_first_turn",
+      "thread": "chat-1a4557a057e0",
+      "turns": [
+        {
+          "prompt": "Go to books.toscrape.com, open the Poetry category, and tell me the first book's title and price.",
+          "tool_calls": [],
+          "tool_errors": [],
+          "gates": [],
+          "request_inputs": [
+            23767
+          ],
+          "compactions": [],
+          "answer": "\u2717 Stopped",
+          "clarify": [],
+          "seconds": 600.0,
+          "usage": {
+            "requests": 2,
+            "input": 0,
+            "output": 0,
+            "cached": 0
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 1,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    }
+  ],
+  "mcp": {
+    "playwright": {
+      "state": "connected",
+      "tools": 25
+    },
+    "everything": {
+      "state": "connected",
+      "tools": 16
+    },
+    "fetch": {
+      "state": "connected",
+      "tools": 1
+    }
+  },
+  "config": {
+    "mcp_enabled": true,
+    "provider": {
+      "backend": "openai_compatible",
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "uses_chatgpt_plan": false,
+      "context_window": 128000,
+      "reasoning_effort": null,
+      "reasoning_effort_support": {
+        "supported": [],
+        "unsupported": {
+          "max": "OpenAI-compatible endpoints top out at 'high'"
+        },
+        "control": {
+          "options": [
+            {
+              "value": "off",
+              "label": "Off",
+              "description": "",
+              "state": "unknown"
+            },
+            {
+              "value": "low",
+              "label": "Low",
+              "description": "",
+              "state": "unknown"
+            },
+            {
+              "value": "medium",
+              "label": "Medium",
+              "description": "",
+              "state": "unknown"
+            },
+            {
+              "value": "high",
+              "label": "High",
+              "description": "",
+              "state": "unknown"
+            }
+          ],
+          "source": "fallback",
+          "default": null,
+          "reason": null
+        }
+      },
+      "reasoning_effort_note": null
+    }
+  }
+}

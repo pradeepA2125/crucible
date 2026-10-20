@@ -1,0 +1,207 @@
+{
+  "model": "luna",
+  "flag": "off",
+  "suite": "discovery",
+  "window": null,
+  "registration": "reg_753b274021f0",
+  "started_utc": "2026-10-20T05:44:21Z",
+  "scenarios": [
+    {
+      "name": "vague_page",
+      "thread": "chat-bd0322704fcf",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [],
+          "tool_errors": [],
+          "gates": [],
+          "request_inputs": [
+            22085
+          ],
+          "compactions": [],
+          "answer": "I can\u2019t check the live page from this chat right now. Example.com is commonly a minimal example-domain page, but I can\u2019t confirm what it says at this moment.",
+          "clarify": [],
+          "seconds": 4.1,
+          "usage": {
+            "requests": 1,
+            "input": 22085,
+            "output": 93,
+            "cached": 0
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-5c16560bb7ca",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 4.89,
+              "tool": "mcp__fetch__fetch",
+              "args": {
+                "url": "https://example.com",
+                "raw": false,
+                "max_length": 3000
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "fetch",
+              "server": "fetch",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22085,
+            23017
+          ],
+          "compactions": [],
+          "answer": "I fetched https://example.com just now. It says: \u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d",
+          "clarify": [],
+          "seconds": 10.1,
+          "usage": {
+            "requests": 2,
+            "input": 45102,
+            "output": 185,
+            "cached": 21888
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "vague_page",
+      "thread": "chat-78609980f4bf",
+      "turns": [
+        {
+          "prompt": "what does example.com say right now?",
+          "tool_calls": [
+            {
+              "t": 4.97,
+              "tool": "mcp__fetch__fetch",
+              "args": {
+                "url": "https://example.com",
+                "max_length": 5000
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "fetch",
+              "server": "fetch",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            22085,
+            23001
+          ],
+          "compactions": [],
+          "answer": "Right now, example.com says: \u201cThis domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\u201d",
+          "clarify": [],
+          "seconds": 10.0,
+          "usage": {
+            "requests": 2,
+            "input": 45086,
+            "output": 186,
+            "cached": 21888
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    }
+  ],
+  "mcp": {
+    "playwright": {
+      "state": "connected",
+      "tools": 25
+    },
+    "everything": {
+      "state": "connected",
+      "tools": 16
+    },
+    "fetch": {
+      "state": "connected",
+      "tools": 1
+    }
+  },
+  "config": {
+    "mcp_enabled": true,
+    "provider": {
+      "backend": "chatgpt",
+      "model": "gpt-6-luna",
+      "uses_chatgpt_plan": true,
+      "context_window": 272000,
+      "reasoning_effort": "medium",
+      "reasoning_effort_support": {
+        "supported": [
+          "high",
+          "low",
+          "max",
+          "medium",
+          "xhigh"
+        ],
+        "unsupported": {},
+        "control": {
+          "options": [
+            {
+              "value": "low",
+              "label": "Low",
+              "description": "Fast responses with lighter reasoning",
+              "state": "supported"
+            },
+            {
+              "value": "medium",
+              "label": "Medium",
+              "description": "Balances speed and reasoning depth for everyday tasks",
+              "state": "supported"
+            },
+            {
+              "value": "high",
+              "label": "High",
+              "description": "Greater reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high",
+              "description": "Extra high reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "max",
+              "label": "Max",
+              "description": "Maximum reasoning depth for the hardest problems",
+              "state": "supported"
+            }
+          ],
+          "source": "catalog",
+          "default": "medium",
+          "reason": null
+        }
+      },
+      "reasoning_effort_note": null
+    }
+  }
+}
