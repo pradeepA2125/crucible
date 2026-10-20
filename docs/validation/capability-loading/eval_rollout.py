@@ -107,6 +107,29 @@ SUITES = {
             "category names in the sidebar.",
             "Now take a screenshot of it."]},
     ],
+    # Needs the time, git and sqlite servers (mcp-server-time, mcp-server-git on the
+    # workspace, mcp-server-sqlite on data/shop.db). The last prompt needs two servers.
+    "more_mcp": [
+        {"name": "time_tokyo", "turns": ["What time is it in Tokyo right now?"]},
+        {"name": "git_last_commit", "turns": [
+            "Who made the most recent commit in this repo, and what did it add?"]},
+        {"name": "sqlite_top_customer", "turns": [
+            "Which customer has spent the most in the shop database?"]},
+        {"name": "sqlite_then_time", "turns": [
+            "Find the top-spending customer in the shop database and tell me the current "
+            "time in their city."]},
+    ],
+    # Needs the remote GitHub server (https://api.githubcopilot.com/mcp/x/all/readonly,
+    # 63 tools, over the bundle limit) and GITHUB_PAT. The commit prompt is answerable only
+    # from GitHub: the local git server's newest commit is a different one.
+    "github_mcp": [
+        {"name": "gh_latest_release", "turns": [
+            "What's the latest release of pradeepA2125/crucible on GitHub?"]},
+        {"name": "gh_workflows", "turns": [
+            "Which GitHub Actions workflows does pradeepA2125/crucible have?"]},
+        {"name": "gh_last_commit", "turns": [
+            "What's the latest commit message on main in pradeepA2125/crucible on GitHub?"]},
+    ],
     "compaction": [
         {"name": "long_browser_session", "turns": [
             "Open books.toscrape.com in the browser and tell me how many book categories "
@@ -386,7 +409,10 @@ def main() -> None:
                                                                          time.gmtime()),
                     "scenarios": []}
     try:
-        report["mcp"] = backend.wait_for_mcp({"playwright", "everything", "fetch"})
+        report["mcp"] = backend.wait_for_mcp(
+            {"playwright", "everything", "fetch"}
+            | ({"time", "git", "sqlite"} if args.suite == "more_mcp" else set())
+            | ({"github"} if args.suite == "github_mcp" else set()))
         report["config"] = {k: v for k, v in backend.get("/v1/config").items()
                             if k in ("provider", "mcp_enabled", "reasoning_effort")}
         only = set(args.only.split(",")) if args.only else None
