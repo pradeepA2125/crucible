@@ -81,9 +81,10 @@ def is_mcp_enabled() -> bool:
 
 def is_capability_loading_enabled() -> bool:
     """Whether the main agent's MCP tool schemas are deferred behind load_capabilities
-    (on-demand capability loading pilot). Default OFF; opt in with
-    CRUCIBLE_CAPABILITY_LOADING_ENABLED=1."""
-    return os.getenv("CRUCIBLE_CAPABILITY_LOADING_ENABLED", "0").strip().lower() in _TRUTHY
+    (on-demand capability loading). Default ON since the 2026-10-20 rollout checks
+    (docs/on-demand-capability-loading-pilot.md). Kill-switch:
+    CRUCIBLE_CAPABILITY_LOADING_ENABLED=0 (or false/no/off). Inert without MCP."""
+    return os.getenv("CRUCIBLE_CAPABILITY_LOADING_ENABLED", "1").strip().lower() in _TRUTHY
 
 
 def warn_if_incoherent_flags(logger: logging.Logger) -> None:
@@ -106,7 +107,10 @@ def warn_if_incoherent_flags(logger: logging.Logger) -> None:
         logger.warning(
             "incoherent flags: CRUCIBLE_TEAMS_ENABLED is on but sub-agents are off — "
             "teams need CRUCIBLE_SUBAGENTS_ENABLED.")
-    if is_capability_loading_enabled() and not is_mcp_enabled():
+    # Default ON while MCP defaults OFF: warn only when explicitly turned on.
+    explicit_loading = os.getenv(
+        "CRUCIBLE_CAPABILITY_LOADING_ENABLED", "").strip().lower() in _TRUTHY
+    if explicit_loading and not is_mcp_enabled():
         logger.warning(
             "incoherent flags: CRUCIBLE_CAPABILITY_LOADING_ENABLED is on but "
             "CRUCIBLE_MCP_ENABLED is off — there are no MCP tools to load on demand.")

@@ -57,10 +57,10 @@ describe("crucible.performance.mcpOnDemand", () => {
   const key = "crucible.performance.mcpOnDemand";
   const envKey = "CRUCIBLE_CAPABILITY_LOADING_ENABLED";
 
-  it("is declared off by default", () => {
+  it("is declared on by default", () => {
     const property = manifest.contributes.configuration.properties[key];
     expect(property.type).toBe("boolean");
-    expect(property.default).toBe(false);
+    expect(property.default).toBe(true);
   });
 
   it.each([

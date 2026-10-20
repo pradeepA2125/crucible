@@ -7,6 +7,9 @@ with sub-agents. So the suite runs with it OFF; sub-agent tests opt in with
 monkeypatch.setenv("CRUCIBLE_SUBAGENTS_ENABLED", "1") (spec §14).
 CRUCIBLE_TEAMS_ENABLED (default ON since Phase 6) is forced off for the same reason; team tests
 opt in with "1". To test "off", set "0" explicitly: delenv now means the default, which is ON.
+CRUCIBLE_CAPABILITY_LOADING_ENABLED (default ON since 2026-10-20) is forced off too: with it
+on, every controller test with an MCP manager would see a directory instead of MCP schemas.
+Capability-loading tests opt in with "1".
 """
 import asyncio
 from collections.abc import Iterator
@@ -49,6 +52,11 @@ def _subagents_off_unless_a_test_opts_in(monkeypatch: pytest.MonkeyPatch) -> Non
 @pytest.fixture(autouse=True)
 def _teams_off_unless_a_test_opts_in(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CRUCIBLE_TEAMS_ENABLED", "0")
+
+
+@pytest.fixture(autouse=True)
+def _capability_loading_off_unless_a_test_opts_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CRUCIBLE_CAPABILITY_LOADING_ENABLED", "0")
 
 
 @pytest.fixture(autouse=True)

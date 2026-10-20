@@ -182,9 +182,9 @@
         },
         "crucible.performance.mcpOnDemand": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "machine-overridable",
-          "description": "Keep MCP tool schemas out of the first request; the agent loads a server's tools when it needs them. Experimental. Requires a backend restart."
+          "description": "Keep MCP tool schemas out of the first request; the agent loads a server's tools when it needs them. Requires a backend restart."
         },
         "crucible.performance.adaptiveReads": {
           "type": "boolean",

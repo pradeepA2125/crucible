@@ -50,3 +50,22 @@ def test_capability_loading_without_mcp_warns(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         warn_if_incoherent_flags(logging.getLogger("test"))
     assert not any("CRUCIBLE_CAPABILITY_LOADING_ENABLED" in r.message for r in caplog.records)
+
+
+def test_capability_loading_defaults_on_with_a_kill_switch(monkeypatch):
+    from agentd.chat.controller_factory import is_capability_loading_enabled
+    monkeypatch.delenv("CRUCIBLE_CAPABILITY_LOADING_ENABLED", raising=False)
+    assert is_capability_loading_enabled()
+    for off in ("0", "false", "no", "off"):
+        monkeypatch.setenv("CRUCIBLE_CAPABILITY_LOADING_ENABLED", off)
+        assert not is_capability_loading_enabled()
+
+
+def test_default_capability_loading_without_mcp_does_not_warn(monkeypatch, caplog):
+    # MCP is off by default: warning about the default would fire on every startup.
+    monkeypatch.setenv("CRUCIBLE_TASK_SUBSYSTEM", "1")
+    monkeypatch.delenv("CRUCIBLE_CAPABILITY_LOADING_ENABLED", raising=False)
+    monkeypatch.delenv("CRUCIBLE_MCP_ENABLED", raising=False)
+    with caplog.at_level(logging.WARNING):
+        warn_if_incoherent_flags(logging.getLogger("test"))
+    assert not any("CRUCIBLE_CAPABILITY_LOADING_ENABLED" in r.message for r in caplog.records)
