@@ -4,11 +4,30 @@ from __future__ import annotations
 import json
 import re
 
+from agentd import context_metrics
 from agentd.capabilities.catalog import short_name, tool_version
 
-MAX_BUNDLE_CHARS = 32_000
+# A loaded bundle is resent with every later request of the turn, so its ceiling is a share
+# of the context window: a fifth, never more than 50k tokens. GitHub's full 63-tool server
+# (~15.7k tokens) loads whole at 128k and up; at 64k it goes through query/tool_names.
+BUNDLE_WINDOW_FRACTION = 0.20
+MAX_BUNDLE_TOKENS = 50_000
+# The compaction window when none is known (MemoryConfig's default).
+_DEFAULT_WINDOW_TOKENS = 128_000
 DEFAULT_LIMIT = 4
 MAX_LIMIT = 8
+
+
+def bundle_token_limit(window_tokens: int | None) -> int:
+    window = window_tokens if window_tokens and window_tokens > 0 else _DEFAULT_WINDOW_TOKENS
+    return min(MAX_BUNDLE_TOKENS, int(window * BUNDLE_WINDOW_FRACTION))
+
+
+def bundle_tokens(bundle: str) -> int:
+    """o200k_base tokens; chars/3 until the encoding loads, which over-counts JSON schemas,
+    so the fallback refuses early rather than late."""
+    counted = context_metrics.count_text_tokens(bundle)
+    return counted if counted is not None else (len(bundle) + 2) // 3
 
 
 def _words(text: str) -> set[str]:

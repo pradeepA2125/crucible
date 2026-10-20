@@ -190,7 +190,10 @@ def test_misnamed_reason_leaves_other_names_alone():
 
 # --- Task 8: the load_capabilities tool -------------------------------------------------
 
-from agentd.capabilities.bundle import MAX_BUNDLE_CHARS  # noqa: E402
+from agentd.capabilities.bundle import (  # noqa: E402
+    bundle_token_limit,
+    bundle_tokens,
+)
 from agentd.capabilities.tool_source import (  # noqa: E402
     LOAD_CAPABILITIES,
     CapabilitySession,
@@ -311,12 +314,43 @@ async def test_changed_schema_reloads():
 @pytest.mark.asyncio
 async def test_bundle_too_large_activates_nothing():
     huge = [_d(f"mcp__big__t{i}", "x" * 5000) for i in range(8)]
-    session = CapabilitySession(namespaces={"mcp.big": huge}, history=[], guidance="")
+    # A 20k-token window allows 4,000 tokens; the bundle is far over it.
+    session = CapabilitySession(namespaces={"mcp.big": huge}, history=[], guidance="",
+                                window_tokens=lambda: 20_000)
     out = await CapabilityToolSource(session).execute("load_capabilities", {"namespace": "mcp.big"})
     assert out.is_error and "bundle_too_large" in out.output
+    assert "tokens (limit 4000" in out.output
     assert "capability_bundle" not in out.output
     assert "retry" in out.output.lower()
     assert "`query`" in out.output and "`tool_names`" in out.output
+
+
+def test_bundle_token_limit_is_a_fifth_of_the_window_capped_at_50k():
+    assert bundle_token_limit(128_000) == 25_600
+    assert bundle_token_limit(64_000) == 12_800
+    assert bundle_token_limit(272_000) == 50_000
+    assert bundle_token_limit(1_000_000) == 50_000
+    assert bundle_token_limit(None) == 25_600  # the compaction default window
+
+
+def test_bundle_tokens_falls_back_to_a_char_estimate(monkeypatch):
+    from agentd import context_metrics
+    monkeypatch.setattr(context_metrics, "_ENCODING", None)
+    assert bundle_tokens("a" * 300) == 100  # chars/3 over-counts, so the limit errs safe
+
+
+@pytest.mark.asyncio
+async def test_bundle_limit_follows_the_live_window():
+    tools = [_d(f"mcp__big__t{i}", "word " * 600) for i in range(8)]
+    window = {"tokens": 20_000}
+    session = CapabilitySession(namespaces={"mcp.big": tools}, history=[], guidance="",
+                                window_tokens=lambda: window["tokens"])
+    source = CapabilityToolSource(session)
+    refused = await source.execute("load_capabilities", {"namespace": "mcp.big"})
+    assert refused.is_error and "bundle_too_large" in refused.output
+    window["tokens"] = 272_000  # e.g. Settings raised the context window
+    loaded = await source.execute("load_capabilities", {"namespace": "mcp.big"})
+    assert not loaded.is_error and json.loads(loaded.output)["kind"] == "capability_bundle"
 
 
 def test_loader_description_defaults_to_the_whole_namespace():
@@ -341,7 +375,7 @@ async def test_bundle_survives_small_result_budget():
     session = CapabilitySession(namespaces={"mcp.big": tools}, history=[], guidance="")
     source = CapabilityToolSource(session)
     probe = await source.execute("load_capabilities", {"namespace": "mcp.big"})
-    assert 28_000 < len(probe.output) <= MAX_BUNDLE_CHARS
+    assert 28_000 < len(probe.output) and not probe.is_error
 
     async def prepare(call):
         async def run():

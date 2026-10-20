@@ -1,12 +1,14 @@
 """The `load_capabilities` tool: deliver a deferred MCP server's schemas as a result."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from agentd.capabilities.bundle import (
     DEFAULT_LIMIT,
-    MAX_BUNDLE_CHARS,
     MAX_LIMIT,
+    bundle_token_limit,
+    bundle_tokens,
     render_bundle,
     select_tools,
 )
@@ -51,6 +53,9 @@ class CapabilitySession:
     guidance: str = ""
     # Each server's own instructions by namespace ("mcp.<server>"), for the directory.
     summaries: dict[str, str] = field(default_factory=dict)
+    # The live compaction window (Settings and overflow recovery change it), which sets
+    # the bundle ceiling; None means unknown.
+    window_tokens: Callable[[], int | None] = lambda: None
 
 
 def _error(text: str) -> ToolOutput:
@@ -105,9 +110,10 @@ class CapabilityToolSource:
                                      "this conversation.")
         guidance = None if guidance_visible(self._session.history) else self._session.guidance
         bundle = render_bundle(namespace, selected, guidance)
-        if len(bundle) > MAX_BUNDLE_CHARS:
+        size, limit = bundle_tokens(bundle), bundle_token_limit(self._session.window_tokens())
+        if size > limit:
             return _error(f"bundle_too_large: {len(selected)} tools of {namespace} come to "
-                          f"{len(bundle)} characters (limit {MAX_BUNDLE_CHARS}). Retry with a "
+                          f"{size} tokens (limit {limit}). Retry with a "
                           "`query` naming the tools you need, or exact `tool_names` "
                           "from the namespace's directory line.")
         return ToolOutput(output=bundle, whole=True)

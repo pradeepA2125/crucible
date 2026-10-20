@@ -1006,7 +1006,8 @@ class ChatController:
             capabilities = CapabilitySession(
                 guidance=mcp_bundle_guidance(RenderContext.main()),
                 summaries={f"mcp.{server}": text for server, text
-                           in self._mcp_manager.server_instructions().items()})
+                           in self._mcp_manager.server_instructions().items()},
+                window_tokens=lambda: self._memory_harness.image_context_window)
             dispatch_sources.append(CapabilityToolSource(capabilities))
         loop = ControllerLoop(
             self._reasoning,
