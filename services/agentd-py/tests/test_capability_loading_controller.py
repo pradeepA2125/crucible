@@ -316,7 +316,7 @@ async def test_directory_carries_server_instructions_and_descriptions(tmp_path, 
     assert f"  mcp__web__fetch: {FETCH.description.split('. ')[0]}" in directory
 
 
-def test_directory_sits_right_after_the_tool_catalog():
+def test_directory_sits_right_after_the_tool_catalog(monkeypatch):
     # The rollout's discovery misses: the model checked the skills catalog, found no match
     # and said the browser was unavailable; the directory came after that catalog.
     tools = [{"name": "read_file", "description": "Read a file.", "parameters": {}}]
@@ -334,9 +334,14 @@ def test_directory_sits_right_after_the_tool_catalog():
         assert listed < system.index(later)
     text = system[block:listed]
     assert "available" in text.lower() and "load_capabilities" in text
-    # The default load is the whole namespace; query/tool_names only after bundle_too_large.
-    assert "every tool" in text
-    assert text.index("bundle_too_large") < text.index("`query`")
+    # The default teaches loading the listed tools by name, the whole server when unsure.
+    assert "`tool_names`" in text and "load the whole server" in text
+    monkeypatch.setenv("CRUCIBLE_CAPABILITY_LOAD_MODE", "namespace")
+    whole = format_controller_system_prompt(tools, capability_directory=directory)
+    # In namespace mode: the whole server; query/tool_names only after bundle_too_large.
+    whole_text = whole[whole.index("OPTIONAL CAPABILITIES"):whole.index(directory)]
+    assert "every tool" in whole_text
+    assert whole_text.index("bundle_too_large") < whole_text.index("`query`")
     assert sum(parts.values()) == len(system)
     # The block's leading blank-line newline, its text, the directory and a final newline.
     assert parts["capability_directory"] == 1 + len(text) + len(directory) + 1

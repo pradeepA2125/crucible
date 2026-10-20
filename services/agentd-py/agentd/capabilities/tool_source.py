@@ -18,16 +18,27 @@ from agentd.tools.registry import ToolDefinition, ToolOutput
 
 _MAX_QUERY_CHARS = 1600
 
+_NAMESPACE_DESCRIPTION = (
+    "Load the tool schemas of a deferred namespace from OPTIONAL CAPABILITIES. Give just "
+    "`namespace`: that loads every tool of the server. The result is the schemas, not an "
+    "execution: the loaded tools are callable from your next step. Call it alone in its "
+    "step. Only when a whole-namespace load is refused as bundle_too_large, retry with a "
+    "`query` (a few words naming the tools you need) or exact `tool_names`. "
+    "Loading grants no permission: every call still goes through the usual approval."
+)
+_TOOLS_DESCRIPTION = (
+    "Load tool schemas from a deferred namespace in OPTIONAL CAPABILITIES. Give `namespace` "
+    "and `tool_names`: the full names, from that namespace's lines, of only the tools you "
+    "need. If you are unsure which you need, leave out `tool_names` to load every tool of "
+    "the server. The result is the "
+    "schemas, not an execution: the loaded tools are callable from your next step. Call it "
+    "alone in its step. Loading grants no permission: every call still goes through the "
+    "usual approval."
+)
+
 LOAD_CAPABILITIES = ToolDefinition(
     name=LOADER_TOOL,
-    description=(
-        "Load the tool schemas of a deferred namespace from OPTIONAL CAPABILITIES. Give just "
-        "`namespace`: that loads every tool of the server. The result is the schemas, not an "
-        "execution: the loaded tools are callable from your next step. Call it alone in its "
-        "step. Only when a whole-namespace load is refused as bundle_too_large, retry with a "
-        "`query` (a few words naming the tools you need) or exact `tool_names`. "
-        "Loading grants no permission: every call still goes through the usual approval."
-    ),
+    description=_NAMESPACE_DESCRIPTION,
     parameters={
         "type": "object",
         "properties": {
@@ -62,6 +73,14 @@ def _error(text: str) -> ToolOutput:
     return ToolOutput(output=f"Error: {text}", is_error=True)
 
 
+def loader_definition() -> ToolDefinition:
+    from agentd.chat.controller_factory import capability_load_mode
+
+    if capability_load_mode() == "tools":
+        return LOAD_CAPABILITIES.model_copy(update={"description": _TOOLS_DESCRIPTION})
+    return LOAD_CAPABILITIES
+
+
 class CapabilityToolSource:
     name = "capabilities"
 
@@ -69,7 +88,7 @@ class CapabilityToolSource:
         self._session = session
 
     def definitions(self) -> list[ToolDefinition]:
-        return [LOAD_CAPABILITIES]
+        return [loader_definition()]
 
     def owns(self, tool: str) -> bool:
         return tool == LOADER_TOOL

@@ -87,6 +87,14 @@ def is_capability_loading_enabled() -> bool:
     return os.getenv("CRUCIBLE_CAPABILITY_LOADING_ENABLED", "1").strip().lower() in _TRUTHY
 
 
+def capability_load_mode() -> str:
+    """How the main agent is taught to load deferred MCP tools: "tools" (default: the
+    listed tools it needs, by exact name, and a whole server when it is unsure) or
+    "namespace" (a whole server per load). Anything else means the default."""
+    mode = os.getenv("CRUCIBLE_CAPABILITY_LOAD_MODE", "tools").strip().lower()
+    return mode if mode in {"namespace", "tools"} else "tools"
+
+
 def warn_if_incoherent_flags(logger: logging.Logger) -> None:
     """Task-subsystem OFF only works when the controller is ON (the legacy ChatAgent's
     large_change branch has nowhere to go without create_task). Warn — do not fail."""

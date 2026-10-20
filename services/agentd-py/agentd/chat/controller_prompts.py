@@ -805,6 +805,32 @@ of a few words naming the tools you need, or exact `tool_names` from the namespa
 If a call is refused because a tool is not loaded, load its namespace again.
 """
 
+# CRUCIBLE_CAPABILITY_LOAD_MODE=tools (the default): the directory already says what each
+# tool does, so the model loads only the tools it will call, and a whole server only when
+# unsure. On GitHub's 63 tools this cut input 35%; on small servers whole loads were
+# cheaper (load-mode comparison, 2026-10-20).
+_CAPABILITY_BLOCK_TOOLS = """
+OPTIONAL CAPABILITIES: available now, loaded on demand
+The tools above are not all you have. Each namespace below is a connected external MCP
+server, and every tool listed under it is available in this turn, with what it does: only
+their parameter schemas are left out of the list above until you load them. Before you tell
+the user something is out of reach, check these lines; if a tool covers the request, load
+it and use it. To load, call load_capabilities alone in its step with the namespace and
+`tool_names`: the full names, from the lines below, of only the tools you need, including
+ones you expect to call next. If you are unsure which tools you need, or cannot find the
+right one in the lines below, load the whole server instead by leaving out `tool_names`.
+From your next step, call the loaded tools by those full names (`mcp__<server>__<tool>`); a
+call made before the load is refused. Their guidance comes with the schemas. If a call is
+refused because a tool is not loaded, load it.
+"""
+
+
+def capability_block() -> str:
+    from agentd.chat.controller_factory import capability_load_mode
+
+    return _CAPABILITY_BLOCK_TOOLS if capability_load_mode() == "tools" else _CAPABILITY_BLOCK
+
+
 _MCP_SCHEMAS_IN_TOOLS = "Their parameter schemas are in TOOLS like any other\ntool;"
 
 
@@ -1219,7 +1245,7 @@ def format_controller_system_prompt(
     # Right after the tool catalog, where the model looks for what it can do: placed after
     # the skills catalog, a model found no matching skill and told the user it had no
     # browser (rollout evaluation, 2026-10-19).
-    directory = _CAPABILITY_BLOCK + capability_directory + "\n" if capability_directory else ""
+    directory = capability_block() + capability_directory + "\n" if capability_directory else ""
     base += directory
     from agentd.tools.batching import batching_enabled
     if not batching_enabled():

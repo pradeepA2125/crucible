@@ -389,3 +389,36 @@ async def test_bundle_survives_small_result_budget():
         [Call("a", "load_capabilities", {"namespace": "mcp.big"})], prepare=prepare,
         resources=lambda c: (), pool=ExecutionPool(1), update=update, budget=16_000)
     assert result.output.output == probe.output
+
+
+# --- Load mode: whole namespace (default) or the listed tools by name --------------------
+
+def test_load_mode_defaults_to_tools(monkeypatch):
+    from agentd.chat.controller_factory import capability_load_mode
+    monkeypatch.delenv("CRUCIBLE_CAPABILITY_LOAD_MODE", raising=False)
+    assert capability_load_mode() == "tools"
+    for value, expected in (("tools", "tools"), (" NAMESPACE ", "namespace"),
+                            ("namespace", "namespace"), ("bogus", "tools")):
+        monkeypatch.setenv("CRUCIBLE_CAPABILITY_LOAD_MODE", value)
+        assert capability_load_mode() == expected
+
+
+def test_tools_mode_teaches_loading_listed_tools_by_name(monkeypatch):
+    from agentd.capabilities.tool_source import loader_definition
+    from agentd.chat.controller_prompts import capability_block
+    monkeypatch.setenv("CRUCIBLE_CAPABILITY_LOAD_MODE", "tools")
+    block, description = capability_block(), loader_definition().description
+    assert "`tool_names`" in block and "load the whole server" in block
+    assert "unsure" in block and "unsure" in description
+    assert "only the tools you need" in description
+    monkeypatch.setenv("CRUCIBLE_CAPABILITY_LOAD_MODE", "namespace")
+    assert "load the whole server" not in capability_block()
+    assert "every tool of the server" in loader_definition().description
+
+
+@pytest.mark.asyncio
+async def test_source_offers_the_mode_specific_loader(monkeypatch):
+    monkeypatch.setenv("CRUCIBLE_CAPABILITY_LOAD_MODE", "tools")
+    _, source = _source()
+    (definition,) = source.definitions()
+    assert "only the tools you need" in definition.description
