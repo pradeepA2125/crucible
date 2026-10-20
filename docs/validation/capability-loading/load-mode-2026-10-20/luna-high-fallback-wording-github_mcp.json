@@ -1,0 +1,281 @@
+{
+  "model": "luna",
+  "flag": "on",
+  "suite": "github_mcp",
+  "window": null,
+  "registration": "reg_753b274021f0",
+  "effort": "high",
+  "load_mode": "tools",
+  "started_utc": "2026-10-20T08:44:43Z",
+  "scenarios": [
+    {
+      "name": "gh_latest_release",
+      "thread": "chat-5c011248e250",
+      "turns": [
+        {
+          "prompt": "What's the latest release of pradeepA2125/crucible on GitHub?",
+          "tool_calls": [
+            {
+              "t": 9.86,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.github",
+                "tool_names": [
+                  "mcp__github__get_latest_release"
+                ]
+              }
+            },
+            {
+              "t": 16.97,
+              "tool": "mcp__github__get_latest_release",
+              "args": {
+                "owner": "pradeepA2125",
+                "repo": "crucible"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "get_latest_release",
+              "server": "github",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            18790,
+            20021,
+            36752
+          ],
+          "compactions": [],
+          "answer": "The latest release is **[v0.8.0](https://github.com/pradeepA2125/crucible/releases/tag/v0.8.0)**. GitHub lists it as published October 20, 2026.",
+          "clarify": [],
+          "seconds": 26.8,
+          "usage": {
+            "requests": 3,
+            "input": 75563,
+            "output": 323,
+            "cached": 38400
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "gh_workflows",
+      "thread": "chat-f527edec63f0",
+      "turns": [
+        {
+          "prompt": "Which GitHub Actions workflows does pradeepA2125/crucible have?",
+          "tool_calls": [
+            {
+              "t": 8.35,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.github",
+                "tool_names": [
+                  "mcp__github__actions_list"
+                ]
+              }
+            },
+            {
+              "t": 14.77,
+              "tool": "mcp__github__actions_list",
+              "args": {
+                "method": "list_workflows",
+                "owner": "pradeepA2125",
+                "repo": "crucible"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "actions_list",
+              "server": "github",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            18788,
+            20538,
+            21803
+          ],
+          "compactions": [],
+          "answer": "`pradeepA2125/crucible` has two active GitHub Actions workflows:\n\n- **release** \u2014 `.github/workflows/release.yml`\n- **test-fetch-tools** \u2014 `.github/workflows/test-fetch-tools.yml`",
+          "clarify": [],
+          "seconds": 23.3,
+          "usage": {
+            "requests": 3,
+            "input": 61129,
+            "output": 346,
+            "cached": 38912
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "gh_last_commit",
+      "thread": "chat-259641bdd982",
+      "turns": [
+        {
+          "prompt": "What's the latest commit message on main in pradeepA2125/crucible on GitHub?",
+          "tool_calls": [
+            {
+              "t": 7.26,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.github",
+                "tool_names": [
+                  "mcp__github__list_commits"
+                ]
+              }
+            },
+            {
+              "t": 13.43,
+              "tool": "mcp__github__list_commits",
+              "args": {
+                "owner": "pradeepA2125",
+                "repo": "crucible",
+                "sha": "main",
+                "perPage": 1,
+                "fields": [
+                  "sha",
+                  "commit"
+                ]
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "list_commits",
+              "server": "github",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            18796,
+            20338,
+            21521
+          ],
+          "compactions": [],
+          "answer": "The latest commit on `main` in `pradeepA2125/crucible` is:\n\n**chore(release): v0.8.0 on-demand MCP loading by default**\n\nSHA: `fd2ea4716f9ba33f28f3511c57dbb3f6115fb2c7` \u00b7 committed October 20, 2026.",
+          "clarify": [],
+          "seconds": 21.3,
+          "usage": {
+            "requests": 3,
+            "input": 60655,
+            "output": 395,
+            "cached": 38912
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    }
+  ],
+  "mcp": {
+    "playwright": {
+      "state": "connected",
+      "tools": 25
+    },
+    "everything": {
+      "state": "connected",
+      "tools": 16
+    },
+    "fetch": {
+      "state": "connected",
+      "tools": 1
+    },
+    "time": {
+      "state": "connected",
+      "tools": 2
+    },
+    "git": {
+      "state": "connected",
+      "tools": 12
+    },
+    "sqlite": {
+      "state": "connected",
+      "tools": 6
+    },
+    "github": {
+      "state": "connected",
+      "tools": 63
+    }
+  },
+  "config": {
+    "mcp_enabled": true,
+    "provider": {
+      "backend": "chatgpt",
+      "model": "gpt-6-luna",
+      "uses_chatgpt_plan": true,
+      "context_window": 272000,
+      "reasoning_effort": "high",
+      "reasoning_effort_support": {
+        "supported": [
+          "high",
+          "low",
+          "max",
+          "medium",
+          "xhigh"
+        ],
+        "unsupported": {},
+        "control": {
+          "options": [
+            {
+              "value": "low",
+              "label": "Low",
+              "description": "Fast responses with lighter reasoning",
+              "state": "supported"
+            },
+            {
+              "value": "medium",
+              "label": "Medium",
+              "description": "Balances speed and reasoning depth for everyday tasks",
+              "state": "supported"
+            },
+            {
+              "value": "high",
+              "label": "High",
+              "description": "Greater reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high",
+              "description": "Extra high reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "max",
+              "label": "Max",
+              "description": "Maximum reasoning depth for the hardest problems",
+              "state": "supported"
+            }
+          ],
+          "source": "catalog",
+          "default": "medium",
+          "reason": null
+        }
+      },
+      "reasoning_effort_note": null
+    }
+  }
+}

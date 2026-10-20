@@ -313,3 +313,22 @@ Questions about `pradeepA2125/crucible`: its latest release, its Actions workflo
 - **Not established:** whether the flag raises the medium-effort decline rate. Flag-off was not run on these prompts. Luna's 1-in-13 to 1-in-15 no-tool rate on simpler prompts appears with or without the flag.
 
 **Wording matters more than the flag for bare requests.** "open linkedin" made no tool call in 0 of 8 replays with the flag on and 0 of 8 off, nor live in either arm: luna read it as acting on the user's own device. "open linkedin in the browser" loaded Playwright, navigated and opened the page.
+
+## Loading tools by name against whole servers (2026-10-20, luna, high effort)
+
+`CRUCIBLE_CAPABILITY_LOAD_MODE` picks the loading guidance in the capability block and the loader's description. `namespace` loads a whole server per load. `tools` loads only the listed tools the agent needs, by exact name from the directory. The harness option is `--load-mode`. Both modes ran at high effort with all seven servers; raw results are in [validation/capability-loading/load-mode-2026-10-20/](validation/capability-loading/load-mode-2026-10-20/).
+
+| Task | `tools`: input / s | `namespace`: input / s | Correct (tools / namespace) |
+| --- | --- | --- | --- |
+| GitHub, 3 prompts ×3 (63-tool server) | **61,050 / 22.5** | 93,341 / 20.6 (earlier high run) | 8/9 / 9/9 |
+| Open → snapshot → screenshot, whole thread ×2 | 271,787 / 74 | 207,712 / 56 | 6/6 / 6/6 |
+| Tokyo time ×2 | 103,590 / 27 | 81,536 / 21 | 2/2 / 2/2 |
+| Last local commit ×2 | 91,765 / 35 | 62,554 / 25 | 2/2 / 2/2 |
+| Top customer ×2 | 105,357 / 43 | 106,117 / 34 | 2/2 / 2/2 |
+| Top customer, then the time in their city ×2 | 182,684 / 46 | 156,915 / 44 | 2/2 / 2/2 |
+
+- **By name wins on a large server.** `tools` loaded exactly `get_latest_release`, `actions_list` or `list_commits` instead of the ~15.7k-token GitHub bundle: 35% less input at the same correctness. (Its release answers said v0.8.0, released during the run, which was correct.) The one miss was a first-step `answer` ("I'll check the repository's `main` branch…").
+- **By name costs more on small servers and multi-step work.** The browser thread loaded one tool per turn (`browser_navigate`, then `browser_snapshot`, then `browser_take_screenshot`) instead of one whole load on turn 1. Whole bundles of small servers are cheap anyway: time ~340 tokens, sqlite ~420, Playwright ~4.4k. `tools` mode also had 4 calls to tools it had not loaded and 3 schema mismatches, against 1 and 0. Luna chose sensible sets, such as `list_tables, describe_table, read_query`, but seldom loaded ahead for its next step.
+- **Two runs per small-server prompt** can't rank those cells precisely; the direction was the same in every one.
+
+**Decision: `tools` is the default, with a fallback.** The block now tells the agent to load the tools it needs by name. If it is unsure which it needs, or can't find the right one, it loads the whole server. `CRUCIBLE_CAPABILITY_LOAD_MODE=namespace` restores whole-server loading. **Live check of the final wording** (one run each, high effort): 10 of 10 correct. Every load was by name: `browser_navigate`, then `browser_snapshot`, then `browser_take_screenshot` across the thread; `get_latest_release`, `actions_list` and `list_commits` for GitHub; `get_current_time`; `git_log`; and `list_tables, describe_table, read_query`, plus `get_current_time` for the two-server prompt. The whole-server fallback was never used. There were no misnamed calls; 2 calls made before loading were refused and recovered. Input: the browser thread 258,578 in total (73.8 s); GitHub 65,782 per prompt (23.8 s); time 81,174; local commit 60,218; top customer 105,664; top customer then the time in their city 209,204. Raw: `luna-high-fallback-wording-*.json` in the same folder.

@@ -1,0 +1,365 @@
+{
+  "model": "luna",
+  "flag": "on",
+  "suite": "browser_actions",
+  "window": null,
+  "registration": "reg_753b274021f0",
+  "effort": "high",
+  "load_mode": "namespace",
+  "started_utc": "2026-10-20T08:21:54Z",
+  "scenarios": [
+    {
+      "name": "open_snapshot_screenshot",
+      "thread": "chat-ff8d1ead0621",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser.",
+          "tool_calls": [
+            {
+              "t": 6.21,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright"
+              }
+            },
+            {
+              "t": 13.25,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com/"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            18763,
+            24447,
+            25490
+          ],
+          "compactions": [],
+          "answer": "Opened https://books.toscrape.com/ in the browser. The page title is \u201cAll products | Books to Scrape - Sandbox.\u201d",
+          "clarify": [],
+          "seconds": 28.4,
+          "usage": {
+            "requests": 3,
+            "input": 68700,
+            "output": 239,
+            "cached": 42880
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        },
+        {
+          "prompt": "Take an accessibility snapshot of that page and tell me the first three category names in the sidebar.",
+          "tool_calls": [
+            {
+              "t": 7.07,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            26582,
+            35922
+          ],
+          "compactions": [],
+          "answer": "The first three category names in the sidebar are **Travel**, **Mystery**, and **Historical Fiction**.",
+          "clarify": [],
+          "seconds": 15.0,
+          "usage": {
+            "requests": 2,
+            "input": 62504,
+            "output": 153,
+            "cached": 51712
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        },
+        {
+          "prompt": "Now take a screenshot of it.",
+          "tool_calls": [
+            {
+              "t": 5.74,
+              "tool": "mcp__playwright__browser_take_screenshot",
+              "args": {
+                "scale": "css",
+                "fullPage": false
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_take_screenshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            36999,
+            38075
+          ],
+          "compactions": [],
+          "answer": "Screenshot captured: [view the screenshot](.playwright-mcp/page-2026-10-20T08-22-46-176Z.png).",
+          "clarify": [],
+          "seconds": 14.9,
+          "usage": {
+            "requests": 2,
+            "input": 75074,
+            "output": 174,
+            "cached": 72576
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "open_snapshot_screenshot",
+      "thread": "chat-e3dfc7b0fbe7",
+      "turns": [
+        {
+          "prompt": "Open books.toscrape.com in the browser.",
+          "tool_calls": [
+            {
+              "t": 5.78,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.playwright"
+              }
+            },
+            {
+              "t": 12.69,
+              "tool": "mcp__playwright__browser_navigate",
+              "args": {
+                "url": "https://books.toscrape.com"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_navigate",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            18763,
+            24443,
+            25485
+          ],
+          "compactions": [],
+          "answer": "Opened https://books.toscrape.com/ in the browser. The page title is \u201cAll products | Books to Scrape - Sandbox\u201d.",
+          "clarify": [],
+          "seconds": 23.1,
+          "usage": {
+            "requests": 3,
+            "input": 68691,
+            "output": 236,
+            "cached": 61440
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        },
+        {
+          "prompt": "Take an accessibility snapshot of that page and tell me the first three category names in the sidebar.",
+          "tool_calls": [
+            {
+              "t": 7.24,
+              "tool": "mcp__playwright__browser_snapshot",
+              "args": {}
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_snapshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            26595,
+            36870
+          ],
+          "compactions": [],
+          "answer": "The first three category names in the sidebar are **Travel**, **Mystery**, and **Historical Fiction**.",
+          "clarify": [],
+          "seconds": 14.8,
+          "usage": {
+            "requests": 2,
+            "input": 63465,
+            "output": 195,
+            "cached": 51712
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        },
+        {
+          "prompt": "Now take a screenshot of it.",
+          "tool_calls": [
+            {
+              "t": 6.72,
+              "tool": "mcp__playwright__browser_take_screenshot",
+              "args": {
+                "scale": "css"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "browser_take_screenshot",
+              "server": "playwright",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            37964,
+            39028
+          ],
+          "compactions": [],
+          "answer": "Screenshot captured and saved at `.playwright-mcp/page-2026-10-20T08-23-42-891Z.png`.",
+          "clarify": [],
+          "seconds": 15.0,
+          "usage": {
+            "requests": 2,
+            "input": 76992,
+            "output": 181,
+            "cached": 74496
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    }
+  ],
+  "mcp": {
+    "playwright": {
+      "state": "connected",
+      "tools": 25
+    },
+    "everything": {
+      "state": "connected",
+      "tools": 16
+    },
+    "fetch": {
+      "state": "connected",
+      "tools": 1
+    },
+    "time": {
+      "state": "connected",
+      "tools": 2
+    },
+    "git": {
+      "state": "connected",
+      "tools": 12
+    },
+    "sqlite": {
+      "state": "connected",
+      "tools": 6
+    },
+    "github": {
+      "state": "connected",
+      "tools": 63
+    }
+  },
+  "config": {
+    "mcp_enabled": true,
+    "provider": {
+      "backend": "chatgpt",
+      "model": "gpt-6-luna",
+      "uses_chatgpt_plan": true,
+      "context_window": 272000,
+      "reasoning_effort": "high",
+      "reasoning_effort_support": {
+        "supported": [
+          "high",
+          "low",
+          "max",
+          "medium",
+          "xhigh"
+        ],
+        "unsupported": {},
+        "control": {
+          "options": [
+            {
+              "value": "low",
+              "label": "Low",
+              "description": "Fast responses with lighter reasoning",
+              "state": "supported"
+            },
+            {
+              "value": "medium",
+              "label": "Medium",
+              "description": "Balances speed and reasoning depth for everyday tasks",
+              "state": "supported"
+            },
+            {
+              "value": "high",
+              "label": "High",
+              "description": "Greater reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high",
+              "description": "Extra high reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "max",
+              "label": "Max",
+              "description": "Maximum reasoning depth for the hardest problems",
+              "state": "supported"
+            }
+          ],
+          "source": "catalog",
+          "default": "medium",
+          "reason": null
+        }
+      },
+      "reasoning_effort_note": null
+    }
+  }
+}
