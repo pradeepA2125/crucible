@@ -230,6 +230,7 @@ These defaults describe the managed VS Code experience; saved settings and expli
 | Background memory curator | Enabled; `crucible.memory.experimental.curator` / `CRUCIBLE_MEMORY_CURATOR_V2`; requires recall |
 | Capped evidence/sequential compaction | Enabled; `crucible.memory.experimental.compaction` / `CRUCIBLE_MEMORY_COMPACT_EVIDENCE` |
 | Tool batching, adaptive reads, compact context | Enabled; `crucible.performance.toolBatching`, `.adaptiveReads`, `.compactContext` |
+| On-demand MCP tool loading | Enabled; `crucible.performance.mcpOnDemand` / `CRUCIBLE_CAPABILITY_LOADING_ENABLED`; the main agent sees a directory of connected MCP servers and loads a server's schemas when it needs them |
 | Separate task subsystem | **Off**; `CRUCIBLE_TASK_SUBSYSTEM`; inline chat is the primary editing path |
 
 Memory/performance/web setting changes require a backend restart as described in Settings. The experimental memory store-path option can select a separate store; enabling experiments is not a migration or quality guarantee.
