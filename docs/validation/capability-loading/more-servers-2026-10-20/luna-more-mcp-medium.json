@@ -1,0 +1,1019 @@
+{
+  "model": "luna",
+  "flag": "on",
+  "suite": "more_mcp",
+  "window": null,
+  "registration": "reg_753b274021f0",
+  "started_utc": "2026-10-20T07:14:33Z",
+  "scenarios": [
+    {
+      "name": "time_tokyo",
+      "thread": "chat-963122948e5b",
+      "turns": [
+        {
+          "prompt": "What time is it in Tokyo right now?",
+          "tool_calls": [
+            {
+              "t": 13.94,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.time"
+              }
+            },
+            {
+              "t": 18.22,
+              "tool": "mcp__time__get_current_time",
+              "args": {
+                "timezone": "Asia/Tokyo"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "get_current_time",
+              "server": "time",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            17834,
+            18765,
+            20170,
+            21117
+          ],
+          "compactions": [],
+          "answer": "It\u2019s 4:14 PM on Tuesday, October 20, 2026, in Tokyo (JST, UTC+9).",
+          "clarify": [],
+          "seconds": 22.7,
+          "usage": {
+            "requests": 4,
+            "input": 77886,
+            "output": 298,
+            "cached": 56192
+          },
+          "unloaded_refusals": 1,
+          "malformed_corrections": 0,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "git_last_commit",
+      "thread": "chat-7708c4ac2cc6",
+      "turns": [
+        {
+          "prompt": "Who made the most recent commit in this repo, and what did it add?",
+          "tool_calls": [
+            {
+              "t": 17.9,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.git"
+              }
+            },
+            {
+              "t": 25.86,
+              "tool": "mcp__git__git_log",
+              "args": {
+                "repo_path": "/private/tmp/claude-501/-Users-pradeepkumar-projects-AI-editor/7c7f6014-a70c-4165-a80e-0f1932ae1d89/scratchpad/evalws",
+                "max_count": 1
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "git_log",
+              "server": "git",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            17848,
+            18732,
+            19656,
+            22244,
+            23332
+          ],
+          "compactions": [],
+          "answer": "The most recent commit was made by **Priya Menon** (`7ea5d215`, 2026-10-20). Its message says it added a **sample shop database for order reports**.\n\nRecap: Checked the repository\u2019s latest commit and identified its author and stated addition.",
+          "clarify": [],
+          "seconds": 34.3,
+          "usage": {
+            "requests": 5,
+            "input": 101812,
+            "output": 478,
+            "cached": 77696
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 2,
+          "rejected_types": [
+            "tool_calls",
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "sqlite_top_customer",
+      "thread": "chat-85a4006f59c4",
+      "turns": [
+        {
+          "prompt": "Which customer has spent the most in the shop database?",
+          "tool_calls": [
+            {
+              "t": 12.86,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.sqlite"
+              }
+            },
+            {
+              "t": 16.76,
+              "tool": "mcp__sqlite__list_tables",
+              "args": {}
+            },
+            {
+              "t": 21.98,
+              "tool": "mcp__sqlite__describe_table",
+              "args": {
+                "table_name": "customers"
+              }
+            },
+            {
+              "t": 21.98,
+              "tool": "mcp__sqlite__describe_table",
+              "args": {
+                "table_name": "orders"
+              }
+            },
+            {
+              "t": 26.8,
+              "tool": "mcp__sqlite__read_query",
+              "args": {
+                "query": "SELECT c.id, c.name, c.city, SUM(o.amount) AS total_spent FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id, c.name, c.city ORDER BY total_spent DESC LIMIT 1;"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "list_tables",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "describe_table",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "describe_table",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "read_query",
+              "server": "sqlite",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            17838,
+            18756,
+            20251,
+            21142,
+            22462,
+            23489
+          ],
+          "compactions": [],
+          "answer": "Dana Kim (Seoul) has spent the most, with a total of $1,917.51.",
+          "clarify": [],
+          "seconds": 31.6,
+          "usage": {
+            "requests": 6,
+            "input": 123938,
+            "output": 494,
+            "cached": 99584
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 1,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "sqlite_then_time",
+      "thread": "chat-fa351d25d8d4",
+      "turns": [
+        {
+          "prompt": "Find the top-spending customer in the shop database and tell me the current time in their city.",
+          "tool_calls": [],
+          "tool_errors": [],
+          "gates": [],
+          "request_inputs": [
+            17856
+          ],
+          "compactions": [],
+          "answer": "I need access to the shop database and each customer's city/time zone to identify the highest spender and report the local time. I\u2019ll inspect the available database tables and use the time service once the customer\u2019s city is known.",
+          "clarify": [],
+          "seconds": 5.2,
+          "usage": {
+            "requests": 1,
+            "input": 17856,
+            "output": 115,
+            "cached": 0
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "time_tokyo",
+      "thread": "chat-080381927a35",
+      "turns": [
+        {
+          "prompt": "What time is it in Tokyo right now?",
+          "tool_calls": [
+            {
+              "t": 9.0,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.time"
+              }
+            },
+            {
+              "t": 12.57,
+              "tool": "mcp__time__get_current_time",
+              "args": {
+                "timezone": "Asia/Tokyo"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "get_current_time",
+              "server": "time",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            17834,
+            18749,
+            20165,
+            21111
+          ],
+          "compactions": [],
+          "answer": "It\u2019s **4:16 PM on Tuesday, October 20, 2026** in Tokyo (JST, UTC+9).",
+          "clarify": [],
+          "seconds": 16.9,
+          "usage": {
+            "requests": 4,
+            "input": 77859,
+            "output": 309,
+            "cached": 56192
+          },
+          "unloaded_refusals": 1,
+          "malformed_corrections": 0,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "git_last_commit",
+      "thread": "chat-2e76b972e25c",
+      "turns": [
+        {
+          "prompt": "Who made the most recent commit in this repo, and what did it add?",
+          "tool_calls": [
+            {
+              "t": 8.99,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.git",
+                "tool_names": [
+                  "mcp__git__git_log",
+                  "mcp__git__git_show"
+                ]
+              }
+            },
+            {
+              "t": 14.25,
+              "tool": "mcp__git__git_log",
+              "args": {
+                "repo_path": "/private/tmp/claude-501/-Users-pradeepkumar-projects-AI-editor/7c7f6014-a70c-4165-a80e-0f1932ae1d89/scratchpad/evalws",
+                "max_count": 1
+              }
+            },
+            {
+              "t": 19.79,
+              "tool": "mcp__git__git_show",
+              "args": {
+                "repo_path": "/private/tmp/claude-501/-Users-pradeepkumar-projects-AI-editor/7c7f6014-a70c-4165-a80e-0f1932ae1d89/scratchpad/evalws",
+                "revision": "7ea5d2151cb487ef3588207808c23ba5714e4d8b"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "git_log",
+              "server": "git",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "git_show",
+              "server": "git",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            17848,
+            18901,
+            20425,
+            21489,
+            22629
+          ],
+          "compactions": [],
+          "answer": "The most recent commit was made by **Priya Menon** (`7ea5d215`, 2026-10-20). It added the binary sample shop database at `data/shop.db`; the commit message says it is for order reports.",
+          "clarify": [],
+          "seconds": 24.7,
+          "usage": {
+            "requests": 5,
+            "input": 101292,
+            "output": 574,
+            "cached": 94592
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 1,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "sqlite_top_customer",
+      "thread": "chat-0c9dc1f99be8",
+      "turns": [
+        {
+          "prompt": "Which customer has spent the most in the shop database?",
+          "tool_calls": [
+            {
+              "t": 12.67,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.sqlite"
+              }
+            },
+            {
+              "t": 16.05,
+              "tool": "mcp__sqlite__list_tables",
+              "args": {}
+            },
+            {
+              "t": 20.63,
+              "tool": "mcp__sqlite__describe_table",
+              "args": {
+                "table_name": "customers"
+              }
+            },
+            {
+              "t": 20.63,
+              "tool": "mcp__sqlite__describe_table",
+              "args": {
+                "table_name": "orders"
+              }
+            },
+            {
+              "t": 25.11,
+              "tool": "mcp__sqlite__read_query",
+              "args": {
+                "query": "SELECT c.id, c.name, SUM(o.amount) AS total_spent FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id, c.name ORDER BY total_spent DESC LIMIT 1;"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "list_tables",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "describe_table",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "describe_table",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "read_query",
+              "server": "sqlite",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            17838,
+            17521,
+            18433,
+            19943,
+            20822,
+            22163,
+            23168
+          ],
+          "compactions": [],
+          "answer": "Dana Kim (customer ID 4) has spent the most, totaling $1,917.51.",
+          "clarify": [],
+          "seconds": 29.7,
+          "usage": {
+            "requests": 7,
+            "input": 139888,
+            "output": 570,
+            "cached": 114688
+          },
+          "unloaded_refusals": 1,
+          "malformed_corrections": 1,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "sqlite_then_time",
+      "thread": "chat-9f9ac8b7486a",
+      "turns": [
+        {
+          "prompt": "Find the top-spending customer in the shop database and tell me the current time in their city.",
+          "tool_calls": [
+            {
+              "t": 13.48,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.sqlite"
+              }
+            },
+            {
+              "t": 19.68,
+              "tool": "mcp__sqlite__list_tables",
+              "args": {}
+            },
+            {
+              "t": 25.27,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.time"
+              }
+            },
+            {
+              "t": 33.12,
+              "tool": "mcp__sqlite__describe_table",
+              "args": {
+                "table_name": "customers"
+              }
+            },
+            {
+              "t": 33.12,
+              "tool": "mcp__sqlite__describe_table",
+              "args": {
+                "table_name": "orders"
+              }
+            },
+            {
+              "t": 39.82,
+              "tool": "mcp__sqlite__read_query",
+              "args": {
+                "query": "SELECT c.id, c.name, c.city, SUM(o.amount) AS total_spent FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id, c.name, c.city ORDER BY total_spent DESC LIMIT 1"
+              }
+            },
+            {
+              "t": 45.19,
+              "tool": "mcp__time__get_current_time",
+              "args": {
+                "timezone": "Asia/Seoul"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "list_tables",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "describe_table",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "describe_table",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "read_query",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "get_current_time",
+              "server": "time",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            17856,
+            18969,
+            20462,
+            21361,
+            22605,
+            23961,
+            24980,
+            25946
+          ],
+          "compactions": [],
+          "answer": "The top-spending customer is **Dana Kim** of **Seoul**, with total orders of **$1,917.51**. The current time in Seoul (Asia/Seoul) is **Tuesday, October 20, 2026 at 4:18:11 PM** (UTC+09:00).",
+          "clarify": [],
+          "seconds": 53.7,
+          "usage": {
+            "requests": 8,
+            "input": 176140,
+            "output": 727,
+            "cached": 162048
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 1,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "time_tokyo",
+      "thread": "chat-c40bf751a121",
+      "turns": [
+        {
+          "prompt": "What time is it in Tokyo right now?",
+          "tool_calls": [
+            {
+              "t": 9.44,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.time"
+              }
+            },
+            {
+              "t": 13.39,
+              "tool": "mcp__time__get_current_time",
+              "args": {
+                "timezone": "Asia/Tokyo"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "get_current_time",
+              "server": "time",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            17834,
+            18772,
+            20182,
+            21133
+          ],
+          "compactions": [],
+          "answer": "It\u2019s 4:18 PM on Tuesday, October 20, 2026 in Tokyo (JST, UTC+9).",
+          "clarify": [],
+          "seconds": 18.0,
+          "usage": {
+            "requests": 4,
+            "input": 77921,
+            "output": 309,
+            "cached": 72832
+          },
+          "unloaded_refusals": 1,
+          "malformed_corrections": 0,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "git_last_commit",
+      "thread": "chat-811cf83d0a97",
+      "turns": [
+        {
+          "prompt": "Who made the most recent commit in this repo, and what did it add?",
+          "tool_calls": [
+            {
+              "t": 17.44,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.git"
+              }
+            },
+            {
+              "t": 23.51,
+              "tool": "mcp__git__git_log",
+              "args": {
+                "repo_path": "/private/tmp/claude-501/-Users-pradeepkumar-projects-AI-editor/7c7f6014-a70c-4165-a80e-0f1932ae1d89/scratchpad/evalws",
+                "max_count": 1
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "git_log",
+              "server": "git",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            17848,
+            17531,
+            18476,
+            21045,
+            22090
+          ],
+          "compactions": [],
+          "answer": "The most recent commit was made by **Priya Menon** (`7ea5d215`, dated 2026-10-20). Its message says it **added a sample shop database for order reports**.",
+          "clarify": [],
+          "seconds": 29.8,
+          "usage": {
+            "requests": 5,
+            "input": 96990,
+            "output": 425,
+            "cached": 73216
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 2,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "sqlite_top_customer",
+      "thread": "chat-d97dd9ed085b",
+      "turns": [
+        {
+          "prompt": "Which customer has spent the most in the shop database?",
+          "tool_calls": [
+            {
+              "t": 20.22,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.sqlite"
+              }
+            },
+            {
+              "t": 26.66,
+              "tool": "mcp__sqlite__list_tables",
+              "args": {}
+            },
+            {
+              "t": 32.38,
+              "tool": "mcp__sqlite__describe_table",
+              "args": {
+                "table_name": "orders"
+              }
+            },
+            {
+              "t": 32.38,
+              "tool": "mcp__sqlite__describe_table",
+              "args": {
+                "table_name": "customers"
+              }
+            },
+            {
+              "t": 39.92,
+              "tool": "mcp__sqlite__read_query",
+              "args": {
+                "query": "SELECT c.name, SUM(o.amount) AS total_spent FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id, c.name ORDER BY total_spent DESC LIMIT 1;"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "list_tables",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "describe_table",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "describe_table",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "read_query",
+              "server": "sqlite",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            17838,
+            17521,
+            18453,
+            19947,
+            20833,
+            22176,
+            23168
+          ],
+          "compactions": [],
+          "answer": "Dana Kim has spent the most, with a total of $1,917.51.",
+          "clarify": [],
+          "seconds": 48.2,
+          "usage": {
+            "requests": 7,
+            "input": 139936,
+            "output": 533,
+            "cached": 131328
+          },
+          "unloaded_refusals": 1,
+          "malformed_corrections": 1,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "sqlite_then_time",
+      "thread": "chat-647fe9d25838",
+      "turns": [
+        {
+          "prompt": "Find the top-spending customer in the shop database and tell me the current time in their city.",
+          "tool_calls": [
+            {
+              "t": 19.36,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.sqlite"
+              }
+            },
+            {
+              "t": 24.9,
+              "tool": "mcp__sqlite__list_tables",
+              "args": {}
+            },
+            {
+              "t": 31.63,
+              "tool": "mcp__sqlite__describe_table",
+              "args": {
+                "table_name": "customers"
+              }
+            },
+            {
+              "t": 31.63,
+              "tool": "mcp__sqlite__describe_table",
+              "args": {
+                "table_name": "orders"
+              }
+            },
+            {
+              "t": 42.43,
+              "tool": "mcp__sqlite__read_query",
+              "args": {
+                "query": "SELECT c.id, c.name, c.city, SUM(o.amount) AS total_spending FROM customers c JOIN orders o ON o.customer_id = c.id GROUP BY c.id, c.name, c.city ORDER BY total_spending DESC LIMIT 1"
+              }
+            },
+            {
+              "t": 48.45,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.time"
+              }
+            },
+            {
+              "t": 56.98,
+              "tool": "mcp__time__get_current_time",
+              "args": {
+                "timezone": "Asia/Seoul"
+              }
+            }
+          ],
+          "tool_errors": [],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "list_tables",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "describe_table",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "describe_table",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "read_query",
+              "server": "sqlite",
+              "decision": "approve"
+            },
+            {
+              "kind": "mcp_tool",
+              "tool": "get_current_time",
+              "server": "time",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            17856,
+            18731,
+            19834,
+            21315,
+            22211,
+            23572,
+            24592,
+            25845,
+            26813
+          ],
+          "compactions": [],
+          "answer": "Dana Kim is the top-spending customer, with total orders of **$1,917.51**. It is currently **Tuesday, October 20, 2026, 4:20:56 PM** in Seoul (Asia/Seoul).",
+          "clarify": [],
+          "seconds": 64.0,
+          "usage": {
+            "requests": 9,
+            "input": 200769,
+            "output": 754,
+            "cached": 172672
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 2,
+          "rejected_types": [
+            "tool_calls",
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    }
+  ],
+  "mcp": {
+    "playwright": {
+      "state": "connected",
+      "tools": 25
+    },
+    "everything": {
+      "state": "connected",
+      "tools": 16
+    },
+    "fetch": {
+      "state": "connected",
+      "tools": 1
+    },
+    "time": {
+      "state": "connected",
+      "tools": 2
+    },
+    "git": {
+      "state": "connected",
+      "tools": 12
+    },
+    "sqlite": {
+      "state": "connected",
+      "tools": 6
+    }
+  },
+  "config": {
+    "mcp_enabled": true,
+    "provider": {
+      "backend": "chatgpt",
+      "model": "gpt-6-luna",
+      "uses_chatgpt_plan": true,
+      "context_window": 272000,
+      "reasoning_effort": "medium",
+      "reasoning_effort_support": {
+        "supported": [
+          "high",
+          "low",
+          "max",
+          "medium",
+          "xhigh"
+        ],
+        "unsupported": {},
+        "control": {
+          "options": [
+            {
+              "value": "low",
+              "label": "Low",
+              "description": "Fast responses with lighter reasoning",
+              "state": "supported"
+            },
+            {
+              "value": "medium",
+              "label": "Medium",
+              "description": "Balances speed and reasoning depth for everyday tasks",
+              "state": "supported"
+            },
+            {
+              "value": "high",
+              "label": "High",
+              "description": "Greater reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high",
+              "description": "Extra high reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "max",
+              "label": "Max",
+              "description": "Maximum reasoning depth for the hardest problems",
+              "state": "supported"
+            }
+          ],
+          "source": "catalog",
+          "default": "medium",
+          "reason": null
+        }
+      },
+      "reasoning_effort_note": null
+    }
+  }
+}

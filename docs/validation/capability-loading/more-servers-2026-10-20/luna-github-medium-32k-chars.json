@@ -1,0 +1,582 @@
+{
+  "model": "luna",
+  "flag": "on",
+  "suite": "github_mcp",
+  "window": null,
+  "registration": "reg_753b274021f0",
+  "started_utc": "2026-10-20T07:21:38Z",
+  "scenarios": [
+    {
+      "name": "gh_latest_release",
+      "thread": "chat-082b53348802",
+      "turns": [
+        {
+          "prompt": "What's the latest release of pradeepA2125/crucible on GitHub?",
+          "tool_calls": [
+            {
+              "t": 12.8,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.github"
+              }
+            },
+            {
+              "t": 19.71,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.github",
+                "tool_names": [
+                  "get_latest_release"
+                ]
+              }
+            },
+            {
+              "t": 28.11,
+              "tool": "mcp__github__get_latest_release",
+              "args": {
+                "owner": "pradeepA2125",
+                "repo": "crucible"
+              }
+            }
+          ],
+          "tool_errors": [
+            {
+              "tool": null,
+              "output": "Error: bundle_too_large: 63 tools of mcp.github come to 68618 characters (limit 32000). Retry with a `query` naming the tools you need, or exact `tool_names` from the namespace's directory line."
+            }
+          ],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "get_latest_release",
+              "server": "github",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            18777,
+            19728,
+            20678,
+            21887,
+            37662
+          ],
+          "compactions": [],
+          "answer": "The latest GitHub release is **v0.7.1**, published October 16, 2026: [pradeepA2125/crucible v0.7.1](https://github.com/pradeepA2125/crucible/releases/tag/v0.7.1).",
+          "clarify": [],
+          "seconds": 36.5,
+          "usage": {
+            "requests": 5,
+            "input": 118732,
+            "output": 435,
+            "cached": 80384
+          },
+          "unloaded_refusals": 1,
+          "malformed_corrections": 0,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "gh_workflows",
+      "thread": "chat-403f375fdf32",
+      "turns": [
+        {
+          "prompt": "Which GitHub Actions workflows does pradeepA2125/crucible have?",
+          "tool_calls": [
+            {
+              "t": 3.97,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.github"
+              }
+            },
+            {
+              "t": 8.2,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.github",
+                "query": "actions list workflow files in repository"
+              }
+            },
+            {
+              "t": 12.93,
+              "tool": "mcp__github__actions_list",
+              "args": {
+                "method": "list_workflows",
+                "owner": "pradeepA2125",
+                "repo": "crucible"
+              }
+            }
+          ],
+          "tool_errors": [
+            {
+              "tool": null,
+              "output": "Error: bundle_too_large: 63 tools of mcp.github come to 68618 characters (limit 32000). Retry with a `query` naming the tools you need, or exact `tool_names` from the namespace's directory line."
+            }
+          ],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "actions_list",
+              "server": "github",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            18775,
+            19697,
+            22253,
+            23496
+          ],
+          "compactions": [],
+          "answer": "The repository `pradeepA2125/crucible` has **2 active GitHub Actions workflows**:\n\n- **release** \u2014 `.github/workflows/release.yml`\n- **test-fetch-tools** \u2014 `.github/workflows/test-fetch-tools.yml`",
+          "clarify": [],
+          "seconds": 19.5,
+          "usage": {
+            "requests": 4,
+            "input": 84221,
+            "output": 367,
+            "cached": 60288
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "gh_last_commit",
+      "thread": "chat-61faa20ace31",
+      "turns": [
+        {
+          "prompt": "What's the latest commit message on main in pradeepA2125/crucible on GitHub?",
+          "tool_calls": [],
+          "tool_errors": [],
+          "gates": [],
+          "request_inputs": [
+            18783
+          ],
+          "compactions": [],
+          "answer": "I\u2019ll check the repository\u2019s `main` branch on GitHub for its latest commit message.",
+          "clarify": [],
+          "seconds": 4.3,
+          "usage": {
+            "requests": 1,
+            "input": 18783,
+            "output": 88,
+            "cached": 0
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "gh_latest_release",
+      "thread": "chat-ed7a0ec22095",
+      "turns": [
+        {
+          "prompt": "What's the latest release of pradeepA2125/crucible on GitHub?",
+          "tool_calls": [],
+          "tool_errors": [],
+          "gates": [],
+          "request_inputs": [
+            18777
+          ],
+          "compactions": [],
+          "answer": "I can check GitHub\u2019s latest release for `pradeepA2125/crucible`, but I don\u2019t have the release result yet.",
+          "clarify": [],
+          "seconds": 5.6,
+          "usage": {
+            "requests": 1,
+            "input": 18777,
+            "output": 93,
+            "cached": 0
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "gh_workflows",
+      "thread": "chat-71b944d5751d",
+      "turns": [
+        {
+          "prompt": "Which GitHub Actions workflows does pradeepA2125/crucible have?",
+          "tool_calls": [
+            {
+              "t": 5.1,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.github"
+              }
+            },
+            {
+              "t": 10.64,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.github",
+                "query": "list GitHub Actions workflows for a repository"
+              }
+            },
+            {
+              "t": 16.03,
+              "tool": "mcp__github__actions_list",
+              "args": {
+                "method": "list_workflows",
+                "owner": "pradeepA2125",
+                "repo": "crucible"
+              }
+            }
+          ],
+          "tool_errors": [
+            {
+              "tool": null,
+              "output": "Error: bundle_too_large: 63 tools of mcp.github come to 68618 characters (limit 32000). Retry with a `query` naming the tools you need, or exact `tool_names` from the namespace's directory line."
+            }
+          ],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "actions_list",
+              "server": "github",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            18775,
+            19701,
+            22361,
+            23608
+          ],
+          "compactions": [],
+          "answer": "`pradeepA2125/crucible` has two active GitHub Actions workflows:\n\n- **release** \u2014 [`.github/workflows/release.yml`](https://github.com/pradeepA2125/crucible/blob/main/.github/workflows/release.yml)\n- **test-fetch-tools** \u2014 [`.github/workflows/test-fetch-tools.yml`](https://github.com/pradeepA2125/crucible/blob/main/.github/workflows/test-fetch-tools.yml)\n\nRecap: Listed the repository\u2019s two active GitHub Actions workflows.",
+          "clarify": [],
+          "seconds": 28.3,
+          "usage": {
+            "requests": 4,
+            "input": 84445,
+            "output": 423,
+            "cached": 40704
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "gh_last_commit",
+      "thread": "chat-99e4eb566578",
+      "turns": [
+        {
+          "prompt": "What's the latest commit message on main in pradeepA2125/crucible on GitHub?",
+          "tool_calls": [],
+          "tool_errors": [],
+          "gates": [],
+          "request_inputs": [
+            18783
+          ],
+          "compactions": [],
+          "answer": "I\u2019ll check the repository\u2019s latest commit on `main` and report its message.",
+          "clarify": [],
+          "seconds": 6.6,
+          "usage": {
+            "requests": 1,
+            "input": 18783,
+            "output": 89,
+            "cached": 0
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "gh_latest_release",
+      "thread": "chat-8963afc27967",
+      "turns": [
+        {
+          "prompt": "What's the latest release of pradeepA2125/crucible on GitHub?",
+          "tool_calls": [
+            {
+              "t": 7.94,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.github"
+              }
+            },
+            {
+              "t": 11.66,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.github",
+                "query": "get latest release of a GitHub repository"
+              }
+            },
+            {
+              "t": 15.74,
+              "tool": "mcp__github__get_latest_release",
+              "args": {
+                "owner": "pradeepA2125",
+                "repo": "crucible"
+              }
+            }
+          ],
+          "tool_errors": [
+            {
+              "tool": null,
+              "output": "Error: bundle_too_large: 63 tools of mcp.github come to 68618 characters (limit 32000). Retry with a `query` naming the tools you need, or exact `tool_names` from the namespace's directory line."
+            }
+          ],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "get_latest_release",
+              "server": "github",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            18777,
+            19697,
+            21330,
+            37107
+          ],
+          "compactions": [],
+          "answer": "The latest release is **v0.7.1**, published October 16, 2026: https://github.com/pradeepA2125/crucible/releases/tag/v0.7.1",
+          "clarify": [],
+          "seconds": 23.8,
+          "usage": {
+            "requests": 4,
+            "input": 96911,
+            "output": 373,
+            "cached": 76800
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "gh_workflows",
+      "thread": "chat-ecf871e73d57",
+      "turns": [
+        {
+          "prompt": "Which GitHub Actions workflows does pradeepA2125/crucible have?",
+          "tool_calls": [],
+          "tool_errors": [],
+          "gates": [],
+          "request_inputs": [
+            18775
+          ],
+          "compactions": [],
+          "answer": "I\u2019ll inspect the workflows in `pradeepA2125/crucible`.",
+          "clarify": [],
+          "seconds": 4.4,
+          "usage": {
+            "requests": 1,
+            "input": 18775,
+            "output": 89,
+            "cached": 0
+          },
+          "unloaded_refusals": 0,
+          "malformed_corrections": 0,
+          "rejected_types": [],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    },
+    {
+      "name": "gh_last_commit",
+      "thread": "chat-468dd8dda94f",
+      "turns": [
+        {
+          "prompt": "What's the latest commit message on main in pradeepA2125/crucible on GitHub?",
+          "tool_calls": [
+            {
+              "t": 12.43,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.github"
+              }
+            },
+            {
+              "t": 18.36,
+              "tool": "load_capabilities",
+              "args": {
+                "namespace": "mcp.github",
+                "tool_names": [
+                  "mcp__github__list_commits"
+                ]
+              }
+            },
+            {
+              "t": 24.02,
+              "tool": "mcp__github__list_commits",
+              "args": {
+                "owner": "pradeepA2125",
+                "repo": "crucible",
+                "sha": "main",
+                "perPage": 1,
+                "fields": [
+                  "commit",
+                  "sha",
+                  "html_url"
+                ]
+              }
+            }
+          ],
+          "tool_errors": [
+            {
+              "tool": null,
+              "output": "Error: bundle_too_large: 63 tools of mcp.github come to 68618 characters (limit 32000). Retry with a `query` naming the tools you need, or exact `tool_names` from the namespace's directory line."
+            }
+          ],
+          "gates": [
+            {
+              "kind": "mcp_tool",
+              "tool": "list_commits",
+              "server": "github",
+              "decision": "approve"
+            }
+          ],
+          "request_inputs": [
+            18783,
+            19762,
+            20688,
+            22255,
+            23514
+          ],
+          "compactions": [],
+          "answer": "The latest commit on `main` is **\u201cdocs(eval): replay of an MCP-scoped \\\"load before calling\\\" line\u201d** (SHA `0854eddf5d7dc1ab286b8c1325411526eeaf01ae`). [View commit](https://github.com/pradeepA2125/crucible/commit/0854eddf5d7dc1ab286b8c1325411526eeaf01ae).\n\nRecap: Retrieved the latest commit on `pradeepA2125/crucible`\u2019s `main` branch from GitHub.",
+          "clarify": [],
+          "seconds": 34.1,
+          "usage": {
+            "requests": 5,
+            "input": 105002,
+            "output": 538,
+            "cached": 93696
+          },
+          "unloaded_refusals": 1,
+          "malformed_corrections": 0,
+          "rejected_types": [
+            "tool_calls"
+          ],
+          "provider_retries": 0,
+          "overflow": 0
+        }
+      ]
+    }
+  ],
+  "mcp": {
+    "playwright": {
+      "state": "connected",
+      "tools": 25
+    },
+    "everything": {
+      "state": "connected",
+      "tools": 16
+    },
+    "fetch": {
+      "state": "connected",
+      "tools": 1
+    },
+    "time": {
+      "state": "connected",
+      "tools": 2
+    },
+    "git": {
+      "state": "connected",
+      "tools": 12
+    },
+    "sqlite": {
+      "state": "connected",
+      "tools": 6
+    },
+    "github": {
+      "state": "connected",
+      "tools": 63
+    }
+  },
+  "config": {
+    "mcp_enabled": true,
+    "provider": {
+      "backend": "chatgpt",
+      "model": "gpt-6-luna",
+      "uses_chatgpt_plan": true,
+      "context_window": 272000,
+      "reasoning_effort": "medium",
+      "reasoning_effort_support": {
+        "supported": [
+          "high",
+          "low",
+          "max",
+          "medium",
+          "xhigh"
+        ],
+        "unsupported": {},
+        "control": {
+          "options": [
+            {
+              "value": "low",
+              "label": "Low",
+              "description": "Fast responses with lighter reasoning",
+              "state": "supported"
+            },
+            {
+              "value": "medium",
+              "label": "Medium",
+              "description": "Balances speed and reasoning depth for everyday tasks",
+              "state": "supported"
+            },
+            {
+              "value": "high",
+              "label": "High",
+              "description": "Greater reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "xhigh",
+              "label": "Extra high",
+              "description": "Extra high reasoning depth for complex problems",
+              "state": "supported"
+            },
+            {
+              "value": "max",
+              "label": "Max",
+              "description": "Maximum reasoning depth for the hardest problems",
+              "state": "supported"
+            }
+          ],
+          "source": "catalog",
+          "default": "medium",
+          "reason": null
+        }
+      },
+      "reasoning_effort_note": null
+    }
+  }
+}

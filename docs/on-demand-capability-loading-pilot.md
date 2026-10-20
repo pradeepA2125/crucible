@@ -279,3 +279,37 @@ Descriptions make the lines read as callable, so the model sometimes calls befor
 16 of 16 were correct, with no declines and no misnamed calls; each of the 3 calls made before loading was refused and recovered. In the three-turn thread, luna loaded Playwright once in turn 1 (`browser_navigate`), then reused it for `browser_snapshot` (correct first three categories) and `browser_take_screenshot`. Input per turn: 85,013, 61,700 and 74,239. Raw: [luna-discovery-on-desc.json](validation/capability-loading/checks-2026-10-20/luna-discovery-on-desc.json), [luna-actions-on-desc.json](validation/capability-loading/checks-2026-10-20/luna-actions-on-desc.json).
 
 **Decision (2026-10-20): default ON**, by user decision, with the kill-switch kept (`CRUCIBLE_CAPABILITY_LOADING_ENABLED=0`, or `crucible.performance.mcpOnDemand: false`). The evidence covers luna on the ChatGPT plan (native function calling) only. **Nemotron and every other provider are untested with the flag on**, including the prompt-only JSON path (`openai_compatible`, Ollama, Gemini, Anthropic and the rest). If a model there misses tools it should find, turn the flag off first.
+
+## More servers, a large GitHub server and reasoning effort (2026-10-20, luna, flag on)
+
+The eval workspace's `.crucible/mcp.json` grew from three servers to seven: `time` (`uvx mcp-server-time`, 2 tools), `git` (`uvx mcp-server-git --repository <workspace>`, 12), `sqlite` (`uvx --with 'mcp<2' mcp-server-sqlite --db-path data/shop.db`, 6), and GitHub's remote server with every toolset, read-only (`https://api.githubcopilot.com/mcp/x/all/readonly`, `Authorization: Bearer ${GITHUB_PAT}`, 63). That makes 125 MCP tools. The archived `mcp-server-sqlite` fails at startup against the current `mcp` SDK (`'Server' object has no attribute 'list_resources'`), so it is pinned below 2. `data/shop.db` is a 6-customer, 60-order sample, committed to the workspace's git as "Add sample shop database for order reports" by Priya Menon. Harness suites `more_mcp` and `github_mcp`, plus a new `--effort` option; raw results are in [validation/capability-loading/more-servers-2026-10-20/](validation/capability-loading/more-servers-2026-10-20/). Only the flag-on arm was run.
+
+**Prompt size.** All 125 schemas in the catalog would come to about 103,000 characters. The flag-on directory is 9,328. The first request of a greeting turn is 17,819 tokens with six servers and 18,744 with seven, against about 17,100 with the original three.
+
+### Six servers, medium effort, 3 runs per prompt
+
+| Prompt | Server | Correct | Loads per turn | Requests | Input | Seconds |
+| --- | --- | --- | --- | --- | --- | --- |
+| "What time is it in Tokyo right now?" | time | 3/3 | 1.0 | 4.0 | 77,888 | 19 |
+| "Who made the most recent commit in this repo, and what did it add?" | git | 3/3 | 1.0 | 5.0 | 100,031 | 30 |
+| "Which customer has spent the most in the shop database?" | sqlite | 3/3 | 1.0 | 6.7 | 134,587 | 37 |
+| Top-spending customer, then the current time in their city | sqlite, then time | 2/3 | 1.3 | 6.0 | 131,588 | 41 |
+
+Twelve refusals all recovered: 3 misnamed calls (`mcp.sqlite__list_tables`, which got the namespace refusal), 5 calls before loading, and 4 calls whose arguments failed the tool's schema. In two of the three two-server runs, luna loaded `mcp.sqlite`, then `mcp.time`, and answered "Dana Kim, Seoul" with the time. The miss ended the turn with an `answer` saying what it would do ("I'll inspect the available data"), with no tool call.
+
+### GitHub (63 tools), medium against high effort
+
+Questions about `pradeepA2125/crucible`: its latest release, its Actions workflows, and the latest commit message on `main`. The last one can only be answered from GitHub, because the local `git` server's newest commit is a different one.
+
+| Effort | Bundle limit | Turns | Correct | No-tool first step | Requests | Input | Seconds |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| medium | 32,000 characters | 9 | 5 | 4 | 2.9 | 62,714 | 18 |
+| medium | 20% of the window (50k on luna) | 2 | 1 | 1 | 2.0 | 63,205 | 12 |
+| **high** | 20% of the window | 9 | **9** | **0** | 3.0 | 93,341 | 21 |
+
+- **Under the old 32,000-character limit**, the whole GitHub bundle (67,931 characters, about 15,700 tokens) was refused. Every load then narrowed by `tool_names` (`get_latest_release`, `mcp__github__list_commits`) or by `query` ("list GitHub Actions workflows for a repository") and returned the right tool. Under the token limit it loads whole in one step: the release prompt took 3 requests and 18 s, down from 5 requests and 36 s.
+- **At medium effort, 5 of 11 GitHub turns ended at the first step without a tool call.** The thought named the right source each time ("I should query the repository's workflow listing directly", "GitHub tools can retrieve it"), while the action was an `answer`: "I'll check the repository's `main` branch…", or "I need access to GitHub to check the repository's current Actions workflows". `mcp__github__actions_list` and its description were in the directory.
+- **At high effort, all 9 turns loaded `mcp.github` whole, called the right tool and answered correctly**, with no refusals or misnamed calls. Output rose about 85 tokens per turn and time 2–3 s. (The `main` commit moved during the run; every high-effort answer matched the commit that was latest at that time.)
+- **Not established:** whether the flag raises the medium-effort decline rate. Flag-off was not run on these prompts. Luna's 1-in-13 to 1-in-15 no-tool rate on simpler prompts appears with or without the flag.
+
+**Wording matters more than the flag for bare requests.** "open linkedin" made no tool call in 0 of 8 replays with the flag on and 0 of 8 off, nor live in either arm: luna read it as acting on the user's own device. "open linkedin in the browser" loaded Playwright, navigated and opened the page.

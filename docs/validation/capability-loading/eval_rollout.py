@@ -148,7 +148,8 @@ TERMINAL_EVENTS = {"chat_done", "done"}
 
 class Backend:
     def __init__(self, model: str, flag: str, run_dir: Path, workspace: Path,
-                 window: str | None, registration: str | None = None) -> None:
+                 window: str | None, registration: str | None = None,
+                 effort: str | None = None) -> None:
         self.run_dir = run_dir
         run_dir.mkdir(parents=True, exist_ok=True)
         state = run_dir / "state"
@@ -172,6 +173,8 @@ class Backend:
             env["CRUCIBLE_MEMORY_WINDOW_TOKENS"] = window
         if registration:
             env["CRUCIBLE_CHATGPT_REGISTRATION"] = registration
+        if effort:
+            env["CRUCIBLE_REASONING_EFFORT"] = effort
         self.log_path = run_dir / "agentd.log"
         self.proc = subprocess.Popen(
             [str(PYTHON), "-m", "agentd.serve", "--port", "0"], cwd=run_dir, env=env,
@@ -396,15 +399,17 @@ def main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--window", help="Override CRUCIBLE_MEMORY_WINDOW_TOKENS")
     parser.add_argument("--chatgpt-registration", help="Override the luna sign-in registration id")
+    parser.add_argument("--effort", help="Override CRUCIBLE_REASONING_EFFORT (luna: medium)")
     parser.add_argument("--only", help="Comma-separated scenario names")
     parser.add_argument("--turn-timeout", type=float, default=600)
     parser.add_argument("--repeat", type=int, default=1, help="Run each scenario N times")
     args = parser.parse_args()
 
     backend = Backend(args.model, args.flag, args.run_dir, args.workspace.resolve(), args.window,
-                      args.chatgpt_registration)
+                      args.chatgpt_registration, args.effort)
     report: dict = {"model": args.model, "flag": args.flag, "suite": args.suite,
                     "window": args.window, "registration": args.chatgpt_registration,
+                    "effort": args.effort,
                     "started_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ",
                                                                          time.gmtime()),
                     "scenarios": []}
