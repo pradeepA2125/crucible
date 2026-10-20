@@ -31,6 +31,9 @@ class _Manager:
     def tool_definitions(self) -> list[ToolDefinition]:
         return list(self._defs)
 
+    def server_instructions(self) -> dict[str, str]:
+        return {"web": "Reads web pages for the agent."}
+
     def refusal(self, server: str, tool: str) -> str | None:
         return None
 
@@ -164,6 +167,18 @@ async def test_unloaded_call_is_refused_before_execution(tmp_path, on):
 
 
 @pytest.mark.asyncio
+async def test_namespace_glued_call_names_the_loader(tmp_path, on):
+    engine = _Recording([
+        _batch(_call("mcp.web__fetch", {"url": "https://example.com"}, "f")), ANSWER])
+    ctrl, tid, manager = _setup(tmp_path, engine)
+    await _run(ctrl, tid)
+    later = " ".join(str(m.get("content")) for m in engine.steps[1].history)
+    assert '`mcp.web` is a namespace' in later and "`mcp__web__fetch`" in later
+    assert "tool must be visible" not in later
+    assert manager.calls == []
+
+
+@pytest.mark.asyncio
 async def test_unloaded_after_eviction_is_refused(tmp_path, on):
     # The bundle was in an earlier turn's history, then compaction evicted it: the
     # seed history holds only the summary, so the tool is unloaded again.
@@ -289,6 +304,16 @@ async def test_directory_lists_every_tool(tmp_path, on):
     ctrl, tid, _ = _setup(tmp_path, engine, manager=_Manager(many))
     await _run(ctrl, tid)
     assert "mcp.web (5 tools)" in str(engine.steps[0].directory)
+
+
+@pytest.mark.asyncio
+async def test_directory_carries_server_instructions_and_descriptions(tmp_path, on):
+    engine = _Recording([ANSWER])
+    ctrl, tid, _ = _setup(tmp_path, engine)
+    await _run(ctrl, tid)
+    directory = str(engine.steps[0].directory)
+    assert "- mcp.web (1 tool): Reads web pages for the agent." in directory
+    assert f"  mcp__web__fetch: {FETCH.description.split('. ')[0]}" in directory
 
 
 def test_directory_sits_right_after_the_tool_catalog():

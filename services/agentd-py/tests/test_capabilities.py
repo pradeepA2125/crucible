@@ -6,8 +6,18 @@ import json
 import pytest
 
 from agentd.capabilities.bundle import render_bundle, select_tools
-from agentd.capabilities.catalog import render_directory, split_definitions, tool_version
-from agentd.capabilities.history import guidance_visible, loaded_versions, unloaded_reason
+from agentd.capabilities.catalog import (
+    first_sentence,
+    render_directory,
+    split_definitions,
+    tool_version,
+)
+from agentd.capabilities.history import (
+    guidance_visible,
+    loaded_versions,
+    misnamed_reason,
+    unloaded_reason,
+)
 
 
 def _d(name: str, description: str = "") -> dict[str, object]:
@@ -36,13 +46,47 @@ def test_split_routes_mcp_tools_to_their_server():
 
 
 def test_directory_lines():
-    many = [_d(f"mcp__big__t{i:02d}") for i in range(42)]
-    text = render_directory({"mcp.web": [_d("mcp__web__fetch")], "mcp.big": many})
+    # Real call names: with short names luna called `mcp.fetch__fetch`, gluing the
+    # namespace onto the tool (rollout check, 2026-10-20). Descriptions say what each does.
+    many = [_d(f"mcp__big__t{i:02d}", f"Tool {i}. More.") for i in range(42)]
+    web = [_d("mcp__web__fetch", "Fetches a URL from the internet. Extracts markdown.")]
+    text = render_directory({"mcp.web": web, "mcp.big": many},
+                            {"mcp.web": "Web access for the agent.\nSecond paragraph."})
     assert text.splitlines() == [
-        "- mcp.big (42 tools): " + ", ".join(f"t{i:02d}" for i in range(40)) + ", +2 more",
-        "- mcp.web (1 tool): fetch",
+        "- mcp.big (42 tools):",
+        *[f"  mcp__big__t{i:02d}: Tool {i}." for i in range(40)],
+        "  +2 more",
+        "- mcp.web (1 tool): Web access for the agent.",
+        "  mcp__web__fetch: Fetches a URL from the internet.",
     ]
     assert render_directory({}) == ""
+
+
+def test_directory_omits_empty_and_placeholder_descriptions():
+    defs = [_d("mcp__s__a", ""), _d("mcp__s__b", "b (MCP server 's')")]
+    assert render_directory({"mcp.s": defs}).splitlines() == [
+        "- mcp.s (2 tools):", "  mcp__s__a", "  mcp__s__b"]
+
+
+def test_server_summary_skips_markdown_headings():
+    from agentd.capabilities.catalog import server_summary
+    text = ("# Everything Server – Server Instructions\n\nAudience: These instructions are "
+            "written for an LLM.\nFollow them.\n\n## Protocol\n\nMore.")
+    assert server_summary(text) == "Audience: These instructions are written for an LLM."
+    assert server_summary("> - Drives a headless browser. Etc.") == "Drives a headless browser."
+    assert server_summary("# Only a heading") == ""
+    assert server_summary("") == ""
+
+
+def test_first_sentence():
+    assert first_sentence("Navigate to a URL") == "Navigate to a URL"
+    assert first_sentence("Take a shot.  Then more.") == "Take a shot."
+    assert first_sentence("Line one\nline two. x") == "Line one line two."
+    assert first_sentence("Version 2.0 is out. Next.") == "Version 2.0 is out."
+    long = "word " * 60
+    cut = first_sentence(long)
+    assert len(cut) <= 120 and cut.endswith("…")
+    assert first_sentence("") == ""
 
 
 def test_select_all_names_and_errors():
@@ -117,6 +161,31 @@ def test_unloaded_reason_cases():
                       'namespace "mcp.pw" first, alone in its step.')
     loaded = {"mcp__pw__browser_type": tool_version(BROWSER[1])}
     assert unloaded_reason("mcp__pw__browser_type", by_name, loaded) is None
+
+
+def test_misnamed_reason_points_at_the_namespace_and_the_real_name():
+    by_name = {d["name"]: d for d in BROWSER}
+    for wrong in ("mcp.pw__browser_click", "mcp.pw.browser_click"):
+        assert misnamed_reason(wrong, by_name) == (
+            f"`{wrong}` is not a tool name: `mcp.pw` is a namespace. Call load_capabilities "
+            'with namespace "mcp.pw" alone in its step, then call the tool as '
+            "`mcp__pw__browser_click`.")
+
+
+def test_misnamed_reason_without_a_known_tool_names_the_namespace_only():
+    by_name = {d["name"]: d for d in BROWSER}
+    for wrong in ("mcp.pw", "mcp__pw", "mcp.pw.nope"):
+        assert misnamed_reason(wrong, by_name) == (
+            f"`{wrong}` is not a tool name: `mcp.pw` is a namespace. Call load_capabilities "
+            'with namespace "mcp.pw" alone in its step, then call its tools by the full '
+            "names on its OPTIONAL CAPABILITIES line.")
+
+
+def test_misnamed_reason_leaves_other_names_alone():
+    by_name = {d["name"]: d for d in BROWSER}
+    for name in ("read_file", "mcp__pw__browser_click", "mcp.other__x", "mcp__gone__x",
+                 "mcp."):
+        assert misnamed_reason(name, by_name) is None
 
 
 # --- Task 8: the load_capabilities tool -------------------------------------------------

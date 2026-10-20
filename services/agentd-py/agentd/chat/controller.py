@@ -1003,7 +1003,10 @@ class ChatController:
             from agentd.capabilities.tool_source import CapabilitySession, CapabilityToolSource
             from agentd.chat.controller_prompts import mcp_bundle_guidance
 
-            capabilities = CapabilitySession(guidance=mcp_bundle_guidance(RenderContext.main()))
+            capabilities = CapabilitySession(
+                guidance=mcp_bundle_guidance(RenderContext.main()),
+                summaries={f"mcp.{server}": text for server, text
+                           in self._mcp_manager.server_instructions().items()})
             dispatch_sources.append(CapabilityToolSource(capabilities))
         loop = ControllerLoop(
             self._reasoning,

@@ -23,7 +23,7 @@ LOAD_CAPABILITIES = ToolDefinition(
         "`namespace`: that loads every tool of the server. The result is the schemas, not an "
         "execution: the loaded tools are callable from your next step. Call it alone in its "
         "step. Only when a whole-namespace load is refused as bundle_too_large, retry with a "
-        "`query` (a few words naming the tools you need) or exact unprefixed `tool_names`. "
+        "`query` (a few words naming the tools you need) or exact `tool_names`. "
         "Loading grants no permission: every call still goes through the usual approval."
     ),
     parameters={
@@ -49,6 +49,8 @@ class CapabilitySession:
     namespaces: dict[str, list[dict[str, object]]] = field(default_factory=dict)
     history: list[dict[str, object]] = field(default_factory=list)
     guidance: str = ""
+    # Each server's own instructions by namespace ("mcp.<server>"), for the directory.
+    summaries: dict[str, str] = field(default_factory=dict)
 
 
 def _error(text: str) -> ToolOutput:
@@ -106,6 +108,6 @@ class CapabilityToolSource:
         if len(bundle) > MAX_BUNDLE_CHARS:
             return _error(f"bundle_too_large: {len(selected)} tools of {namespace} come to "
                           f"{len(bundle)} characters (limit {MAX_BUNDLE_CHARS}). Retry with a "
-                          "`query` naming the tools you need, or exact unprefixed `tool_names` "
+                          "`query` naming the tools you need, or exact `tool_names` "
                           "from the namespace's directory line.")
         return ToolOutput(output=bundle, whole=True)

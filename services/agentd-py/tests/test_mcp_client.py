@@ -251,3 +251,15 @@ async def test_refusal_names_the_real_reason():
     assert mgr.refusal("missing", "x") == "MCP server 'missing' is not connected"
     await mgr.shutdown()
     assert mgr.refusal("echo", "say") == "MCP server 'echo' is not connected"
+
+
+@pytest.mark.asyncio
+async def test_keeps_each_connected_servers_instructions():
+    sessions = {"a": _FakeSession(["x"]), "b": _FakeSession(["y"])}
+    sessions["a"].server_instructions = "Drives a headless browser.\nMore detail."
+    mgr = McpConnectionManager(_StaticLoader([_cfg("a"), _cfg("b"), _cfg("broken")]),
+                               session_factory=_factory(sessions))
+    await mgr.start()
+    assert mgr.server_instructions() == {"a": "Drives a headless browser.\nMore detail."}
+    await mgr.shutdown()
+    assert mgr.server_instructions() == {}

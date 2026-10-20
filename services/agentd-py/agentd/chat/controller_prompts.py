@@ -798,12 +798,11 @@ server, and its tools are available in this turn: only their schemas are left ou
 list above until you load them. Before you tell the user something is out of reach, check
 these namespaces; if one covers the request, load it and use it. To load, call
 load_capabilities alone in its step with just the namespace: that loads every tool of the
-server. The loaded tools are callable from your next step as `mcp__<server>__<tool>`, and
-their guidance comes with the schemas. Only if a load is refused as bundle_too_large, retry
-with a `query` of a few words naming the tools you need, or exact unprefixed `tool_names`
-from the namespace's line below. Loading grants no permission: every call to an external
-tool still pauses for the user's approval when approval applies. If a call is refused
-because a tool is not loaded, load its namespace again.
+server. From your next step, call the loaded tools by the full names on their namespace's
+line below (`mcp__<server>__<tool>`); a call made before the load is refused. Their guidance
+comes with the schemas. Only if a load is refused as bundle_too_large, retry with a `query`
+of a few words naming the tools you need, or exact `tool_names` from the namespace's line.
+If a call is refused because a tool is not loaded, load its namespace again.
 """
 
 _MCP_SCHEMAS_IN_TOOLS = "Their parameter schemas are in TOOLS like any other\ntool;"

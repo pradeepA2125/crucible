@@ -57,3 +57,30 @@ def unloaded_reason(
                 f'load_capabilities with namespace "{namespace}" again, alone in its step.')
     return (f"`{tool}` is not loaded. Call load_capabilities with namespace "
             f'"{namespace}" first, alone in its step.')
+
+
+def misnamed_reason(tool: str, definitions_by_name: dict[str, dict[str, object]]) -> str | None:
+    """A call named after a deferred namespace rather than a tool (`mcp.fetch__fetch`,
+    `mcp.fetch.fetch`, `mcp.fetch`): the model glued the directory's namespace onto the
+    tool name. Say what the namespace is and what to call, instead of "not visible"."""
+    if tool in definitions_by_name:
+        return None
+    for prefix in ("mcp.", "mcp__"):
+        if tool.startswith(prefix):
+            rest = tool[len(prefix):]
+            break
+    else:
+        return None
+    cuts = [i for i in (rest.find("__"), rest.find(".")) if i >= 0]
+    cut = min(cuts) if cuts else len(rest)
+    server, short = rest[:cut], rest[cut:].lstrip("_.")
+    servers = {name.split("__", 2)[1] for name in definitions_by_name
+               if len(name.split("__", 2)) == 3}
+    if not server or server not in servers:
+        return None
+    namespace = f"mcp.{server}"
+    real = f"mcp__{server}__{short}"
+    then = (f"then call the tool as `{real}`." if short and real in definitions_by_name
+            else "then call its tools by the full names on its OPTIONAL CAPABILITIES line.")
+    return (f"`{tool}` is not a tool name: `{namespace}` is a namespace. Call "
+            f'load_capabilities with namespace "{namespace}" alone in its step, {then}')

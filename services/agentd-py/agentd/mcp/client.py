@@ -40,6 +40,12 @@ class McpToolNotExposed(RuntimeError):
     """The server does not list the tool, or its enabled_tools/disabled_tools hide it."""
 
 
+def _keep_instructions(session: Any, result: Any) -> None:
+    """The server's own description of itself (InitializeResult.instructions, optional),
+    kept on the session so the manager can read it like a fake session's attribute."""
+    session.server_instructions = getattr(result, "instructions", None)
+
+
 @asynccontextmanager
 async def _open_session(cfg: McpServerConfig) -> AsyncIterator[Any]:
     """Default session factory: real SDK transport + initialized ClientSession.
@@ -56,7 +62,7 @@ async def _open_session(cfg: McpServerConfig) -> AsyncIterator[Any]:
             env=interpolate_env(cfg.env) or None)
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
-                await session.initialize()
+                _keep_instructions(session, await session.initialize())
                 yield session
     elif cfg.transport == "http":
         from mcp.client.streamable_http import streamablehttp_client
@@ -65,7 +71,7 @@ async def _open_session(cfg: McpServerConfig) -> AsyncIterator[Any]:
                 cfg.url or "", headers=interpolate_env(cfg.headers) or None) as (
                 read, write, _get_session_id):
             async with ClientSession(read, write) as session:
-                await session.initialize()
+                _keep_instructions(session, await session.initialize())
                 yield session
     else:  # sse
         from mcp.client.sse import sse_client
@@ -73,7 +79,7 @@ async def _open_session(cfg: McpServerConfig) -> AsyncIterator[Any]:
         async with sse_client(
                 cfg.url or "", headers=interpolate_env(cfg.headers) or None) as (read, write):
             async with ClientSession(read, write) as session:
-                await session.initialize()
+                _keep_instructions(session, await session.initialize())
                 yield session
 
 
@@ -84,6 +90,7 @@ class _ServerHandle:
         self.session: Any = None
         self.all_tools: list[Any] = []  # every tool the server lists
         self.tools: list[Any] = []  # the visible subset after the entry's filters
+        self.instructions: str | None = None  # the server's InitializeResult.instructions
         self.status = McpServerStatus(name=cfg.name, state="connecting")
         self.stop = asyncio.Event()
         self.task: asyncio.Task[None] | None = None
@@ -146,6 +153,7 @@ class McpConnectionManager:
             async with self._session_factory(handle.cfg) as session:
                 listed = await session.list_tools()
                 handle.session = session
+                handle.instructions = getattr(session, "server_instructions", None)
                 handle.all_tools = list(listed.tools)
                 self._apply_filters(handle)
                 logger.info("[mcp] connected server=%s tools=%d",
@@ -199,6 +207,12 @@ class McpConnectionManager:
 
     def statuses(self) -> list[McpServerStatus]:
         return [h.status for h in self._handles.values()]
+
+    def server_instructions(self) -> dict[str, str]:
+        """Connected servers that describe themselves, by server name."""
+        return {name: h.instructions for name, h in self._handles.items()
+                if h.session is not None and isinstance(h.instructions, str)
+                and h.instructions.strip()}
 
     def tool_definitions(self) -> list[ToolDefinition]:
         out: list[ToolDefinition] = []

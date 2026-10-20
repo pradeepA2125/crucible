@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agentd.capabilities.catalog import LOADER_TOOL, render_directory, split_definitions
-from agentd.capabilities.history import loaded_versions, unloaded_reason
+from agentd.capabilities.history import loaded_versions, misnamed_reason, unloaded_reason
 from agentd.chat.edit_session import StaleWriteError
 from agentd.chat.protected_paths import ProtectedPathError
 from agentd.chat.todo_ledger import TodoLedger
@@ -1441,7 +1441,8 @@ class ControllerLoop:
         self._capabilities.history = history
         self._deferred_defs = {str(d.get("name", "")): d
                                for defs in split.namespaces.values() for d in defs}
-        self._capability_directory = render_directory(split.namespaces) or None
+        self._capability_directory = render_directory(
+            split.namespaces, self._capabilities.summaries) or None
         if split.namespaces:
             return split.core
         return [d for d in split.core if d.get("name") != LOADER_TOOL]
@@ -2025,6 +2026,13 @@ class ControllerLoop:
                                     for n in raw_calls)):
                         raise ValueError(f"{LOADER_TOOL} must run alone in its step; call it "
                                          "by itself, then use the loaded tools next step")
+                    if self._deferred_defs and isinstance(raw_calls, list):
+                        for node in raw_calls:
+                            if not isinstance(node, dict) or not isinstance(node.get("tool"), str):
+                                continue
+                            misnamed = misnamed_reason(node["tool"], self._deferred_defs)
+                            if misnamed:
+                                raise ValueError(f"call {node.get('id')}: {misnamed}")
                     # Loaded = a bundle with the tool's current schema is in the history
                     # being sent; read once per batch, before any member runs.
                     loaded = loaded_versions(history) if self._deferred_defs else {}
