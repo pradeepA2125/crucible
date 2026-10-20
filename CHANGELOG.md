@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.8.1 (2026-10-20)
+
+### MCP tools load by name first
+
+- The agent now loads only the MCP tools it needs, by their exact names from the directory. It loads a whole server only when it is unsure which tools it needs or cannot find the right one. Set `CRUCIBLE_CAPABILITY_LOAD_MODE=namespace` to load a whole server every time, as in v0.8.0.
+- **Measured on gpt-6-luna at high effort.** On GitHub's 63-tool server, input fell by 35% (61k against 93k per prompt) at the same correctness. On small servers and multi-step browser work, loading by name costs more than whole-server loads, because each new tool needs another load step. A live check of the final wording answered 10 of 10 prompts correctly; every load was by name.
+- **Not yet checked:** medium effort, and providers other than luna.
+- The evaluation harness gains `--load-mode`; results are in `docs/on-demand-capability-loading-pilot.md`.
+
 ## v0.8.0 (2026-10-20)
 
 ### On-demand MCP tool loading, now on by default
