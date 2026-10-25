@@ -57,5 +57,6 @@ async def test_attention_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         response = await client.get(
             "/v1/chat/attention",
             params={"workspace": store.get_thread(tid).workspace_path})  # type: ignore[union-attr]
-    assert response.json() == [{"thread_id": tid, "pending_gates": 1, "agents_running": 1}]
+    assert response.json() == [{"thread_id": tid, "pending_gates": 1, "agents_running": 1,
+                                "gate_kinds": ["edit"]}]
     assert quiet not in str(response.json())

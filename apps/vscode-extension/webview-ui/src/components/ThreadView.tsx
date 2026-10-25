@@ -1,4 +1,8 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { CardShell } from "./shared/CardShell";
+import type { RegisterReviewDraft } from "../drafts/reviewDraft";
+import type { DraftPort } from "../drafts/types";
+import { AgentRosterCard } from "./agents/AgentRosterCard";
+import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
 import { TranscriptItems } from "./shared/TranscriptItems";
 import { Icon } from "./Icon";
 import { vscode } from "../vscodeApi";
@@ -22,6 +26,23 @@ import { TeamWindow } from "./teams/TeamWindow";
 
 export { TranscriptItems } from "./shared/TranscriptItems";
 
+/** Shared project receipt status also mounts before thread/history hydration. */
+export function ChatAdmissionStatus({ admission }: { admission: AppState["chatAdmission"] }) {
+  if (!admission) return null;
+  return (<div role="status" className="mx-auto w-full max-w-[760px] px-4 py-2 text-meta text-text-2">
+        <p>{admission.state === "unknown"
+          ? "Receipt is unconfirmed. Your original submission is retained and has not been resent."
+          : "Finishing submission…"}</p>
+        {admission.state === "unknown" && <button type="button"
+          disabled={admission.checking}
+          className="mt-1 underline disabled:opacity-50"
+          onClick={() => vscode.postMessage({ type: "checkChatReceipt" })}>
+          {admission.checking ? "Checking receipt…" : "Check receipt"}
+        </button>}
+      </div>);
+}
+
+
 // Gate statuses where the workbar should be HIDDEN (user is deciding something).
 const WAITING_STATUSES = new Set([
   "AWAITING_PLAN_APPROVAL",
@@ -31,7 +52,19 @@ const WAITING_STATUSES = new Set([
   "AWAITING_VALIDATION_DECISION",
 ]);
 
+export interface InspectionPanel { id: string; label: string; content: ReactNode; close(): void; }
+/** Keep open stable. render must not mount inspection bodies while hidden. */
+export interface ThreadWorkspace {
+  expanded?: boolean;
+  visible: boolean;
+  open(): void;
+  render(panels: InspectionPanel[], overview: ReactNode): ReactNode;
+}
 interface Props {
+  draftStore?: DraftPort;
+  registerReviewDraft?: RegisterReviewDraft;
+  chrome?: "panel" | "embedded";
+  workspace?: ThreadWorkspace;
   state: AppState;
   onBack: () => void;
   dismissedErrorTaskId: string | null;
@@ -44,7 +77,8 @@ interface Props {
  * Layout: header | scrollable message list | LiveSlot | WorkBar | InputArea.
  * draft state is owned here so EmptyState chips can pre-fill it.
  */
-export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError }: Props) {
+export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError, chrome = "panel", workspace, draftStore, registerReviewDraft }: Props) {
+  const historyCurrent = !state.historyState || state.historyState.phase === "current";
   const [draft, setDraft] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
@@ -68,11 +102,13 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
     setExpanded(new Set());
     setAgentWindow(null);
     setTeamWindow(null);
-  }, [state.activeThreadId]);
+    if (!historyCurrent) { setRewindPreview(null); setRewindMessageId(null); }
+  }, [state.activeThreadId, historyCurrent]);
 
   // The host keeps one live subscription per open agent: tell it the full set.
-  const teamAgent = teamWindow && teamWindow.tab !== "board" ? [teamWindow.tab] : [];
-  const openAgentsKey = [...new Set([...expanded, ...(agentWindow ? [agentWindow.agentId] : []),
+  const inspectionVisible = workspace?.visible ?? true;
+  const teamAgent = inspectionVisible && teamWindow && teamWindow.tab !== "board" ? [teamWindow.tab] : [];
+  const openAgentsKey = [...new Set([...expanded, ...(inspectionVisible && agentWindow ? [agentWindow.agentId] : []),
                                      ...teamAgent])]
     .sort().join(",");
   useEffect(() => {
@@ -85,18 +121,24 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
     usage: state.threadUsage,
     expanded,
     toggleExpanded: (agentId) => setExpanded((prev) => {
+      if (!historyCurrent) return prev;
       const next = new Set(prev);
       if (next.has(agentId)) next.delete(agentId);
       else next.add(agentId);
       return next;
     }),
-    openWindow: (agentId, siblings) => setAgentWindow({ agentId, siblings }),
-  }), [state.agents, state.agentViews, state.threadUsage, expanded]);
+    openWindow: (agentId, siblings) => { if (!historyCurrent) return; setAgentWindow({ agentId, siblings }); workspace?.open(); },
+  }), [state.agents, state.agentViews, state.threadUsage, expanded, workspace?.open, historyCurrent]);
 
-  const openTeamId = teamWindow?.teamId ?? "";
+  const openTeamId = inspectionVisible ? teamWindow?.teamId ?? "" : "";
   useEffect(() => {
     vscode.postMessage({ type: "setOpenTeams", teamIds: openTeamId ? [openTeamId] : [] });
   }, [openTeamId]);
+
+  useEffect(() => () => {
+    vscode.postMessage({ type: "setOpenAgents", agentIds: [] });
+    vscode.postMessage({ type: "setOpenTeams", teamIds: [] });
+  }, []);
 
   const teamNames = useMemo(() => Object.fromEntries(
     Object.values(state.teams).map((t) => [t.teamId, t.name])), [state.teams]);
@@ -105,11 +147,13 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
     views: state.teamViews,
     usage: state.threadUsage,
     openTeam: (teamId) => {
+      if (!historyCurrent) return;
       // A board opened from an agent transcript becomes the foreground view.
       setAgentWindow(null);
       setTeamWindow({ teamId, tab: "board" });
+      workspace?.open();
     },
-  }), [state.teams, state.teamViews, state.threadUsage]);
+  }), [state.teams, state.teamViews, state.threadUsage, workspace?.open, historyCurrent]);
 
   useEffect(() => {
     function onHostMessage(event: MessageEvent) {
@@ -130,13 +174,13 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
   // UX Rule 3: navLocked while input is disabled (local SSE loop appending) OR while a
   // detached controller turn is in flight — turnActive is durable across a webview reload,
   // so the lock survives where the ephemeral inputEnabled flag would reset to true.
-  const navLocked = !state.inputEnabled || state.turnActive;
+  const navLocked = !!state.chatAdmission || (!state.historyState?.navigationSafe && (!state.inputEnabled || state.turnActive));
 
   const availability = inputAvailability(state);
 
   // WorkBar visibility: task is running, NOT waiting on user.
   const workbarVisible =
-    availability.disabled &&
+    availability.disabled && (!state.chatAdmission || state.turnActive) &&
     !(WAITING_STATUSES.has(state.liveStatus ?? ""));
 
   // Filtered live error — hide if dismissed.
@@ -177,7 +221,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
   } else {
     streamStartRef.current = null;
   }
-  const turnRunning = state.turnActive || !state.inputEnabled;
+  const turnRunning = state.turnActive || (!state.inputEnabled && !state.chatAdmission);
   // A breadcrumb (e.g. "Command approved") seals the bubble while its command still runs: the
   // unfinished pill then lives in a sealed message of this turn, and the line must still name it.
   const sealedRunning = useMemo(() => {
@@ -228,19 +272,20 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
     <TeamsContext.Provider value={teamsUi}>
     <div className="relative flex h-full overflow-hidden">
       {/* Settings drawer — squeezes the chat column (inline sibling, no overlay). */}
-      <SettingsDrawer
+      {chrome === "panel" && <SettingsDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         onSelect={(section) => {
-          setSettingsSection(section);
+          if (document.documentElement.dataset.host === "desktop") vscode.postMessage({ type: "openSettings", section });
+          else setSettingsSection(section);
           setDrawerOpen(false);
         }}
-      />
+      />}
 
       {/* ── Chat column ── */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden" style={workspace?.expanded ? { display: "none" } : undefined}>
       {/* ── Header ── */}
-      <div
+      {chrome === "panel" && <div
         className="flex items-center gap-2 px-2 py-2 flex-shrink-0"
         style={{ borderBottom: "1px solid var(--color-border)" }}
       >
@@ -414,7 +459,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         >
           <Icon name="plus" size={13} />
         </button>
-      </div>
+      </div>}
 
       {/* ── Message list ──
           [&>*]:flex-shrink-0 is load-bearing: children with overflow-hidden
@@ -424,11 +469,11 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
       <div className="flex-1 overflow-y-auto pt-6 pb-8 [&>*]:flex-shrink-0">
         <div data-testid="transcript-column" className="mx-auto flex w-full max-w-[760px] flex-col gap-6 px-4 [&>*]:flex-shrink-0">
         {isEmpty ? (
-          <EmptyState onPick={setDraft} />
+          historyCurrent ? <EmptyState onPick={setDraft} /> : <div className="min-h-[8rem]" aria-busy={state.historyState?.phase === "loading"} />
         ) : (
           <>
-            <TranscriptItems key={state.activeThreadId} messages={state.messages} turnActive={state.turnActive} turnRunning={turnRunning}
-              queuedIds={state.queuedIds} planVersions={planVersionMap} onRewindRequest={setRewindMessageId}
+            <TranscriptItems readOnly={!historyCurrent} recordEditSources key={state.activeThreadId} messages={state.messages} turnActive={state.turnActive} turnRunning={turnRunning}
+              queuedIds={state.queuedIds} planVersions={planVersionMap} onRewindRequest={historyCurrent ? setRewindMessageId : undefined}
               streamingToolEvents={liveFinishedEvents}
               renderWorkTail={state.retryStatus || showTransient ? () => (
                 <>
@@ -468,8 +513,18 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         </div>
       </div>
 
+      <ChatAdmissionStatus admission={state.chatAdmission} />
+      {state.historyState && (state.historyState.phase !== "current" || state.historyState.notice) && (
+        <div role="status" className="mx-auto w-full max-w-[760px] px-4 py-2 text-caption text-text-2">
+          {state.historyState.phase === "current" ? state.historyState.notice
+            : state.historyState.cached ? "Showing saved history. Reconnecting…"
+            : state.historyState.phase === "unavailable" ? "Conversation history is unavailable. Retrying…" : "Loading saved history…"}
+        </div>
+      )}
+
       {/* ── Pinned bottom section ── */}
-      <LiveSlot
+      {(!state.historyState || state.historyState.phase === "current") && <LiveSlot
+        threadId={state.activeThreadId} draftStore={draftStore}
         liveGates={state.liveGates}
         livePlan={state.livePlan}
         liveReview={state.liveReview}
@@ -480,9 +535,9 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         sessionTranscripts={state.sessionTranscripts}
         onExpandSession={(sessionId) => vscode.postMessage({ type: "fetchSessionTranscript", sessionId })}
         onDismissError={() => state.liveError && onDismissError(state.liveError.taskId)}
-      />
+      />}
 
-      <TeamStrip />
+      {historyCurrent && <TeamStrip />}
 
       <div data-testid="workbar-column" className="mx-auto min-w-0 w-full max-w-[760px] px-4 flex-shrink-0">
         <WorkBar
@@ -496,6 +551,8 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
 
       <div className="mx-auto w-full max-w-[760px] px-4 pb-3 pt-2 flex-shrink-0">
         <InputArea
+          draftStore={draftStore}
+          registerReviewDraft={registerReviewDraft}
           threadId={state.activeThreadId}
           availability={availability}
           draft={draft}
@@ -540,7 +597,20 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         />
       )}
 
-      {teamWindow !== null && (
+      {workspace?.render([
+        ...(historyCurrent && agentWindow ? [{ id: `agent:${agentWindow.agentId}`, label: state.agents[agentWindow.agentId]?.label ?? "Agent", close: () => setAgentWindow(null),
+          content: <AgentWindow presentation="embedded" agentId={agentWindow.agentId} siblings={agentWindow.siblings}
+            onSwitch={agentId => setAgentWindow({ ...agentWindow, agentId })} onClose={() => setAgentWindow(null)} /> }] : []),
+        ...(historyCurrent && teamWindow ? [{ id: `team:${teamWindow.teamId}`, label: state.teams[teamWindow.teamId]?.name ?? "Team", close: () => setTeamWindow(null),
+          content: <TeamWindow presentation="embedded" teamId={teamWindow.teamId} tab={teamWindow.tab}
+            onTab={tab => setTeamWindow({ ...teamWindow, tab })} onClose={() => setTeamWindow(null)} /> }] : []),
+      ], <div className="desktop-agents-overview min-h-0 overflow-y-auto p-3"><header className="desktop-agents-heading"><h2>Agents and teams</h2><p>Inspect the same agent and team activity shown in your conversation.</p></header>
+        {historyCurrent && Object.keys(state.agents).length > 0 ? <AgentRosterCard agentIds={Object.keys(state.agents)} />
+          : <CardShell icon="fork" title={historyCurrent?"No agents to inspect":"Saved activity"}><p className="desktop-agents-empty">{historyCurrent?"Open an agent or team from the conversation to inspect its live activity here.":"Reconnect this conversation to inspect current agent and team activity."}</p></CardShell>}
+        {historyCurrent && <TeamStrip />}
+      </div>)}
+
+      {!workspace && historyCurrent && teamWindow !== null && (
         <TeamWindow
           teamId={teamWindow.teamId}
           tab={teamWindow.tab}
@@ -551,7 +621,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
 
       {/* Children opened from a team member sit above the retained team board.
           DOM order matches paint order and the shared modal focus handler. */}
-      {agentWindow !== null && (
+      {!workspace && historyCurrent && agentWindow !== null && (
         <AgentWindow
           agentId={agentWindow.agentId}
           siblings={agentWindow.siblings}

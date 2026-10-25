@@ -14,6 +14,14 @@ function deliver(data: unknown) {
 describe("SetupApp", () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it("shows the host-owned runtime destination while retaining the VS Code default", () => {
+    render(<SetupApp />);
+    expect(screen.getByText("~/.crucible/runtime")).toBeTruthy();
+    deliver({ type: "setup/preferences", localModels: true, runtimePath: "/disposable/desktop-profile/runtime" });
+    expect(screen.getByText("/disposable/desktop-profile/runtime")).toBeTruthy();
+    expect(screen.queryByText("~/.crucible/runtime")).toBeNull();
+  });
+
   it("restores the saved opt-out and ignores late preferences after a new choice", () => {
     render(<SetupApp />);
     expect(vscode.postMessage).toHaveBeenCalledWith({ type: "setup/preferences" });
@@ -69,6 +77,14 @@ describe("SetupApp", () => {
 
 describe("SetupApp — Use your ChatGPT plan", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("shows the host-owned runtime destination while retaining the VS Code default", () => {
+    render(<SetupApp />);
+    expect(screen.getByText("~/.crucible/runtime")).toBeTruthy();
+    deliver({ type: "setup/preferences", localModels: true, runtimePath: "/disposable/desktop-profile/runtime" });
+    expect(screen.getByText("/disposable/desktop-profile/runtime")).toBeTruthy();
+    expect(screen.queryByText("~/.crucible/runtime")).toBeNull();
+  });
 
   function toProviderStep() {
     render(<SetupApp />);

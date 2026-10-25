@@ -462,6 +462,10 @@ export const ChatThreadSummarySchema = z.object({
   updatedAt: z.string().optional(),
   messageCount: z.number().optional(),
   status: z.enum(["running", "review", "done", "failed"]).nullable().optional(),
+  // Missing on older backends means unknown, not idle.
+  turnActive: z.boolean().optional(),
+  pendingGates: z.number().int().nonnegative().optional(),
+  gateKinds: z.array(z.string().min(1).max(128)).max(64).optional(),
   // Queued, running or gate-parked agents (spec §6) — a count, not a status value.
   agentsRunning: z.number().default(0),
 });
@@ -504,6 +508,52 @@ export const RewindResultSchema = z.object({
   retiredMemories: z.number().default(0),
 });
 export type RewindResult = z.infer<typeof RewindResultSchema>;
+
+// ── Review baselines (desktop Changes, "since a checkpoint") ─────────────
+// Read-only views of rewind checkpoints. A baseline is exactly what a rewind to that
+// checkpoint would restore (the oldest captured pre-state per path), so the Changes
+// view and the rewind can never disagree. Older backends lack the routes: the methods
+// are optional and a 404 means "unavailable", never "no changes".
+
+export const CapturedFileSchema = z.object({
+  path: z.string(),
+  // false: the turn created it, so the baseline is "did not exist".
+  existed: z.boolean(),
+  // true: too large to snapshot; the baseline cannot be shown.
+  oversize: z.boolean().default(false),
+});
+export type CapturedFile = z.infer<typeof CapturedFileSchema>;
+
+export const CheckpointSummarySchema = z.object({
+  seq: z.number().int(),
+  // Continuation turns fold into the same checkpoint, so one anchor can cover several turns.
+  anchorMessageId: z.string(),
+  turnId: z.string(),
+  createdAt: z.string(),
+  files: z.array(CapturedFileSchema),
+});
+export type CheckpointSummary = z.infer<typeof CheckpointSummarySchema>;
+
+export const BaselineEntrySchema = CapturedFileSchema.extend({ fromSeq: z.number().int() });
+export type BaselineEntry = z.infer<typeof BaselineEntrySchema>;
+
+// Each state carries exactly its own facts: captured has bytes whose length is `size`,
+// too_large has a size and no bytes, the rest have neither. Anything else is malformed.
+const baselineIdentity = { path: z.string().min(1), fromSeq: z.number().int().nonnegative() };
+const noBytes = (state: "absent" | "oversize" | "missing" | "unavailable") =>
+  z.object({ ...baselineIdentity, state: z.literal(state), size: z.null() }).strict();
+export const BaselineFileSchema = z.discriminatedUnion("state", [
+  z.object({ ...baselineIdentity, state: z.literal("captured"), size: z.number().int().nonnegative(), content: z.instanceof(Uint8Array) }).strict(),
+  z.object({ ...baselineIdentity, state: z.literal("too_large"), size: z.number().int().positive() }).strict(),
+  noBytes("absent"), noBytes("oversize"), noBytes("missing"),
+  // The backend cannot read retained bytes safely on this platform.
+  noBytes("unavailable"),
+]).superRefine((file, context) => {
+  if (file.state === "captured" && file.content.length !== file.size) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Baseline size does not match its content." });
+  }
+});
+export type BaselineFile = z.infer<typeof BaselineFileSchema>;
 
 export const ChatEventSchema = z.object({
   type: z.string(),
@@ -695,8 +745,68 @@ export function approvalFromWire(raw: unknown): ApprovalState | undefined {
   });
 }
 
+/** New admission authority. Existing list/live display defaults are not evidence. */
+const activityIdentity = { version: z.literal(1), request_id: z.string().min(1).max(128),
+  requested_workspace: z.string().min(1).max(8192) };
+export const ProjectChatActivitySchema = z.discriminatedUnion("supported", [
+  z.object({ ...activityIdentity, supported: z.literal(false), reason: z.string().min(1).max(128) }).strict(),
+  z.object({ ...activityIdentity, supported: z.literal(true), process_id: z.string().min(1).max(128),
+    workspace_path: z.string().min(1).max(8192), threads: z.array(z.object({
+      thread_id: z.string().min(1).max(1024), turn_active: z.boolean(),
+      agents_running: z.number().int().nonnegative().max(1000000), sessions_running: z.number().int().nonnegative().max(1024),
+    }).strict()).max(1000) }).strict(),
+]).refine(value => !value.supported || new Set(value.threads.map(thread => thread.thread_id)).size === value.threads.length,
+  "Duplicate activity thread identity").transform(value => value.supported ? {
+    version: value.version, supported: true as const, requestId: value.request_id, requestedWorkspace: value.requested_workspace,
+    processId: value.process_id, workspacePath: value.workspace_path, threads: value.threads.map(thread => ({
+      threadId: thread.thread_id, turnActive: thread.turn_active, agentsRunning: thread.agents_running, sessionsRunning: thread.sessions_running,
+    })),
+  } : { version: value.version, supported: false as const, requestId: value.request_id,
+    requestedWorkspace: value.requested_workspace, reason: value.reason });
+export type ProjectChatActivity = z.infer<typeof ProjectChatActivitySchema>;
+
+/** Exact acceptance protocol; original values have one cross-runtime hash encoding. */
+export const GateDecisionClaimSchema = z.object({
+  version: z.literal(1), requestId: z.string().min(1).max(128).regex(/^[A-Za-z0-9-]+$/),
+  processId: z.string().min(1).max(128), workspacePath: z.string().min(1).max(8192),
+  gateId: z.string().min(1).max(1024), kind: z.enum(["mode", "clarify", "feedback"]),
+  value: z.string().min(1).max(65536),
+}).strict();
+export type GateDecisionClaim = z.infer<typeof GateDecisionClaimSchema>;
+export const GateDecisionIdentitySchema = GateDecisionClaimSchema.omit({ value: true }).extend({
+  threadId: z.string().min(1).max(1024), payloadSha256: z.string().regex(/^[0-9a-f]{64}$/),
+}).strict();
+export type GateDecisionIdentity = z.infer<typeof GateDecisionIdentitySchema>;
+export async function gateDecisionIdentity(threadId: string, input: GateDecisionClaim): Promise<GateDecisionIdentity> {
+  const claim = GateDecisionClaimSchema.parse(input);
+  // Python json.dumps([kind,value], ensure_ascii=True, separators=(",",":")):
+  // escape every non-ASCII UTF-16 code unit, including astral surrogate pairs.
+  const canonical = JSON.stringify([claim.kind, claim.value]).replace(/[\u007f-\uffff]/g,
+    unit => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical));
+  const { value: _value, ...identity } = claim;
+  return GateDecisionIdentitySchema.parse({ ...identity, threadId,
+    payloadSha256: Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("") });
+}
+export const GateDecisionReceiptWireSchema = z.object({
+  version: z.literal(1), request_id: z.string().min(1).max(128).regex(/^[A-Za-z0-9-]+$/),
+  process_id: z.string().min(1).max(128), workspace_path: z.string().min(1).max(8192),
+  thread_id: z.string().min(1).max(1024), gate_id: z.string().min(1).max(1024),
+  kind: z.enum(["mode", "clarify", "feedback"]), payload_sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  status: z.enum(["accepted", "launch_failed"]),
+}).strict().transform(v => ({ version: v.version, requestId: v.request_id, processId: v.process_id,
+  workspacePath: v.workspace_path, threadId: v.thread_id, gateId: v.gate_id, kind: v.kind,
+  payloadSha256: v.payload_sha256, status: v.status }));
+export type GateDecisionReceipt = z.infer<typeof GateDecisionReceiptWireSchema>;
+export const GateDecisionLookupWireSchema = z.discriminatedUnion("found", [
+  z.object({ version: z.literal(1), nonce: z.string().min(1).max(128), found: z.literal(false), receipt: z.null() }).strict(),
+  z.object({ version: z.literal(1), nonce: z.string().min(1).max(128), found: z.literal(true), receipt: GateDecisionReceiptWireSchema }).strict(),
+]);
+export type GateDecisionLookup = z.infer<typeof GateDecisionLookupWireSchema>;
+
 export const ThreadLiveStateSchema = z.object({
   approval: ApprovalStateSchema.optional(),
+  gateClaimVersion: z.literal(1).nullable().optional(),
   processId: z.string().min(1).nullable().optional(),
   contextUsage: ContextUsageSchema.nullable().optional(),
   activeTaskId: z.string().nullable(),
@@ -1010,11 +1120,15 @@ export interface BackendTaskClient {
   streamPatch(taskId: string, onEvent: (event: StreamEvent) => void, signal?: AbortSignal): Promise<void>;
   streamPatchEvents(taskId: string): AsyncIterable<StreamEvent>;
   listChatThreads(workspacePath: string): Promise<ChatThreadSummary[]>;
+  getChatActivity?(workspacePath: string, signal?: AbortSignal): Promise<ProjectChatActivity>;
   createChatThread(workspacePath: string, title?: string): Promise<ChatThreadSummary>;
-  getChatThread(threadId: string): Promise<ChatThread>;
+  getChatThread(threadId: string, signal?: AbortSignal): Promise<ChatThread>;
   previewRewind(threadId: string, messageId: string): Promise<RewindPreview>;
   rewindThread(threadId: string, messageId: string): Promise<RewindResult>;
-  getThreadLiveState(threadId: string): Promise<ThreadLiveState>;
+  listCheckpoints?(threadId: string, signal?: AbortSignal): Promise<CheckpointSummary[]>;
+  getCheckpointBaseline?(threadId: string, seq: number, signal?: AbortSignal): Promise<BaselineEntry[]>;
+  getCheckpointBaselineFile?(threadId: string, seq: number, path: string, signal?: AbortSignal): Promise<BaselineFile>;
+  getThreadLiveState(threadId: string, signal?: AbortSignal): Promise<ThreadLiveState>;
   getSessionTranscript(threadId: string, sessionId: string): Promise<SessionTranscript>;
   getConfig(): Promise<BackendConfig>;
   getMemoryInspect(threadId: string): Promise<RecallTrace | null>;
@@ -1066,9 +1180,11 @@ export interface BackendTaskClient {
   // Controller gates (Phase F): the mode gate is a STREAMED dispatch (edit/create_task
   // produce live events); the per-edit gate is a plain JSON ack (its continuation rides
   // the already-open message stream).
-  postModeDecision(threadId: string, mode: string, expectedProcessId?: string): AsyncIterable<StreamEvent>;
+  claimChatGate?(threadId: string, claim: GateDecisionClaim, options?: ChatStreamOptions): Promise<GateDecisionReceipt>;
+  getGateDecisionReceipt?(identity: GateDecisionIdentity, signal?: AbortSignal): Promise<GateDecisionLookup>;
+  postModeDecision(threadId: string, mode: string, expectedProcessId?: string, options?: ChatStreamOptions): AsyncIterable<StreamEvent>;
   // Controller clarify gate: a STREAMED dispatch (the answer re-enters the loop).
-  postClarifyDecision(threadId: string, answer: string, expectedProcessId?: string): AsyncIterable<StreamEvent>;
+  postClarifyDecision(threadId: string, answer: string, expectedProcessId?: string, options?: ChatStreamOptions): AsyncIterable<StreamEvent>;
   postEditDecision(threadId: string, decision: "accept" | "reject", reason?: string, gateId?: string): Promise<void>;
   // Controller run_command gate: a plain JSON ack (continuation rides the open message stream).
   // gateId addresses one of several pending gates; omitted = the single pending one.
@@ -1102,7 +1218,14 @@ export interface ChatImageAttachment {
   bytes: number;
 }
 
+/** Transport attachment controls; admission is observed before any body is consumed. */
+export interface ChatStreamOptions {
+  signal?: AbortSignal;
+  onAdmitted?: () => void;
+}
+
 export interface SendChatOptions {
+  onAdmitted?: () => void;
   expectedProcessId?: string;
   stepReview?: boolean;
   forcedSkills?: string[];

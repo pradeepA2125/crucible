@@ -1,5 +1,7 @@
+import type { DraftPort } from "../../../drafts/types";
+import { useGateDraft } from "../../../drafts/useGateDraft";
 import { useDecisionRetry } from "../../shared/useDecisionRetry";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { vscode } from "../../../vscodeApi";
 import { CardShell } from "../../shared/CardShell";
 import { BtnGhost, BtnPrimary } from "../../shared/buttons";
@@ -7,6 +9,9 @@ import { BtnGhost, BtnPrimary } from "../../shared/buttons";
 interface Props {
   /** Carries the threadId (controller gates have no task — LiveSlot passes activeTaskId ?? threadId). */
   taskId: string;
+  threadId?: string;
+  gateId?: string;
+  draftStore?: DraftPort;
   payload: Record<string, unknown>;
 }
 
@@ -22,20 +27,26 @@ function parseOptions(payload: Record<string, unknown>): string[] {
  * free-text "Something else…" escape. Picking either posts clarifyDecision; the backend
  * resolves the gate, writes a combined Q→A breadcrumb, and auto-resumes the agent.
  */
-export function ClarifyGate({ taskId, payload }: Props) {
+export function ClarifyGate({ taskId, threadId = taskId, gateId, draftStore, payload }: Props) {
   const question = String(payload.question ?? "");
   const options = parseOptions(payload);
 
   const [resolved, setResolved] = useState<string | null>(null);
-  useDecisionRetry(taskId, "clarify", () => setResolved(null));
-  const [draft, setDraft] = useState("");
+  useDecisionRetry(threadId, "clarify", () => { pending.current = false; setResolved(null); }, gateId);
+  const pending = useRef(false);
+  const feedback = useGateDraft(draftStore, threadId, gateId ?? "", "clarify");
+  const draft = feedback.text, setDraft = feedback.setText;
+  const [error, setError] = useState("");
 
-  function submit(answer: string) {
-    if (resolved !== null) return; // one-shot guard, shared across all paths
-    const text = answer.trim();
-    if (!text) return;
-    setResolved(text);
-    vscode.postMessage({ type: "clarifyDecision", threadId: taskId, answer: text });
+  async function submit(answer: string) {
+    if (resolved !== null || pending.current || !gateId || !answer.trim()) return;
+    if (answer.length > 65536) { setError("Keep your answer within 65,536 characters before sending."); return; }
+    pending.current = true; setError("");
+    try {
+      const saved = await feedback.prepare();
+      if (!feedback.isCurrent()) return; setResolved(answer);
+      vscode.postMessage({ type: "gateDecision", threadId, gateId, kind: "clarify", value: answer, ...(saved && answer === draft ? { draft: saved } : {}) });
+    } catch (error) { pending.current = false; setError(error instanceof Error ? error.message : "Answer could not be saved."); }
   }
 
   return (
@@ -46,6 +57,7 @@ export function ClarifyGate({ taskId, payload }: Props) {
       borderColor="var(--accent-brd)"
       headerTint="var(--accent-bg)"
     >
+      {(error || feedback.notice) && <div role="status">{error || feedback.notice}</div>}
       {resolved === null ? (
         <div className="flex flex-col gap-1.5 px-2.5 py-2 border-t border-border">
           {options.map((opt) => (

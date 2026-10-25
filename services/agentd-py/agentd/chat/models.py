@@ -282,6 +282,7 @@ class ThreadLiveState(BaseModel):
     """
     approval: ApprovalState | dict[str, object] | None = None
     process_id: str | None = None
+    gate_claim_version: Literal[1] | None = None
     context_usage: ContextUsage | None = None
     active_task_id: str | None = None
     # True while a controller turn (or a held-open controller gate) is in flight. The

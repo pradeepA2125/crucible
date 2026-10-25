@@ -1,3 +1,5 @@
+import { routeChatMessage } from "../src/chat-message-router.js";
+import { ChatAdmissionUnknownError } from "@crucible/editor-client";
 import type {
   AgentSummary,
   BackendTaskClient,
@@ -75,7 +77,10 @@ const NULL_LIVE_STATE: ThreadLiveState = {
 };
 
 function createStubBackend(state: StubBackendState): BackendTaskClient {
+  const knownThreads = new Set<string>();
   return {
+    getChatActivity: async workspacePath => ({ supported: true, version: 1, requestId: "fresh", requestedWorkspace: workspacePath,
+      workspacePath, processId: "test-process", threads: [...knownThreads].map(threadId => ({ threadId, turnActive: false, agentsRunning: 0, sessionsRunning: 0 })) }),
     submitTask: async (input) => {
       state.submitPayloads.push(input);
       return { taskId: "task-123" };
@@ -193,8 +198,8 @@ function createStubBackend(state: StubBackendState): BackendTaskClient {
       touchedFiles: [],
     }),
     getThreadLiveState: async (threadId: string) => {
-      state.liveCalls?.push(threadId);
-      return state.liveResponse ?? NULL_LIVE_STATE;
+      knownThreads.add(threadId); state.liveCalls?.push(threadId);
+      return { ...(state.liveResponse ?? NULL_LIVE_STATE), processId: state.liveResponse?.processId ?? "test-process" };
     },
     sendChatMessage: asStream(async function* (_threadId: string, _message: string, _signal?: AbortSignal) {
       yield { type: "chat_done" as const, payload: {} as Record<string, never> };
@@ -918,16 +923,20 @@ describe("CrucibleController — abort handling", () => {
       }),
     };
     let finalEnabled2: boolean | undefined;
+    const reportedErrors2: string[] = [];
     const controller2 = new CrucibleController(
       () => nonAbortBackend, new MemorySessionStore(), createSettings(),
       createUi({
         setChatInputEnabled: (enabled) => { finalEnabled2 = enabled; },
+        showError: message => reportedErrors2.push(message),
       }),
       { openDiff: async () => {} },
       () => "2026-06-10T00:00:00.000Z"
     );
     await controller2.switchChatThread("chat-abort");
-    await expect(controller2.sendChatMessage("boom")).rejects.toThrow("backend exploded");
+    for (let n = 0; n < 60; ++n) await Promise.resolve();
+    await expect(controller2.sendChatMessage("boom")).resolves.toBeUndefined();
+    expect(reportedErrors2).toEqual(["Stream error: backend exploded"]);
     expect(finalEnabled2).toBe(true); // finally still re-enables input
     controller2.dispose();
   });
@@ -1145,13 +1154,13 @@ describe("CrucibleController — command-decision", () => {
     );
     await controller.switchChatThread("thread-9");
     await Promise.resolve();
-    controller.dispose();
     // A controller command gate: no task, gate id is the thread.
     state.liveResponse = {
       activeTaskId: null, status: null, plan: null, turnActive: true,
       pendingGates: [{ gateId: "g-cmd", kind: "command", payload: { command: "rm", args: ["-rf", "x"] }, agent: null }],
     };
     await controller.pollThreadLiveState();  // sets latestLiveState (activeTaskId null)
+    for (let n = 0; n < 60; ++n) await Promise.resolve();
 
     await controller.handleCommandDecisionFromChat("thread-9", {
       approve: true, remember: false, scope: "exact",
@@ -1163,6 +1172,7 @@ describe("CrucibleController — command-decision", () => {
       gateId: "g-cmd",
     }]);
     expect(taskSent).toEqual([]);  // NOT the task route
+    controller.dispose();
   });
 
   test("stopActiveTurn optimistically appends a ✗ Stopped breadcrumb (live broadcast is missed)", async () => {
@@ -1252,7 +1262,7 @@ describe("CrucibleController — command-decision", () => {
     // Establish an active thread, then stop the auto-poll timer so we drive ticks by hand.
     await controller.switchChatThread("chat-1");
     await Promise.resolve();
-    controller.dispose();
+    (controller as any).stopLiveStatePolling(); // stop timers; the controller is still live
     gateRenders.length = 0; planRenders.length = 0; gateClears = 0; planClears = 0;
 
     // Poll #1: a command gate appears → exactly one gate card rendered.
@@ -1277,6 +1287,7 @@ describe("CrucibleController — command-decision", () => {
     state.liveResponse = NULL_LIVE_STATE;
     await controller.pollThreadLiveState();
     expect(gateClears).toBe(1);
+    controller.dispose();
   });
 
   test("pollThreadLiveState delivers the provider access card and its clearing", async () => {
@@ -1295,7 +1306,7 @@ describe("CrucibleController — command-decision", () => {
     );
     await controller.switchChatThread("chat-1");
     await Promise.resolve();
-    controller.dispose();
+    (controller as any).stopLiveStatePolling(); // stop timers; the controller is still live
     renders.length = 0;
 
     const access = { kind: "usage_limit", message: "Usage limit reached.", code: null,
@@ -1307,6 +1318,7 @@ describe("CrucibleController — command-decision", () => {
     state.liveResponse = NULL_LIVE_STATE;
     await controller.pollThreadLiveState();
     expect(renders).toEqual([access, null]);
+    controller.dispose();
   });
 
   test("pollThreadLiveState renders every pending gate, addressing each to its owner", async () => {
@@ -1325,7 +1337,7 @@ describe("CrucibleController — command-decision", () => {
     );
     await controller.switchChatThread("chat-1");
     await Promise.resolve();
-    controller.dispose();
+    (controller as any).stopLiveStatePolling(); // stop timers; the controller is still live
     renders.length = 0;
 
     const agent = { id: "agent-1", label: "impl", name: "general" };
@@ -1343,6 +1355,7 @@ describe("CrucibleController — command-decision", () => {
       ["g-mcp", "chat-1", "impl"],
       ["task:task-1:command", "task-1", null],
     ]);
+    controller.dispose();
   });
 
   test("a lost-race team plan decision is swallowed", async () => {
@@ -1410,7 +1423,7 @@ describe("CrucibleController — command-decision", () => {
     );
     await controller.switchChatThread("chat-1");
     await Promise.resolve();
-    controller.dispose();
+    (controller as any).stopLiveStatePolling(); // stop timers; the controller is still live
     sessionRenders.length = 0; sessionClears = 0;
 
     const row = {
@@ -1440,6 +1453,7 @@ describe("CrucibleController — command-decision", () => {
     state.liveResponse = NULL_LIVE_STATE;
     await controller.pollThreadLiveState();
     expect(sessionClears).toBeGreaterThan(0);
+    controller.dispose();
   });
 
   test("fetchSessionTranscript resolves via the active chat thread and nulls on error", async () => {
@@ -1502,7 +1516,7 @@ describe("CrucibleController — command-decision", () => {
     );
     await controller.switchChatThread("chat-1");
     await Promise.resolve();
-    controller.dispose();
+    (controller as any).stopLiveStatePolling(); // stop timers; the controller is still live
     turnActives.length = 0;
 
     // Poll #1: controller turn running (no task, no gate) → turnActive=true delivered.
@@ -1518,9 +1532,10 @@ describe("CrucibleController — command-decision", () => {
     await controller.pollThreadLiveState();
 
     expect(turnActives).toEqual([true, false]);
+    controller.dispose();
   });
 
-  test("live-resume: re-subscribes once on a fresh reload (turn_active, no local stream)", async () => {
+  test("live-resume: follows saved history without replaying the channel on reload", async () => {
     // A fresh webview after a reload has no local stream (turnAbort === null) but /live
     // reports turn_active=true for the detached turn → resume re-subscribes exactly once;
     // _liveResumeThreadId keeps later polls idempotent.
@@ -1550,7 +1565,7 @@ describe("CrucibleController — command-decision", () => {
     await controller.switchChatThread("chat-resume"); // first poll fires the resume
     await controller.pollThreadLiveState();           // _liveResumeThreadId set → no re-fire
     await new Promise((r) => setTimeout(r, 0));        // flush the resume's first .next()
-    expect(streamChannelCalls).toBe(1);
+    expect(streamChannelCalls).toBe(0);
     release();
     controller.dispose();
   });
@@ -1722,7 +1737,7 @@ describe("CrucibleController — command-decision", () => {
     expect(errorRendered!.taskId).toBe("task-fail");
     expect(errorRendered!.status).toBe("FAILED");
     // non-FAILED status clears the error
-    expect(errorClears).toBe(0); // first poll was FAILED so no clear
+    expect(errorClears).toBe(1); // selection clears stale actionable state before the fresh FAILED card
 
     // Second controller with non-FAILED status: clearLiveError should fire
     let errorClears2 = 0;
@@ -2524,7 +2539,7 @@ describe("CrucibleController — sub-agents", () => {
     const { state, controller, rosters, listCalls } = setup();
     await controller.switchChatThread("chat-1");
     await Promise.resolve();
-    controller.dispose();
+    (controller as any).stopLiveStatePolling(); // stop timers; the controller is still live
     rosters.length = 0; listCalls.length = 0;
 
     state.liveResponse = { ...NULL_LIVE_STATE, turnActive: true, agents: [AGENT] };
@@ -2540,6 +2555,7 @@ describe("CrucibleController — sub-agents", () => {
     await controller.pollThreadLiveState();
     await Promise.resolve(); await Promise.resolve();
     expect(listCalls).toEqual(["chat-1"]);
+    controller.dispose();
   });
 
   test("a live roster message is appended as a contract ChatMessage; agent events poke /live", async () => {
@@ -2554,6 +2570,7 @@ describe("CrucibleController — sub-agents", () => {
       }),
     });
     await controller.switchChatThread("chat-1");
+    for (let n = 0; n < 60; ++n) await Promise.resolve();
     const before = state.liveCalls!.length;
     await controller.sendChatMessage("go");
     controller.dispose();
@@ -2589,7 +2606,7 @@ describe("CrucibleController — sub-agents", () => {
     });
     await controller.switchChatThread("chat-1");
     await Promise.resolve(); await Promise.resolve();
-    controller.dispose();
+    (controller as any).stopLiveStatePolling(); // stop timers; the controller is still live
     expect(teamLists).toEqual(["chat-1"]);
     expect(summaries).toHaveLength(1);
 
@@ -2606,6 +2623,7 @@ describe("CrucibleController — sub-agents", () => {
     await controller.pollThreadLiveState();
     await Promise.resolve(); await Promise.resolve();
     expect(teamLists).toEqual(["chat-1"]);
+    controller.dispose();
   });
   const U = (input: number) => ({ requests: 1, input, output: 1, cached: 0 });
   const usageOf = (input: number) => ({ total: U(input), main: U(input), agents: {}, teams: {} });
@@ -2683,6 +2701,7 @@ describe("CrucibleController — background agents (spec §5.3, §6)", () => {
       markQueued: (id) => { queued.push(id); },
     }));
     await controller.switchChatThread("t1");
+    for (let n = 0; n < 60; ++n) await Promise.resolve();
     await controller.sendChatMessage("hi");
     controller.dispose();
     const bubble = appended.filter((m) => m.role === "user");
@@ -2705,6 +2724,7 @@ describe("CrucibleController — background agents (spec §5.3, §6)", () => {
       restoreDraft: (t) => { drafts.push(t); },
     }));
     await controller.switchChatThread("t1");
+    for (let n = 0; n < 60; ++n) await Promise.resolve();
     await controller.sendChatMessage("hi");
     controller.dispose();
     expect(removed).toHaveLength(1);
@@ -2735,7 +2755,7 @@ describe("CrucibleController — background agents (spec §5.3, §6)", () => {
     await new Promise((r) => setTimeout(r, 0));
     await controller.pollThreadLiveState();
     controller.dispose();
-    expect(replaced.map((m) => m.length)).toEqual([2]);
+    expect(replaced.map((m) => m.length)).toEqual([0, 2]);
     expect(fetches).toBe(2);
   });
 
@@ -2804,9 +2824,9 @@ describe("Phase 3 approval admission integration", () => {
     const method = kind === "message" ? backend.sendChatMessage : kind === "mode" ? backend.postModeDecision : kind === "clarify" ? backend.postClarifyDecision : backend.decideTeamPlan;
     expect(method).not.toHaveBeenCalled();
     resolve({ approval: snapshot, chatControllerEnabled: true }); await pending;
-    if (kind === "message") expect(method).toHaveBeenCalledWith("t", "hi", undefined, expect.objectContaining({ expectedProcessId: "process" }));
-    else if (kind === "mode") expect(method).toHaveBeenCalledWith("t", "edit", "process");
-    else if (kind === "clarify") expect(method).toHaveBeenCalledWith("t", "yes", "process");
+    if (kind === "message") expect(method).toHaveBeenCalledWith("t", "hi", expect.any(AbortSignal), expect.objectContaining({ expectedProcessId: "process", onAdmitted: expect.any(Function) }));
+    else if (kind === "mode") expect(method).toHaveBeenCalledWith("t", "edit", "process", expect.objectContaining({ signal: expect.any(AbortSignal), onAdmitted: expect.any(Function) }));
+    else if (kind === "clarify") expect(method).toHaveBeenCalledWith("t", "yes", "process", expect.objectContaining({ signal: expect.any(AbortSignal), onAdmitted: expect.any(Function) }));
     else expect(method).toHaveBeenCalledWith("t", "g", "approve", undefined, "process");
     c.dispose();
   });
@@ -2853,10 +2873,10 @@ describe("CrucibleController — selected thread identity", () => {
       threadId: id, workspacePath: "/tmp/workspace", title: `Title for ${id}`, createdAt: "", agentsRunning: 0,
     })));
     backend.getConfig = vi.fn(async () => ({ provider: { backend: "scripted" } })) as BackendTaskClient["getConfig"];
-    const clear = vi.fn(); const append = vi.fn();
+    const clear = vi.fn(); const append = vi.fn(); const replace = vi.fn();
     const c = new CrucibleController(() => backend, new MemorySessionStore(), createSettings(),
-      createUi({ clearChatThread: clear, appendChatMessage: append }), { openDiff: async () => {} });
-    return { c, backend, clear, append };
+      createUi({ clearChatThread: clear, appendChatMessage: append, replaceChatMessages: replace }), { openDiff: async () => {} });
+    return { c, backend, clear, append, replace };
   }
   test("opening, switching and creating threads send the loaded thread identity with the transcript clear", async () => {
     const { c, backend, clear } = fixture();
@@ -2873,7 +2893,8 @@ describe("CrucibleController — selected thread identity", () => {
     } finally { c.dispose(); }
   });
   test("a delayed older switch cannot overwrite the newer selected identity or transcript", async () => {
-    const { c, backend, clear, append } = fixture();
+    vi.useFakeTimers();
+    const { c, backend, clear, append, replace } = fixture();
     let finish!: (value: ReturnType<typeof thread>) => void;
     backend.getChatThread = vi.fn(id => id === "first"
       ? new Promise<ReturnType<typeof thread>>(resolve => { finish = resolve; })
@@ -2882,9 +2903,228 @@ describe("CrucibleController — selected thread identity", () => {
       const older = c.switchChatThread("first");
       await c.switchChatThread("second");
       finish(thread("first")); await older;
-      expect(clear.mock.calls).toEqual([["second"]]);
-      expect(append).toHaveBeenCalledExactlyOnceWith(thread("second").messages[0]);
+      await vi.advanceTimersByTimeAsync(4100);
+      expect(clear.mock.calls).toEqual([["first"], ["second"]]);
+      expect(append).not.toHaveBeenCalled();
+      expect(replace).toHaveBeenLastCalledWith(thread("second").messages);
       expect(c.activeThreadId).toBe("second");
-    } finally { c.dispose(); }
+    } finally { c.dispose(); vi.useRealTimers(); }
   });
+});
+
+describe("desktop draft lifecycle hooks", () => {
+  const deferred = <T,>() => { let resolve!: (value: T) => void; let reject!: (error: Error) => void;
+    const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
+  function fixture() {
+    const state: StubBackendState = { submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [], getResultCalls: [], planFeedbackCalls: [] };
+    const backend = createStubBackend(state);
+    backend.sendChatMessage = vi.fn(async () => ({ kind: "queued", messageId: "m" }));
+    const ui = createUi({ staleDraft: vi.fn(), restoreDraft: vi.fn(), draftAccepted: vi.fn(), draftCreated: vi.fn() });
+    const c = new CrucibleController(() => backend, new MemorySessionStore(), createSettings(), ui, { openDiff: async () => {} });
+    c.configureApproval({ savedMode: () => "ask", reviewOn: () => true, saveMode: async () => {}, warningDismissed: () => false, saveWarningDismissed: async () => {}, isTrusted: () => false,
+      firstSendAcknowledged: () => false, acknowledgeFirstSend: async () => {}, confirmFirstFullAccessSend: async () => "cancel" });
+    const seams = c as unknown as { activeThreadId: string | null; approvalReady(): Promise<string | undefined>; approval: { confirmFirstSend(): Promise<boolean> } };
+    seams.activeThreadId = "origin";
+    const ready = vi.spyOn(seams, "approvalReady").mockResolvedValue("process");
+    const confirm = vi.spyOn(seams.approval, "confirmFirstSend").mockResolvedValue(true);
+    const send = () => c.sendChatMessage("expanded", undefined, undefined, ["sample.txt"], undefined, [], "draft-id", "original");
+    return { c, backend, ui, seams, ready, confirm, send };
+  }
+  test.each(["approval-error", "cancel", "continue", "create-ok", "create-error", "send-error"] as const)("stale %s returns the origin draft id without touching the visible composer", async phase => {
+    const f = fixture(); const gate = deferred<unknown>();
+    if (phase === "approval-error") f.ready.mockImplementation(() => gate.promise as Promise<string>);
+    else if (phase === "cancel" || phase === "continue") f.confirm.mockImplementation(() => gate.promise as Promise<boolean>);
+    else if (phase.startsWith("create")) { f.seams.activeThreadId = null; f.backend.createChatThread = vi.fn(() => gate.promise as ReturnType<BackendTaskClient["createChatThread"]>); }
+    else f.backend.sendChatMessage = vi.fn(() => gate.promise as ReturnType<BackendTaskClient["sendChatMessage"]>);
+    const pending = f.send();
+    await vi.waitFor(() => expect(phase === "approval-error" ? f.ready : phase === "cancel" || phase === "continue" ? f.confirm : phase.startsWith("create") ? f.backend.createChatThread : f.backend.sendChatMessage).toHaveBeenCalled());
+    await f.c.switchChatThread("visible");
+    if (phase.endsWith("error")) gate.reject(new Error("admission refused"));
+    else if (phase === "create-ok") gate.resolve({ threadId: "created", workspacePath: "/tmp/workspace", title: "New", createdAt: "", agentsRunning: 0 });
+    else gate.resolve(phase === "continue");
+    await pending;
+    expect(f.ui.staleDraft).toHaveBeenCalledWith("original", { draftId: "draft-id", imageAttachments: [], mentionedPaths: ["sample.txt"] });
+    expect(f.ui.restoreDraft).not.toHaveBeenCalled(); expect(f.ui.draftAccepted).not.toHaveBeenCalled();
+    if (phase === "create-ok") expect(f.ui.draftCreated).toHaveBeenCalledWith("draft-id", "created");
+    f.c.dispose();
+  });
+  test("acknowledges actual backend admission, even after navigation, instead of restoring a duplicate", async () => {
+    const f = fixture(); const gate = deferred<SendChatResult>();
+    f.backend.sendChatMessage = vi.fn(() => gate.promise);
+    const pending = f.send(); await vi.waitFor(() => expect(f.backend.sendChatMessage).toHaveBeenCalled());
+    expect(f.ui.draftAccepted).not.toHaveBeenCalled(); await f.c.switchChatThread("visible");
+    gate.resolve({ kind: "queued", messageId: "m" }); await pending;
+    expect(f.ui.draftAccepted).toHaveBeenCalledWith("draft-id", "origin"); expect(f.ui.staleDraft).not.toHaveBeenCalled(); f.c.dispose();
+  });
+  test("Cancel and current admission errors retain the existing restore path", async () => {
+    const f = fixture(); f.confirm.mockResolvedValue(false); await f.send(); expect(f.backend.sendChatMessage).not.toHaveBeenCalled();
+    expect(f.ui.restoreDraft).toHaveBeenCalledWith("original", expect.objectContaining({ draftId: "draft-id" }));
+    f.confirm.mockResolvedValue(true); f.ready.mockRejectedValue(new Error("Approval timed out")); await f.send();
+    expect(f.ui.restoreDraft).toHaveBeenCalledTimes(2); f.c.dispose();
+  });
+});
+
+
+describe("CP6a0 operation attachment ownership", () => {
+  function setup() {
+    const state: StubBackendState = { submitPayloads: [], getTaskCalls: [], acceptCalls: [], rejectCalls: [], getResultCalls: [], planFeedbackCalls: [], liveResponse: NULL_LIVE_STATE };
+    const backend = createStubBackend(state);
+    const ui = createUi({ renderChatAdmission: vi.fn(), showError: vi.fn(), showWarning: vi.fn(), showInfo: vi.fn(), restoreDraft: vi.fn(), staleDraft: vi.fn(), draftAccepted: vi.fn(),
+      appendChatChunk: vi.fn(), setChatInputEnabled: vi.fn(), finalizeAgentMessage: vi.fn(), appendChatMessage: vi.fn() });
+    const c = new CrucibleController(() => backend, new MemorySessionStore(), createSettings(), ui, { openDiff: async () => {} });
+    c.activeThreadId = "A";
+    return { c, backend, ui, state };
+  }
+  function deferred<T>() { let resolve!: (v: T) => void; let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
+
+  test("A→B→A retains pending admission and cancels only after accepted headers", async () => {
+    const f = setup(); const response = deferred<SendChatResult>(); let signal!: AbortSignal; let admitted!: () => void;
+    f.backend.sendChatMessage = vi.fn(async (_t, _text, s, options) => { signal = s!; admitted = options!.onAdmitted!; return response.promise; });
+    const subscribe = vi.fn(async function* () {}); f.backend.streamChannel = subscribe;
+    const send = f.c.sendChatMessage("original", undefined, undefined, undefined, undefined, undefined, "draft");
+    await vi.waitFor(() => expect(signal).toBeDefined());
+    await f.c.switchChatThread("B"); await f.c.switchChatThread("A");
+    f.state.liveResponse = { ...NULL_LIVE_STATE, turnActive: true };
+    await f.c.pollThreadLiveState(); expect(subscribe).not.toHaveBeenCalled(); expect(signal.aborted).toBe(false);
+    admitted(); expect(signal.aborted).toBe(true);
+    let iterated = false;
+    response.resolve({ kind: "stream", events: (async function* () { iterated = true; })() }); await send;
+    expect(iterated).toBe(false); expect(f.ui.draftAccepted).toHaveBeenCalledExactlyOnceWith("draft", "A");
+    expect(f.ui.restoreDraft).not.toHaveBeenCalled(); f.c.dispose();
+  });
+
+  test("late old stream rejection and cleanup cannot alter B", async () => {
+    const f = setup(); const blocked = deferred<void>();
+    f.backend.sendChatMessage = async () => ({ kind: "stream", events: (async function* () { await blocked.promise; throw new Error("late A failure"); })() });
+    const send = f.c.sendChatMessage("hi"); await new Promise(resolve => setTimeout(resolve, 0));
+    await f.c.switchChatThread("B");
+    const calls = (f.ui.setChatInputEnabled as ReturnType<typeof vi.fn>).mock.calls.length;
+    blocked.reject(new Error("old socket failed")); await expect(send).resolves.toBeUndefined();
+    expect(f.ui.showError).not.toHaveBeenCalled(); expect((f.ui.setChatInputEnabled as ReturnType<typeof vi.fn>).mock.calls.length).toBe(calls); f.c.dispose();
+  });
+
+  test("unknown receipt pins the original payload; only exact message ID confirms it", async () => {
+    const f = setup(); let originalId = "";
+    f.backend.sendChatMessage = vi.fn(async (_t, _m, _s, options) => { originalId = options!.messageId!; throw new ChatAdmissionUnknownError(new Error("lost response")); });
+    const image = { name: "one.png", mediaType: "image/png", dataUrl: "data:image/png;base64,AA==", bytes: 1 };
+    await f.c.sendChatMessage("hi", true, ["skill"], ["missing.txt"], false, [image], "draft", "original");
+    expect(f.ui.restoreDraft).not.toHaveBeenCalled(); expect(f.ui.draftAccepted).not.toHaveBeenCalled();
+    const owners = (f.c as any).pendingAdmissions as Set<any>;
+    expect([...owners][0].unknown.submission).toEqual(["hi", true, ["skill"], ["missing.txt"], false, [image], "draft", "original"]);
+    expect(f.ui.showWarning).toHaveBeenCalledWith(expect.stringContaining("unknown"));
+    const thread = { threadId: "A", workspacePath: "/tmp/workspace", title: "A", createdAt: "", messages: [{ role: "user", type: "text", content: "hi", timestamp: "", id: "different" }] };
+    f.backend.getChatThread = vi.fn(async () => thread as any);
+    await f.c.checkChatReceipt(); expect(owners.size).toBe(1); expect(f.ui.draftAccepted).not.toHaveBeenCalled();
+    await f.c.sendChatMessage("duplicate"); expect(f.backend.sendChatMessage).toHaveBeenCalledTimes(1);
+    thread.messages[0]!.id = originalId;
+    await f.c.checkChatReceipt(); expect(owners.size).toBe(0); expect(f.ui.draftAccepted).toHaveBeenCalledExactlyOnceWith("draft", "A");
+    expect(f.backend.sendChatMessage).toHaveBeenCalledTimes(1); f.c.dispose();
+  });
+
+  test("accepted headers followed by broken queued confirmation never restore/retry the draft", async () => {
+    const f = setup();
+    f.backend.sendChatMessage = async (_t, _m, _s, options) => { options!.onAdmitted!(); throw new SyntaxError("bad 202 body"); };
+    await f.c.sendChatMessage("hi", undefined, undefined, undefined, undefined, undefined, "draft");
+    expect(f.ui.draftAccepted).toHaveBeenCalledExactlyOnceWith("draft", "A"); expect(f.ui.restoreDraft).not.toHaveBeenCalled();
+    expect(f.ui.showWarning).toHaveBeenCalledWith(expect.stringContaining("accepted")); f.c.dispose();
+  });
+
+  test.each(["mode", "clarify"] as const)("%s header callback retires the pending origin without contaminating B", async kind => {
+    const f = setup(); const gate = deferred<void>(); let signal!: AbortSignal; let admitted!: () => void;
+    const decision = vi.fn(async function* (_t: string, _value: string, _pid?: string, options?: { signal?: AbortSignal; onAdmitted?: () => void }) {
+      signal = options!.signal!; admitted = options!.onAdmitted!; await gate.promise; admitted(); yield { type: "chat_done", payload: {} } as StreamEvent;
+    });
+    if (kind === "mode") f.backend.postModeDecision = decision; else f.backend.postClarifyDecision = decision;
+    const sending = kind === "mode" ? f.c.handleModeDecisionFromChat("A", "edit") : f.c.handleClarifyDecisionFromChat("A", "yes");
+    await vi.waitFor(() => expect(signal).toBeDefined()); await f.c.switchChatThread("B"); expect(signal.aborted).toBe(false);
+    const count = (f.ui.finalizeAgentMessage as ReturnType<typeof vi.fn>).mock.calls.length;
+    gate.resolve(); await sending; expect(signal.aborted).toBe(true);
+    expect((f.ui.finalizeAgentMessage as ReturnType<typeof vi.fn>).mock.calls.length).toBe(count); expect(f.ui.showError).not.toHaveBeenCalled(); f.c.dispose();
+  });
+
+  test("an old failed transcript fetch does not reach generic router recovery", async () => {
+    const f = setup(); const fetch = deferred<any>();
+    const normal = f.backend.getChatThread;
+    f.backend.getChatThread = id => id === "old" ? fetch.promise : normal(id);
+    const old = f.c.switchChatThread("old"); await f.c.switchChatThread("B");
+    fetch.reject(new Error("late fetch")); await expect(old).resolves.toBeUndefined(); expect(f.ui.showError).not.toHaveBeenCalled(); f.c.dispose();
+  });
+  test.each(["mode", "clarify"] as const)("%s ambiguous dispatch keeps its origin reservation and never retries", async kind => {
+    const f = setup();
+    const decision = vi.fn(async function* () { throw new ChatAdmissionUnknownError(new Error("lost headers")); });
+    if (kind === "mode") f.backend.postModeDecision = decision; else f.backend.postClarifyDecision = decision;
+    if (kind === "mode") await f.c.handleModeDecisionFromChat("A", "edit"); else await f.c.handleClarifyDecisionFromChat("A", "yes");
+    expect((f.c as any).pendingAdmissions.size).toBe(1);
+    expect([...((f.c as any).pendingAdmissions as Set<any>)][0].unknown.submission).toEqual([kind, kind === "mode" ? "edit" : "yes"]);
+    expect(f.ui.setChatInputEnabled).toHaveBeenLastCalledWith(false);
+    await f.c.switchChatThread("B"); await f.c.switchChatThread("A"); await f.c.pollThreadLiveState();
+    await f.c.sendChatMessage("new work"); expect(decision).toHaveBeenCalledTimes(1); expect((f.c as any).pendingAdmissions.size).toBe(1); f.c.dispose();
+  });
+
+  test("late Stop confirmation does not write a breadcrumb into another attachment", async () => {
+    const f = setup(); const stopped = deferred<{ ok: boolean }>();
+    f.backend.stopChatTurn = vi.fn(() => stopped.promise);
+    const stop = f.c.stopActiveTurn(); await f.c.switchChatThread("B");
+    const count = (f.ui.appendChatMessage as ReturnType<typeof vi.fn>).mock.calls.length;
+    stopped.resolve({ ok: true }); await stop;
+    expect(f.backend.stopChatTurn).toHaveBeenCalledExactlyOnceWith("A");
+    expect((f.ui.appendChatMessage as ReturnType<typeof vi.fn>).mock.calls.length).toBe(count); f.c.dispose();
+  });
+
+  test("outer router boundary suppresses an A failure when navigation happens between rejection microtasks", async () => {
+    const f = setup();
+    f.backend.sendChatMessage = async () => ({ kind: "stream", events: (async function* () {
+      queueMicrotask(() => queueMicrotask(() => { void f.c.switchChatThread("B"); }));
+      throw new Error("old A stream");
+    })() });
+    const postMessage = vi.fn(); const showError = vi.fn();
+    await routeChatMessage({ type: "sendMessage", text: "hi" }, {
+      onMessage: (...args: Parameters<CrucibleController["sendChatMessage"]>) => f.c.sendChatMessage(...args), onGetPlanMode: () => false,
+    } as any, { postMessage, showError } as any);
+    expect(f.c.activeThreadId).toBe("B"); expect(postMessage).not.toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled(); expect(f.ui.showError).not.toHaveBeenCalled(); f.c.dispose();
+  });
+
+  test("current stream errors remain visible without generic router recovery", async () => {
+    const f = setup(); f.backend.sendChatMessage = async () => ({ kind: "stream", events: (async function* () { throw new Error("current failure"); })() });
+    await f.c.sendChatMessage("hi"); expect(f.ui.showError).toHaveBeenCalledWith("Stream error: current failure"); f.c.dispose();
+  });
+
+  test("receipt checks coalesce and abort at four seconds without treating absence as rejection", async () => {
+    const f = setup();
+    f.backend.sendChatMessage = async () => { throw new ChatAdmissionUnknownError("lost"); };
+    await f.c.sendChatMessage("hi");
+    let signal!: AbortSignal;
+    f.backend.getChatThread = vi.fn((_id, s) => { signal = s!; return new Promise((_yes, no) => s!.addEventListener("abort", () => no(new Error("aborted")), { once: true })); });
+    vi.useFakeTimers();
+    try {
+      const one = f.c.checkChatReceipt(); const two = f.c.checkChatReceipt(); expect(one).toBe(two);
+      await vi.advanceTimersByTimeAsync(4001); await one;
+      expect(signal.aborted).toBe(true); expect(f.backend.getChatThread).toHaveBeenCalledTimes(1);
+      expect((f.c as any).pendingAdmissions.size).toBe(1); expect(f.ui.restoreDraft).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); f.c.dispose(); }
+  });
+
+  test.each(["pending", "unknown"] as const)("disposal clears %s origin payloads and suppresses late acknowledgements", async phase => {
+    const f = setup(); const reply = deferred<SendChatResult>(); let admitted!: () => void;
+    // Capture the callback without invoking it.
+    f.backend.sendChatMessage = async (_t, _m, _s, options) => { admitted = options!.onAdmitted!; if (phase === "unknown") throw new ChatAdmissionUnknownError("lost"); return reply.promise; };
+    const sending = f.c.sendChatMessage("hi", undefined, undefined, undefined, undefined, undefined, "draft");
+    await vi.waitFor(() => expect(admitted).toBeDefined()); if (phase === "unknown") await sending;
+    f.c.dispose(); expect((f.c as any).pendingAdmissions.size).toBe(0);
+    admitted(); reply.resolve({ kind: "queued", messageId: "m" }); await sending;
+    expect(f.ui.draftAccepted).not.toHaveBeenCalled();
+  });
+
+  test("Check receipt performs only a bounded origin-live read for an uncertain decision, never infers acceptance", async () => {
+    const f = setup(); const decide = vi.fn(async function* () { throw new ChatAdmissionUnknownError("lost"); });
+    f.backend.postClarifyDecision = decide; await f.c.handleClarifyDecisionFromChat("A", "yes");
+    f.backend.getThreadLiveState = vi.fn(async () => NULL_LIVE_STATE);
+    await f.c.checkChatReceipt();
+    expect(f.backend.getThreadLiveState).toHaveBeenCalledExactlyOnceWith("A", expect.any(AbortSignal));
+    expect((f.c as any).pendingAdmissions.size).toBe(1); expect(decide).toHaveBeenCalledTimes(1);
+    expect(f.ui.showInfo).toHaveBeenCalledWith(expect.stringContaining("cannot confirm")); f.c.dispose();
+  });
+
 });

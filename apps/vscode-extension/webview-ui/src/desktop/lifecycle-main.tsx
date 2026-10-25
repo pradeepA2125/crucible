@@ -1,0 +1,10 @@
+import React from "react";
+import ReactDOM from "react-dom/client";
+import LifecycleApp from "./LifecycleApp";
+import { acquireVsCodeApiSingleton } from "../sharedVscodeApi";
+import { installThemeSync } from "../theme";
+import "../index.css";
+import "./lifecycle.css";
+const api=acquireVsCodeApiSingleton();
+installThemeSync(document,window,message=>api.postMessage(message));
+ReactDOM.createRoot(document.getElementById("root")!).render(<React.StrictMode><LifecycleApp send={message=>api.postMessage(message)}/></React.StrictMode>);

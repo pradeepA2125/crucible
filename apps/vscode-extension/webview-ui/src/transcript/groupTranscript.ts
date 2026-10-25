@@ -2,10 +2,12 @@ import type { ChatMsg, DiffEntry, ToolEventView } from "../types";
 
 export type ActivityStep =
   | { type: "tools"; events: ToolEventView[] }
-  | { type: "edit"; entries: DiffEntry[]; applied: boolean }
+  | { type: "edit"; entries: DiffEntry[]; applied: boolean; source?: ChatMsg }
   | { type: "outcome"; text: string };
 
-export interface FileChange { path: string; additions: number; deletions: number; applied: boolean; diff?: string }
+/** Browser-only provenance. Position is the raw diff_entries index, never a filtered index. */
+export interface RecordedEditSource { message: ChatMsg; position: number }
+export interface FileChange { path: string; additions: number; deletions: number; applied: boolean; diff?: string; editSource?: RecordedEditSource }
 
 export type TranscriptItem =
   | { kind: "message"; msg: ChatMsg; index: number }
@@ -44,7 +46,7 @@ function isCompactionNotice(msg: ChatMsg): boolean {
   return msg.role === "agent" && msg.metadata?.breadcrumb === true && msg.content.startsWith("🗜️");
 }
 
-function toSteps(msg: ChatMsg): ActivityStep[] {
+function toSteps(msg: ChatMsg, recordEditSources: boolean): ActivityStep[] {
   if (msg.type === "diff_card") {
     const steps: ActivityStep[] = [];
     // A legacy inline-change card carries the pills of the run that produced it.
@@ -54,6 +56,7 @@ function toSteps(msg: ChatMsg): ActivityStep[] {
       type: "edit",
       entries: (msg.metadata?.diff_entries as DiffEntry[] | undefined) ?? [],
       applied: msg.metadata?.resolved !== "discarded",
+      ...(recordEditSources ? { source: msg } : {}),
     });
     return steps;
   }
@@ -79,21 +82,23 @@ function turnChanges(steps: ActivityStep[]): FileChange[] {
   const files = new Map<string, FileChange>();
   for (const step of steps) {
     if (step.type !== "edit") continue;
-    for (const entry of step.entries) {
+    step.entries.forEach((entry, position) => {
+      if (!entry || typeof entry.path !== "string" || !entry.path) return;
       const current = files.get(entry.path) ?? { path: entry.path, additions: 0, deletions: 0, applied: false, diff: undefined };
       if (step.applied) {
         current.additions += entry.additions;
         current.deletions += entry.deletions;
         current.applied = true;
         current.diff = entry.unified_diff ?? current.diff;
+        if (step.source) current.editSource = { message: step.source, position };
       }
       files.set(entry.path, current);
-    }
+    });
   }
   return [...files.values()];
 }
 
-export function groupTranscript(messages: ChatMsg[]): TranscriptItem[] {
+export function groupTranscript(messages: ChatMsg[], recordEditSources = false): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   let group: { key: string; steps: ActivityStep[] } | null = null;
   let turnSteps: ActivityStep[] = [];
@@ -123,7 +128,7 @@ export function groupTranscript(messages: ChatMsg[]): TranscriptItem[] {
       return;
     }
     if (isActivityMember(msg)) {
-      const steps = toSteps(msg);
+      const steps = toSteps(msg, recordEditSources);
       if (!steps.length) return;
       group ??= { key: msg.id ?? `activity-${index}`, steps: [] };
       group.steps.push(...steps);

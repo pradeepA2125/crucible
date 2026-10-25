@@ -7,9 +7,10 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run -w @crucible/editor-client build && npm run -w crucible-vscode-extension build",
+    "build": "npm run -w @crucible/editor-client build && npm run -w crucible-vscode-extension build && npm run -w @crucible/desktop build",
     "dev": "npm run -w @crucible/editor-client dev",
-    "test": "npm run -w @crucible/editor-client test && npm run -w crucible-vscode-extension test && npm --prefix apps/vscode-extension/webview-ui test",
-    "typecheck": "npm run -w @crucible/editor-client typecheck && npm run -w crucible-vscode-extension typecheck && npm --prefix apps/vscode-extension/webview-ui run typecheck"
+    "test": "npm run -w @crucible/editor-client test && npm run -w crucible-vscode-extension test && npm --prefix apps/vscode-extension/webview-ui test -- --maxWorkers=2 && npm run -w @crucible/desktop test",
+    "typecheck": "npm run -w @crucible/editor-client typecheck && npm run -w crucible-vscode-extension typecheck && npm --prefix apps/vscode-extension/webview-ui run typecheck && npm run -w @crucible/desktop typecheck",
+    "desktop:dev": "npm run build && npm run -w @crucible/desktop start"
   }
 }

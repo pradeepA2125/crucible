@@ -1,5 +1,7 @@
+import type { DraftPort } from "../../../drafts/types";
+import { useGateDraft } from "../../../drafts/useGateDraft";
 import { useDecisionRetry } from "../../shared/useDecisionRetry";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Icon } from "../../Icon";
 import { vscode } from "../../../vscodeApi";
 import { CardShell } from "../../shared/CardShell";
@@ -8,6 +10,9 @@ import { BtnPrimary, BtnGhost } from "../../shared/buttons";
 interface Props {
   /** Carries the threadId (controller gates have no task — LiveSlot passes activeTaskId ?? threadId). */
   taskId: string;
+  threadId?: string;
+  gateId?: string;
+  draftStore?: DraftPort;
   payload: Record<string, unknown>;
 }
 
@@ -34,37 +39,32 @@ function parseOptions(payload: Record<string, unknown>): ModeOption[] {
  * recommended mode and alternatives. Picking an option posts a modeDecision; the
  * user can also keep chatting (the "Discuss / refine" path) by typing a message.
  */
-export function ModeGate({ taskId, payload }: Props) {
+export function ModeGate({ taskId, threadId = taskId, gateId, draftStore, payload }: Props) {
   const planSketch = String(payload.plan_sketch ?? "");
   const reason = String(payload.reason ?? "");
   const recommended = payload.recommended ? String(payload.recommended) : "";
   const options = parseOptions(payload);
 
   const [resolved, setResolved] = useState<string | null>(null);
-  useDecisionRetry(taskId, "mode", () => setResolved(null));
-  const [draft, setDraft] = useState("");
+  useDecisionRetry(threadId, "mode", () => { pending.current = false; setResolved(null); }, gateId);
+  const pending = useRef(false);
+  const feedback = useGateDraft(draftStore, threadId, gateId ?? "", "mode");
+  const draft = feedback.text, setDraft = feedback.setText;
+  const [error, setError] = useState("");
 
-  function handlePick(mode: string, label: string) {
-    if (resolved !== null) return; // one-shot guard
-    setResolved(label);
-    vscode.postMessage({ type: "modeDecision", threadId: taskId, mode });
-    // Picking "implement" exits Plan Mode — the composer's sticky toggle must flip
-    // off too, in the SAME action (not inferred by the extension from modeDecision
-    // alone — the card already knows this is an exit). Single write path: the
-    // extension's setPlanMode handler is the one place this value ever changes.
-    if (mode === "implement") {
-      vscode.postMessage({ type: "setPlanMode", enabled: false });
-    }
+  async function decide(kind: "mode" | "feedback", value: string, label: string) {
+    if (resolved !== null || pending.current || !gateId || !value.trim()) return;
+    if (value.length > 65536) { setError("Keep feedback within 65,536 characters before sending."); return; }
+    pending.current = true; setError("");
+    try {
+      const saved = await feedback.prepare();
+      if (!feedback.isCurrent()) return;
+      setResolved(label);
+      vscode.postMessage({ type: "gateDecision", threadId, gateId, kind, value, ...(saved ? { draft: saved } : {}) });
+    } catch (error) { pending.current = false; setError(error instanceof Error ? error.message : "Feedback could not be saved."); }
   }
-
-  function handleChatAbout() {
-    if (resolved !== null) return; // one-shot — shared with the mode picks
-    const text = draft.trim();
-    if (!text) return;
-    setResolved("Discussing…");
-    // A fresh turn supersedes the gate (handle_message clears it at start).
-    vscode.postMessage({ type: "sendMessage", text });
-  }
+  const handlePick = (mode: string, label: string) => { void decide("mode", mode, label); };
+  const handleChatAbout = () => { void decide("feedback", draft, "Discussing…"); };
 
   return (
     <CardShell
@@ -74,6 +74,7 @@ export function ModeGate({ taskId, payload }: Props) {
       borderColor="var(--accent-brd)"
       headerTint="var(--accent-bg)"
     >
+      {(error || feedback.notice) && <div role="status">{error || feedback.notice}</div>}
       {/* ── Approach sketch — scrollable/expandable so a long, detailed plan is
           actually readable before deciding (this is what makes dropping the old
           EXPLAIN mode safe — its only purpose was working around this card being

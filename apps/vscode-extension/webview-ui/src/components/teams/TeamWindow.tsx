@@ -18,6 +18,7 @@ import { useTeamsUi } from "./TeamsContext";
 import { usageText, usageTitle } from "../../usage";
 
 interface Props {
+  presentation?: "modal" | "embedded";
   teamId: string;
   tab: string;            // "board" or a member's agentId
   onTab(tab: string): void;
@@ -26,7 +27,7 @@ interface Props {
 
 /** A team full height in a centered chat-width column (spec 2026-10-05 §6–§7): a header with the road the
  * team travels and who is doing what, the Board first, then one tab per member. */
-export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
+export function TeamWindow({ teamId, tab, onTab, onClose, presentation = "modal" }: Props) {
   const teamsUi = useTeamsUi();
   const agentsUi = useAgentsUi();
   const team = teamsUi.teams[teamId];
@@ -37,24 +38,25 @@ export function TeamWindow({ teamId, tab, onTab, onClose }: Props) {
     `${teamId}|${tab}|${tab === "board" ? boardToken : viewToken(agentsUi.views[tab])}`);
 
   useEffect(() => {
+    if (presentation !== "modal") return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, presentation]);
 
   if (!team) return null;
   const live = !isTerminalTeam(team.phase);
   const teamUsage = teamsUi.usage?.teams[teamId]?.total;
   const roster = team.members.map((m) => m.label);
   return (
-    <div role="presentation" className="scrim absolute inset-0 z-40"
+    <div role="presentation" className={presentation === "modal" ? "scrim absolute inset-0 z-40" : "flex min-h-0 flex-1 flex-col overflow-hidden"}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (presentation === "modal" && e.target === e.currentTarget) onClose();
       }}>
-      <div role="dialog" aria-modal="true" aria-label={`Team ${team.name}`}
-        className="surface-card anim-pop absolute left-1/2 -translate-x-1/2 w-[calc(100%-24px)] max-w-[760px] bottom-3 top-10 flex flex-col overflow-hidden">
+      <div role={presentation === "modal" ? "dialog" : "region"} aria-modal={presentation === "modal" ? true : undefined} aria-label={`Team ${team.name}`}
+        className={presentation === "modal" ? "surface-card anim-pop absolute left-1/2 -translate-x-1/2 w-[calc(100%-24px)] max-w-[760px] bottom-3 top-10 flex flex-col overflow-hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
         <div className="accent-wash grid grid-cols-[minmax(0,1fr)] gap-2.5 px-3.5 pb-2.5 pt-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
           <div className="flex flex-wrap items-center gap-2.5">
             <Avatar label="main" roster={roster} />

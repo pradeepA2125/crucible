@@ -73,12 +73,12 @@ export class GraphSnapshotStore {
   private pkgOfFile = new Map<string, string>();
   private resolveSpec: ((spec: string, fromFileRel: string) => string | null) | null = null;
 
-  constructor(private readonly snapshotPath: string) {}
+  constructor(private readonly snapshotPath: string, private readonly readText = () => readFileSync(snapshotPath, "utf8")) {}
 
   load(): SpaceModel {
     let text: string;
     try {
-      text = readFileSync(this.snapshotPath, "utf8");
+      text = this.readText();
     } catch (err) {
       throw new GraphSnapshotError("missing", `snapshot not found at ${this.snapshotPath}: ${String(err)}`);
     }

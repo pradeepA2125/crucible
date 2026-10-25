@@ -21,6 +21,7 @@ from uvicorn.supervisors import ChangeReload
 
 from agentd.auth_token import tidy_tokens, write_token
 from agentd.runtime_lock import write_lock
+from agentd.project_ownership import OWNER, ProjectReservation, ProjectInUse
 from agentd.workspace_migration import migrate_legacy_dirs
 
 APP = "agentd.main:app"
@@ -90,8 +91,21 @@ class _Reloader(ChangeReload):
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse(sys.argv[1:] if argv is None else argv)
+    root=Path(args.workspace_lock or os.environ.get("CRUCIBLE_WORKSPACE_PATH") or Path.cwd()).resolve(strict=True)
+    configured=os.environ.get("CRUCIBLE_WORKSPACE_PATH")
+    if configured and Path(configured).resolve()!=root:
+        print("agentd.serve: workspace lock and configured project differ",file=sys.stderr);sys.exit(EXIT_STARTUP_FAILED)
+    if args.reload:
+        print("agentd.serve: --reload is unavailable with project ownership; restart the owning client",file=sys.stderr);sys.exit(EXIT_STARTUP_FAILED)
+    try: reservation=ProjectReservation(root)
+    except (ProjectInUse,OSError) as exc:
+        print(str(exc),file=sys.stderr);sys.exit(EXIT_STARTUP_FAILED)
+    # Keep this object/FD alive through server.run and all shutdown handlers.
+    OWNER.initialize(root)
+    os.environ["CRUCIBLE_WORKSPACE_PATH"]=str(root)
     if args.workspace_lock is not None:
-        migrate_legacy_dirs(Path(args.workspace_lock))
+        args.workspace_lock=str(root)
+        migrate_legacy_dirs(root)
     try:
         sock = _bind(args.port)
     except OSError as exc:

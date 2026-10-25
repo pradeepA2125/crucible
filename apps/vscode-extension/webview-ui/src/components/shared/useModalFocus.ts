@@ -2,12 +2,12 @@ import { useEffect, useRef, type RefObject } from "react";
 const SELECTOR = 'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])';
 
 /** Entry, dynamic Tab trapping, Escape and return-to-opener for a mounted modal. */
-export function useModalFocus(root: RefObject<HTMLElement>, close: () => void, returnTo?: RefObject<HTMLElement>) {
+export function useModalFocus(root: RefObject<HTMLElement>, close: () => void, returnTo?: RefObject<HTMLElement>, enabled = true) {
   const closeRef = useRef(close);
   closeRef.current = close;
   useEffect(() => {
     const dialog = root.current;
-    if (!dialog) return;
+    if (!dialog || !enabled) return;
     const opener = returnTo?.current ?? document.activeElement as HTMLElement | null;
     const controls = () => [...dialog.querySelectorAll<HTMLElement>(SELECTOR)].filter(el => {
       if (el.tabIndex < 0 || el.closest('[hidden], [aria-hidden="true"]')) return false;
@@ -31,5 +31,5 @@ export function useModalFocus(root: RefObject<HTMLElement>, close: () => void, r
     };
     document.addEventListener("keydown", onKey, true);
     return () => { document.removeEventListener("keydown", onKey, true); if (opener?.isConnected) opener.focus(); };
-  }, [root, returnTo]);
+  }, [root, returnTo, enabled]);
 }

@@ -1165,11 +1165,60 @@ class AgentOrchestrator:
         except Exception:
             return None
 
-    async def promote_inline_change(self, inline_task_id: str) -> None:
-        """Copy shadow files into the real workspace."""
+    def _owned_inline_meta(self, inline_task_id: str) -> dict | None:
+        """Validate the captured legacy inline resource before any filesystem write."""
+        from agentd.project_ownership import OWNER
+        import re
+        import stat
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,160}", inline_task_id):
+            raise ValueError("Invalid inline change identity.")
+        root = Path(OWNER.root)
+        manager_root = self._workspace_manager._root_path
+        expected = manager_root / inline_task_id
+        if manager_root.resolve() != manager_root or expected.is_symlink():
+            raise ValueError("Inline shadow is linked or unavailable.")
         meta = self._inline_shadows.get(inline_task_id)
         if meta is None:
-            meta = self._load_inline_meta_from_disk(inline_task_id)
+            manifest = expected / ".inline-manifest.json"
+            try:
+                fd = os.open(manifest, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+                try:
+                    info = os.fstat(fd)
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > 1_048_576:
+                        raise ValueError("Inline manifest is unavailable.")
+                    raw = os.read(fd, 1_048_577)
+                    if len(raw) > 1_048_576:
+                        raise ValueError("Inline manifest exceeds its limit.")
+                    meta = json.loads(raw)
+                finally:
+                    os.close(fd)
+            except FileNotFoundError:
+                return None
+            except (OSError, TypeError, json.JSONDecodeError) as exc:
+                raise ValueError("Inline manifest is unavailable.") from exc
+            if not isinstance(meta, dict):
+                raise ValueError("Invalid inline manifest.")
+            meta = {**meta, "shadow_path": str(expected)}
+        if (Path(str(meta.get("workspace_path", ""))).resolve() != root
+                or Path(str(meta.get("shadow_path", ""))) != expected):
+            raise ValueError("Inline change belongs to another project.")
+        touched = meta.get("touched_files", [])
+        if not isinstance(touched, list) or len(touched) > 10000:
+            raise ValueError("Invalid inline change paths.")
+        for rel in touched:
+            if not isinstance(rel, str) or not rel or Path(rel).is_absolute() or ".." in Path(rel).parts:
+                raise ValueError("Unsafe inline change path.")
+            for base in (root, expected):
+                candidate = base / rel
+                if not candidate.resolve().is_relative_to(base) or candidate.is_symlink():
+                    raise ValueError("Inline path leaves its project or shadow.")
+        return meta
+
+    async def promote_inline_change(self, inline_task_id: str) -> None:
+        """Copy shadow files into the real workspace."""
+        from agentd.project_ownership import OWNER
+        meta = (self._owned_inline_meta(inline_task_id) if OWNER.active else
+                self._inline_shadows.get(inline_task_id) or self._load_inline_meta_from_disk(inline_task_id))
         if meta is None:
             raise KeyError(f"Unknown inline change: {inline_task_id!r}")
         shadow_path = Path(str(meta["shadow_path"]))
@@ -1185,9 +1234,10 @@ class AgentOrchestrator:
 
     async def discard_inline_change(self, inline_task_id: str) -> None:
         """Remove the inline change shadow without touching the real workspace."""
-        meta = self._inline_shadows.pop(inline_task_id, None)
-        if meta is None:
-            meta = self._load_inline_meta_from_disk(inline_task_id)
+        from agentd.project_ownership import OWNER
+        meta = (self._owned_inline_meta(inline_task_id) if OWNER.active else
+                self._inline_shadows.get(inline_task_id) or self._load_inline_meta_from_disk(inline_task_id))
+        self._inline_shadows.pop(inline_task_id, None)
         if meta:
             shadow_path = Path(str(meta["shadow_path"]))
             if shadow_path.exists():

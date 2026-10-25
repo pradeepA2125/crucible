@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { shlexJoin, CommandGate } from "../components/messages/gates/CommandGate";
 import { ScopeGate } from "../components/messages/gates/ScopeGate";
@@ -452,7 +452,7 @@ const MODE_PAYLOAD = {
 
 describe("ModeGate — renders", () => {
   it("renders the plan sketch and the recommended option", () => {
-    render(<ModeGate taskId="th1" payload={MODE_PAYLOAD} />);
+    render(<ModeGate gateId="g" taskId="th1" payload={MODE_PAYLOAD} />);
     expect(screen.getByText(/rate_limit decorator/)).toBeTruthy();
     expect(screen.getByRole("button", { name: /plan it as a task.*recommended/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /edit inline now/i })).toBeTruthy();
@@ -460,24 +460,22 @@ describe("ModeGate — renders", () => {
 });
 
 describe("ModeGate — pick a mode", () => {
-  it("posts modeDecision with the chosen mode and threadId", () => {
-    render(<ModeGate taskId="thread-1" payload={MODE_PAYLOAD} />);
+  it("posts the exact chosen mode and thread identity", async () => {
+    render(<ModeGate gateId="g" taskId="thread-1" payload={MODE_PAYLOAD} />);
 
     fireEvent.click(screen.getByRole("button", { name: /edit inline now/i }));
 
-    expect(postMessage).toHaveBeenCalledWith({
-      type: "modeDecision",
-      threadId: "thread-1",
-      mode: "edit",
-    });
+    await waitFor(() => expect(postMessage).toHaveBeenCalledWith({
+      type: "gateDecision", gateId: "g", kind: "mode", threadId: "thread-1", value: "edit",
+    }));
   });
 
-  it("is one-shot — all option buttons gone after a pick", () => {
-    render(<ModeGate taskId="thread-1" payload={MODE_PAYLOAD} />);
+  it("is one-shot — all option buttons gone after a pick", async () => {
+    render(<ModeGate gateId="g" taskId="thread-1" payload={MODE_PAYLOAD} />);
 
     fireEvent.click(screen.getByRole("button", { name: /just explain/i }));
 
-    expect(screen.queryByRole("button", { name: /plan it as a task/i })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("button", { name: /plan it as a task/i })).toBeNull());
     expect(screen.queryByRole("button", { name: /edit inline now/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /just explain/i })).toBeNull();
   });

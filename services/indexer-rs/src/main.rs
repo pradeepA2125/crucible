@@ -14,7 +14,7 @@ async fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("--version") => {
             // `auth=1` tells the extension this indexer authenticates to agentd (spec §3.7).
-            println!("{} auth=1", env!("CARGO_PKG_VERSION"));
+            println!("{} auth=1 owner=1", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         Some("index") => run_index(&args[1..]).await,

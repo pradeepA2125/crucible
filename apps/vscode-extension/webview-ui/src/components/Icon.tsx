@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 export type IconName =
-  | "spark" | "search" | "plus" | "clock" | "chev-r" | "chev-l" | "chev-d"
+  | "folder" | "image" | "hash" | "braces" | "markdown" | "wrap" | "more" | "info" | "panel-right" | "spark" | "search" | "plus" | "clock" | "chev-r" | "chev-l" | "chev-d"
   | "check" | "x" | "copy" | "file" | "term" | "list" | "diff" | "warn"
   | "send" | "stop" | "retry" | "bolt" | "bug"
   | "home" | "key" | "plug" | "book" | "shield" | "chip" | "gear" | "menu" | "db" | "orbit" | "fork" | "expand";
@@ -15,6 +15,15 @@ interface Props {
 // Each entry is the inner content of the 16×16 viewBox symbol, converted to JSX.
 // Colors remain currentColor so CSS drives them — no hardcoded fills/strokes.
 const ICONS: Record<IconName, ReactNode> = {
+  folder: (<path d="M1.5 4V3a1 1 0 0 1 1-1H6l2 2h5.5a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V4z" fill="none" stroke="currentColor" strokeWidth="1.2" />),
+  image: (<><rect x="2" y="2" width="12" height="12" rx="2" fill="none" stroke="currentColor" strokeWidth="1.2" /><circle cx="5.5" cy="5.5" r="1" fill="currentColor" /><path d="m3 12 3-3 2 2 3-4 3 5" fill="none" stroke="currentColor" strokeWidth="1.2" /></>),
+  hash: (<path d="M6 2 4 14M12 2l-2 12M2 6h12M1 10h12" fill="none" stroke="currentColor" strokeWidth="1.3" />),
+  braces: (<path d="M6 2H4v4L2 8l2 2v4h2M10 2h2v4l2 2-2 2v4h-2" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />),
+  markdown: (<><rect x="1" y="3" width="14" height="10" rx="1" fill="none" stroke="currentColor" strokeWidth="1.1" /><path d="M3 10V6l2 2 2-2v4M11 6v4m-2-2 2 2 2-2" fill="none" stroke="currentColor" strokeWidth="1.2" /></>),
+  wrap: (<path d="M2 3h12M2 7h9a3 3 0 0 1 0 6H8m2-2-2 2 2 2M2 11h3" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />),
+  more: (<><circle cx="3" cy="8" r="1.2" fill="currentColor" /><circle cx="8" cy="8" r="1.2" fill="currentColor" /><circle cx="13" cy="8" r="1.2" fill="currentColor" /></>),
+  info: (<><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.2" /><path d="M8 7v5" stroke="currentColor" strokeWidth="1.2" /><circle cx="8" cy="4.5" r=".8" fill="currentColor" /></>),
+  "panel-right": (<><rect x="2" y="2.5" width="12" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.2" /><path d="M10 2.5v11" stroke="currentColor" strokeWidth="1.2" /></>),
   orbit: (
     <>
       <circle cx="8" cy="8" r="2" fill="currentColor" />

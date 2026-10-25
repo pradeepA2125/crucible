@@ -551,6 +551,11 @@ install_auth(app, AUTH_STATE)
 
 
 
+@app.get("/v1/project/session")
+async def project_session(request: Request) -> dict[str, object]:
+    from agentd.project_ownership import OWNER
+    return OWNER.status(OWNER.owns(request.scope["headers"]))
+
 @app.get("/health")
 async def healthcheck(request: Request) -> dict[str, object]:
     # No token required (the middleware exempts exactly GET /health); with a nonce it

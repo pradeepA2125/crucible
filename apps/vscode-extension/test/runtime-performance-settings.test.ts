@@ -20,7 +20,7 @@ describe("retired candidate experiment settings", () => {
       const mapper = RuntimeManager.prototype as unknown as {
         extraEnvFromSettings(): Record<string, string>;
       };
-      expect(Object.keys(mapper.extraEnvFromSettings()).some(
+      expect(Object.keys(mapper.extraEnvFromSettings.call({ host: { configuration: () => getConfiguration() } })).some(
         k => k.startsWith("CRUCIBLE_CODE_CANDIDATE") || k.startsWith("CRUCIBLE_CODE_QWEN"),
       )).toBe(false);
     },
@@ -47,7 +47,7 @@ describe.each([
     const mapper = RuntimeManager.prototype as unknown as {
       extraEnvFromSettings(): Record<string, string>;
     };
-    const extraEnv = mapper.extraEnvFromSettings();
+    const extraEnv = mapper.extraEnvFromSettings.call({ host: { configuration: () => getConfiguration() } });
     const env = buildBackendEnv("/ws", { backend: "gemini", model: "m", extraEnv }, "/rt", "darwin-arm64");
     expect(env[envKey]).toBe(value === undefined ? "1" : String(value));
   });
@@ -75,7 +75,7 @@ describe("crucible.performance.mcpOnDemand", () => {
     const mapper = RuntimeManager.prototype as unknown as {
       extraEnvFromSettings(): Record<string, string>;
     };
-    const extraEnv = mapper.extraEnvFromSettings();
+    const extraEnv = mapper.extraEnvFromSettings.call({ host: { configuration: () => getConfiguration() } });
     const env = buildBackendEnv("/ws", { backend: "gemini", model: "m", extraEnv }, "/rt", "darwin-arm64");
     expect(env[envKey]).toBe(expected);
   });

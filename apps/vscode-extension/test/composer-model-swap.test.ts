@@ -1,43 +1,30 @@
-import { readFileSync } from "node:fs";
-import ts from "typescript";
+import type { BackendConfig } from "@crucible/editor-client";
+import { createComposerModelHost, type ComposerModelPorts } from "../src/composer-model-host.js";
 import { describe, expect, it, vi } from "vitest";
 
-// extension.ts imports VS Code. Extract and execute its actual composer callback
-// with injected host dependencies instead of duplicating its implementation.
-const source = readFileSync(new URL("../src/extension.ts", import.meta.url), "utf8");
-const tree = ts.createSourceFile("extension.ts", source, ts.ScriptTarget.Latest, true);
-let callback: ts.ArrowFunction | undefined;
-function visit(node: ts.Node): void {
-  if (ts.isArrowFunction(node)
-      && node.parameters.map((p) => p.name.getText(tree)).join(",") === "backend,model") {
-    callback = node;
-  }
-  ts.forEachChild(node, visit);
-}
-visit(tree);
-if (!callback) throw new Error("Composer model-swap callback not found");
-const js = ts.transpile(`const swap = ${callback.getText(tree)};`, {
-  target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None,
-});
-
+// Exercise the exported coordinator, including its actual catalog/state path.
+type Client = ReturnType<ComposerModelPorts["client"]>;
 function setup(catalog: { slug: string; displayName: string; contextWindow?: number | null }[] | undefined) {
-  const setProvider = vi.fn(async () => ({ backend: "chatgpt", model: "gpt-b" }));
+  let provider: NonNullable<BackendConfig["provider"]> = { backend: "chatgpt", model: "gpt-b", usesChatgptPlan: true };
+  const setProvider = vi.fn<Client["setProvider"]>(async request => {
+    provider = { ...provider, backend: request.backend, model: request.model ?? provider.model };
+    return { backend: provider.backend, model: provider.model };
+  });
+  const getConfig = vi.fn(async () => ({ provider }));
+  const listChatGPTModels = vi.fn<Client["listChatGPTModels"]>(async () => (catalog ?? []).map(model => ({ ...model, contextWindow: model.contextWindow ?? null })));
   const refreshContextUsage = vi.fn(async () => {});
   const runtimeManager = {
-    saveProvider: vi.fn(async () => {}),
-    saveContextWindow: vi.fn(async () => {}),
-  };
+    chatgptRegistration: () => "registration-1", claudeRegistration: () => undefined,
+    getProviderKey: async () => undefined,
+    saveProvider: vi.fn(async () => {}), saveContextWindow: vi.fn(async () => {}),
+    saveReasoningEffort: vi.fn(async () => {}),
+  } satisfies ComposerModelPorts["runtime"];
+  const host = createComposerModelHost({
+    client: () => ({ getConfig, setProvider, listChatGPTModels, listClaudeModels: async () => [] }),
+    runtime: runtimeManager, refreshContextUsage, refreshModels: async () => {},
+  });
   const credentials = { CRUCIBLE_CHATGPT_REGISTRATION: "registration-1" };
-  const providerCredentials = vi.fn(async () => credentials);
-  const chatgptCatalog = vi.fn(async () => catalog);
-  const state = { refreshed: true };
-  const composerModelState = vi.fn(async () => state);
-  const swap = new Function("controller", "runtimeManager", "providerCredentials",
-    "chatgptCatalog", "composerModelState", `${js}\nreturn swap;`)(
-    { configClient: () => ({ setProvider }), refreshContextUsage }, runtimeManager,
-    providerCredentials, chatgptCatalog, composerModelState,
-  ) as (backend: string, model: string) => Promise<unknown>;
-  return { swap, setProvider, refreshContextUsage, runtimeManager, chatgptCatalog, composerModelState, credentials, state };
+  return { swap: host.setModel, setProvider, refreshContextUsage, runtimeManager, getConfig, credentials };
 }
 
 const catalog = [
@@ -51,11 +38,11 @@ describe("composer model swap context window", () => {
     await h.swap(backend, "gpt-b");
     expect(h.refreshContextUsage).toHaveBeenCalledTimes(1);
     expect(h.setProvider.mock.invocationCallOrder[0]).toBeLessThan(h.refreshContextUsage.mock.invocationCallOrder[0]!);
-    expect(h.composerModelState).toHaveBeenCalledTimes(1);
+    expect(h.getConfig).toHaveBeenCalledTimes(1);
   });
   it("forwards the selected ChatGPT model's window and persists it after a successful swap", async () => {
     const h = setup(catalog);
-    expect(await h.swap("chatgpt", "gpt-b")).toEqual(h.state);
+    expect((await h.swap("chatgpt", "gpt-b")).current).toMatchObject({ backend: "chatgpt", model: "gpt-b" });
     expect(h.setProvider).toHaveBeenCalledWith({
       backend: "chatgpt", model: "gpt-b", credentials: h.credentials, contextWindow: 200000,
     });
@@ -100,11 +87,10 @@ describe("composer model swap context window", () => {
     expect(h.runtimeManager.saveContextWindow).toHaveBeenCalledWith(contextWindow);
   });
 
-  it("does not consult the ChatGPT catalog or overwrite the window for other providers", async () => {
+  it("does not apply the ChatGPT catalog window to another provider", async () => {
     const h = setup(catalog);
     await h.swap("openai", "gpt-b");
-    expect(h.chatgptCatalog).not.toHaveBeenCalled();
-    expect(h.setProvider).toHaveBeenCalledWith({ backend: "openai", model: "gpt-b", credentials: h.credentials });
+    expect(h.setProvider).toHaveBeenCalledWith({ backend: "openai", model: "gpt-b" });
     expect(h.runtimeManager.saveContextWindow).not.toHaveBeenCalled();
   });
 
@@ -114,7 +100,7 @@ describe("composer model swap context window", () => {
     await expect(h.swap("chatgpt", "gpt-b")).rejects.toThrow("validation failed");
     expect(h.runtimeManager.saveProvider).not.toHaveBeenCalled();
     expect(h.runtimeManager.saveContextWindow).not.toHaveBeenCalled();
-    expect(h.composerModelState).not.toHaveBeenCalled();
+    expect(h.getConfig).not.toHaveBeenCalled();
     expect(h.refreshContextUsage).not.toHaveBeenCalled();
   });
 });

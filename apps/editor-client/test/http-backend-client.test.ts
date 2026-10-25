@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { HttpBackendClient } from "../src/client/http-backend-client.js";
+import { ChatAdmissionUnknownError, HttpBackendClient } from "../src/client/http-backend-client.js";
 
 test("curation inspector maps failure/backoff and source watermark", async () => {
   const client = new HttpBackendClient({ baseUrl: "http://localhost",
@@ -1190,5 +1190,108 @@ describe("provider-native effort descriptors", () => {
     const result = await client.setProvider({ backend: "b", reasoningEffort: null });
     expect(JSON.parse(captured.body ?? "{}").reasoning_effort).toBeNull();
     expect(result.reasoningEffort).toBeNull();
+  });
+});
+
+
+describe("controller thread list liveness", () => {
+  test.each([{ turn_active: true, pending_gates: 1 }, { turn_active: false, pending_gates: 0 }, {}])("preserves additive and missing fields: %j", async fields => {
+    const client = jsonClient({ threads: [{ thread_id: "t", workspace_path: "/ws", title: "Chat", created_at: "2026-10-21", ...fields }] }, {});
+    const [thread] = await client.listChatThreads("/ws");
+    expect(thread?.turnActive).toBe(fields.turn_active);
+    expect(thread?.pendingGates).toBe(fields.pending_gates);
+  });
+});
+
+
+describe("chat attachment admission and cancellation", () => {
+  test.each(["message", "mode", "clarify", "resume"] as const)("%s cancels a stalled body promptly", async kind => {
+    const cancel = vi.fn();
+    const abort = new AbortController();
+    const admitted = vi.fn();
+    const client = new HttpBackendClient({ baseUrl: "http://localhost", fetchFn: async (_url, init) => {
+      expect(init?.signal).toBe(abort.signal);
+      return new Response(new ReadableStream<Uint8Array>({ cancel }), { status: 200 });
+    } });
+    const options = { signal: abort.signal, onAdmitted: admitted };
+    const events = kind === "message" ? await client.sendChatMessage("t", "hi", abort.signal, options)
+      : null;
+    const stream = kind === "message" ? (events as Extract<SendChatResult, { kind: "stream" }>).events
+      : kind === "mode" ? client.postModeDecision("t", "edit", undefined, options)
+      : kind === "clarify" ? client.postClarifyDecision("t", "yes", undefined, options)
+      : client.streamChannel("chat:t", abort.signal);
+    const next = stream[Symbol.asyncIterator]().next();
+    await vi.waitFor(() => expect(kind === "resume" ? true : admitted.mock.calls.length === 1).toBe(true));
+    // Allow GET headers to arrive as well.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    abort.abort();
+    expect((await next).done).toBe(true);
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  test("stale admitted message cancels its body without starting the iterator", async () => {
+    const cancel = vi.fn(); const abort = new AbortController();
+    const client = new HttpBackendClient({ baseUrl: "http://localhost", fetchFn: async () =>
+      new Response(new ReadableStream<Uint8Array>({ cancel })) });
+    const result = await client.sendChatMessage("t", "hi", abort.signal, { onAdmitted: () => abort.abort() });
+    expect(result.kind).toBe("stream"); expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  test("202 headers acknowledge admission even when confirmation JSON is malformed", async () => {
+    const admitted = vi.fn();
+    const client = new HttpBackendClient({ baseUrl: "http://localhost", fetchFn: async () => new Response("broken", { status: 202 }) });
+    await expect(client.sendChatMessage("t", "hi", undefined, { onAdmitted: admitted })).rejects.toThrow();
+    expect(admitted).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(["network", "server"])("%s failure leaves admission unknown", async kind => {
+    const client = new HttpBackendClient({ baseUrl: "http://localhost", fetchFn: async () => {
+      if (kind === "network") throw new TypeError("socket closed");
+      return new Response("{}", { status: 500 });
+    } });
+    await expect(client.sendChatMessage("t", "hi")).rejects.toBeInstanceOf(ChatAdmissionUnknownError);
+  });
+
+  test("real HTTP cancellation closes the attachment while detached work continues", async () => {
+    const { createServer } = await import("node:http");
+    let releaseWork!: () => void; let complete = false;
+    const work = new Promise<void>(resolve => { releaseWork = () => { complete = true; resolve(); }; });
+    let closed!: () => void;
+    const disconnected = new Promise<void>(resolve => { closed = resolve; });
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" }); res.flushHeaders();
+      res.on("close", closed);
+      void work.then(() => res.end());
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as { port: number };
+    const abort = new AbortController();
+    try {
+      const client = new HttpBackendClient({ baseUrl: `http://127.0.0.1:${address.port}` });
+      const result = await client.sendChatMessage("t", "hello", abort.signal);
+      expect(result.kind).toBe("stream");
+      const reading = (result as Extract<SendChatResult, { kind: "stream" }>).events[Symbol.asyncIterator]().next();
+      abort.abort(); await reading.catch(() => undefined); await disconnected;
+      expect(complete).toBe(false);
+      releaseWork(); await work; expect(complete).toBe(true);
+    } finally {
+      releaseWork(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+});
+
+
+describe("CP6a0 error headers do not await stalled diagnostics", () => {
+  test.each(["message", "mode", "clarify"] as const)("%s enters uncertainty from real503 headers and closes the body", async kind => {
+    const { createServer } = await import("node:http");
+    let close!: () => void; const closed = new Promise<void>(resolve => { close = resolve; });
+    const server = createServer((_req, res) => { res.writeHead(503, { "content-type": "application/json" }); res.flushHeaders(); res.write('{"detail":'); res.on("close", close); });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = new HttpBackendClient({ baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}` });
+    try {
+      const pending = kind === "message" ? client.sendChatMessage("t", "hi")
+        : (kind === "mode" ? client.postModeDecision("t", "edit") : client.postClarifyDecision("t", "yes"))[Symbol.asyncIterator]().next();
+      await expect(pending).rejects.toBeInstanceOf(ChatAdmissionUnknownError); await closed;
+    } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
   });
 });

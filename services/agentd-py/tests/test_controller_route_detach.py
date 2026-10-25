@@ -172,3 +172,116 @@ async def test_stop_route_cancels_active_turn(_app):
     async with AsyncClient(transport=transport2, base_url="http://t") as client:
         resp = await client.post(f"/v1/chat/threads/{thread.thread_id}/stop")
         assert resp.json()["ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_thread_list_reports_real_detached_turn_and_gate_count(_app):
+    from agentd.chat.models import PendingGate
+
+    app, chat_store, gate, handler = _app
+    thread = chat_store.create_thread("/ws")
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://t") as client:
+        async def summary():
+            response = await client.get("/v1/chat/threads", params={"workspace": "/ws"})
+            assert response.status_code == 200
+            return response.json()["threads"][0]
+
+        before = await summary()
+        assert before["turn_active"] is False
+        assert before["pending_gates"] == 0
+        bg = asyncio.create_task(_consume_stream(
+            client, f"/v1/chat/threads/{thread.thread_id}/message", {"content": "hi"}))
+        try:
+            for _ in range(100):
+                if thread.thread_id in handler._active_turns:
+                    break
+                await asyncio.sleep(0)
+            assert thread.thread_id in handler._active_turns
+            pending = chat_store.add_controller_gate(
+                thread.thread_id, PendingGate(kind="command", payload={"command": "pwd"}))
+            active = await summary()
+            assert active["turn_active"] is True
+            assert active["pending_gates"] == 1
+            # Reading summaries does not consume the gate.
+            assert chat_store.get_thread(thread.thread_id).pending_controller_gates[0].gate_id == pending.gate_id
+            chat_store.remove_controller_gate(thread.thread_id, pending.gate_id)
+        finally:
+            gate.set()
+            await asyncio.wait_for(bg, timeout=2)
+        ended = await summary()
+        assert ended["turn_active"] is False
+        assert ended["pending_gates"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", ["message", "mode-decision", "clarify-decision"])
+async def test_actual_subscriber_disconnect_preserves_detached_work(_app, decision):
+    """Drive http.disconnect directly; ASGITransport otherwise buffers the body."""
+    import json
+
+    app, chat_store, gate, handler = _app
+    thread = chat_store.create_thread("/ws")
+    completed = asyncio.Event()
+
+    async def held_decision(*args, **kwargs):
+        await gate.wait()
+        completed.set()
+        handler._broadcaster.broadcast(
+            f"chat:{thread.thread_id}", {"type": "chat_done", "payload": {}})
+
+    if decision == "message":
+        handler.handle_message = held_decision
+        payload = {"content": "disposable detach test"}
+    elif decision == "mode-decision":
+        handler.resolve_mode = held_decision
+        payload = {"mode": "implement"}
+    else:
+        handler.resolve_clarify = held_decision
+        payload = {"answer": "yes"}
+
+    started = asyncio.Event()
+    disconnect = asyncio.Event()
+    supplied = False
+    status = None
+
+    async def receive():
+        nonlocal supplied
+        if not supplied:
+            supplied = True
+            return {"type": "http.request", "body": json.dumps(payload).encode(),
+                    "more_body": False}
+        await disconnect.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        nonlocal status
+        if message["type"] == "http.response.start":
+            status = message["status"]
+            started.set()
+
+    path = f"/v1/chat/threads/{thread.thread_id}/{decision}"
+    request = asyncio.create_task(app({
+        "type": "http", "asgi": {"version": "3.0", "spec_version": "2.0"},
+        "http_version": "1.1", "method": "POST", "scheme": "http",
+        "path": path, "raw_path": path.encode(), "query_string": b"",
+        "headers": [(b"content-type", b"application/json")],
+        "client": ("127.0.0.1", 12345), "server": ("test", 80),
+    }, receive, send))
+    try:
+        await asyncio.wait_for(started.wait(), 2)
+        assert status == 200
+        work = handler._active_turns[thread.thread_id]
+        disconnect.set()
+        await asyncio.wait_for(request, 2)
+        assert not work.done()
+        assert not work.cancelled()
+        gate.set()
+        await asyncio.wait_for(work, 2)
+        assert completed.is_set()
+    finally:
+        disconnect.set()
+        gate.set()
+        if not request.done():
+            request.cancel()
+        await asyncio.gather(request, return_exceptions=True)

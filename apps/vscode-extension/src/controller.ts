@@ -1,3 +1,7 @@
+import { WorkAuthority } from "./work-start.js";
+import type { GateAction } from "./gate-actions.js";
+import { gateDecisionIdentity, type GateDecisionClaim, type GateDecisionIdentity, type GateDecisionReceipt } from "@crucible/editor-client";
+import { HistoryCache, HistoryReader, type HistoryView } from "./history.js";
 import { ApprovalCoordinator, isApprovalMode, type ApprovalDependencies, type ApprovalView } from "./approval-mode.js";
 import type {
   ProviderAccess,
@@ -28,11 +32,31 @@ import type {
 } from "@crucible/editor-client";
 import { ContextUsageState } from "./context-usage-state.js";
 import type { ContextUsage } from "@crucible/editor-client";
-import { parseWireChatMessage } from "@crucible/editor-client";
+import { ChatAdmissionUnknownError, parseWireChatMessage } from "@crucible/editor-client";
 import { AgentViewManager } from "./agent-views.js";
 import { TeamViewManager, type TeamViewEvent } from "./team-views.js";
 
 const USAGE_REFRESH_MS = 3000;
+
+export type ChatAdmissionView = { threadId: string; state: "pending" | "unknown"; checking: boolean };
+
+type TurnOperation = {
+  readonly threadId: string;
+  readonly url: string;
+  readonly epoch: number;
+  readonly abort: AbortController;
+  admitted: boolean;
+  retired: boolean;
+  unknown?: {
+    client: BackendTaskClient;
+    messageId?: string;
+    accepted?: () => void | Promise<void>;
+    gateIdentity?: GateDecisionIdentity;
+    // Pin the complete origin submission, including images, independently of the UI.
+    submission?: readonly unknown[];
+    checking: boolean;
+  };
+};
 
 import * as path from "path";
 import type { MemoryDataSource } from "./memory-data.js";
@@ -88,6 +112,8 @@ export interface ControllerUI {
   updateChatThinking(message: string): void;
   hideChatThinking(): void;
   setChatInputEnabled(enabled: boolean): void;
+  renderChatAdmission?(admission: ChatAdmissionView | null): void;
+  renderHistoryState?(history: HistoryView): void;
   renderChatThreadList(threads: ChatThreadSummary[], activeThreadId: string): void;
   clearChatThread(threadId?: string): void;
   // Chat rewind: the preview feeds the confirm dialog, the prefill hands the rewound
@@ -137,6 +163,10 @@ export interface ControllerUI {
   replaceChatMessages(messages: ChatMessage[]): void;
   removeChatMessage(id: string): void;
   markQueued(id: string): void;
+  // Optional desktop retention hooks: default hosts keep their composer behavior.
+  draftCreated?(draftId: string, threadId: string): void;
+  draftAccepted?(draftId: string, threadId: string): void;
+  staleDraft?: ControllerUI["restoreDraft"];
   restoreDraft(text: string, recovery?: { draftId: string; mentionedPaths?: string[]; imageAttachments: { name: string; mediaType: string; dataUrl: string; bytes: number }[] }): void;
   // Sub-agents (spec §10): roster rows, and the open agents' transcripts and live events.
   renderAgents(agents: AgentSummary[]): void;
@@ -238,7 +268,244 @@ export class CrucibleController {
   private lastPatchError: string | null = null;
   private runDeviations: string[] = [];
   private deviationsTaskId: string | null = null;
-  private turnAbort: AbortController | null = null;
+  private disposed = false;
+  private receiptCheck: Promise<void> | null = null;
+  private turnOperation: TurnOperation | null = null;
+  private readonly pendingAdmissions = new Set<TurnOperation>();
+  private readonly historyCache = new HistoryCache();
+  private readonly historyReader = new HistoryReader();
+  private historyTimer: ReturnType<typeof setInterval> | null = null;
+  private historyEpoch = -1;
+  private historyLoaded = false;
+  private readonly workAuthority = new WorkAuthority();
+  private workReservation: { thread: string; url: string; epoch: number; verify(): Promise<void> } | null = null;
+  private workBlocked = "Checking project activity…";
+  private async runProjectWork<T>(thread: string, kind: string, gateId: string | undefined, action: (verifyWork: () => Promise<void>, isCurrentWork: () => boolean) => Promise<T>): Promise<T | undefined> {
+    // Non-chat legacy callers retain their compatibility path; both UI hosts attach history before actions.
+    if (this.historyEpoch < 0) return action(async () => {}, () => !this.disposed);
+    const origin = this.contextView(), url = this.settings.getBackendBaseUrl(), workspace = this.ui.getWorkspacePath() ?? "", process = this.historyProcess;
+    const continuation = !["message", "mode", "clarify", "feedback", "task"].includes(kind);
+    if (this.workReservation || this.pendingAdmissions.size || !this.historyActionReady() || !process || thread !== this.activeThreadId) {
+      this.ui.showWarning("Wait for current project activity and pending requests before starting work."); return;
+    }
+    const token = { thread, url, epoch: origin, verify: async () => {} }; this.workReservation = token;
+    const current = () => !this.disposed && this.contextState.current(origin, this.settings.getBackendBaseUrl()) && this.activeThreadId === thread && process === this.historyProcess && this.ui.getWorkspacePath() === workspace;
+    token.verify = async () => {
+      const client = this.createClient(url), started = Date.now();
+      const activity = await this.workAuthority.read(JSON.stringify([url, workspace]), client, workspace);
+      if (!current() || !this.historyActionReady() || Date.now() - started >= 4000 || !activity.supported || activity.processId !== process
+          || activity.requestedWorkspace !== workspace || !activity.threads.some(t => t.threadId === thread)) throw new Error("Project activity changed. Refresh before continuing.");
+      const busy = activity.threads.filter(t => t.turnActive || t.agentsRunning || t.sessionsRunning);
+      if (busy.some(t => t.threadId !== thread || !continuation && !(kind === "message" && this.latestLiveState?.turnKind === "notice"))) throw new Error("Another turn, agent or command is still running in this project. You can browse and edit drafts while it finishes.");
+      if (continuation) {
+        const live = await this.workAuthority.readGate(client, thread);
+        if (!current() || !this.historyActionReady() || live.processId !== process || !gateId
+            || !live.pendingGates.some(g => g.gateId === gateId && g.kind === kind)) throw new Error("This approval changed. Reopen the current card.");
+      }
+      if (!current()) throw new Error("The conversation changed before dispatch.");
+    };
+    try {
+      await token.verify();
+      if (!current()) throw new Error("The project or conversation changed before dispatch.");
+      return await action(token.verify, current);
+    } catch (error) {
+      if (current()) { this.ui.showWarning(formatError(error)); if (["mode", "clarify", "feedback", "team_plan"].includes(kind)) this.ui.retryDecision?.(thread, kind === "feedback" ? "mode" : kind as "mode" | "clarify" | "team_plan", gateId); }
+      return;
+    } finally { if (this.workReservation === token) this.workReservation = null; }
+  }
+  private holdUnknownContinuation(error: unknown, kind: string, gateId: string): boolean {
+    const reservation = this.workReservation;
+    const status = (error as { status?: number } | null)?.status;
+    if (!reservation || status !== undefined && status >= 400 && status < 500) return false;
+    const owner: TurnOperation = { threadId: reservation.thread, url: reservation.url, epoch: reservation.epoch,
+      abort: new AbortController(), admitted: false, retired: this.contextState.epoch !== reservation.epoch,
+      unknown: { client: this.createClient(reservation.url), submission: [kind, gateId], checking: false } };
+    this.pendingAdmissions.add(owner); this.publishAdmission();
+    this.ui.showWarning("Approval receipt is unknown. Do not repeat it or start other project work. Check receipt for current status."); return true;
+  }
+  private async refreshWorkStatus(thread: string, epoch: number): Promise<void> {
+    const url = this.settings.getBackendBaseUrl(), workspace = this.ui.getWorkspacePath() ?? "", process = this.historyProcess;
+    try {
+      const activity = await this.workAuthority.read(JSON.stringify([url, workspace]), this.createClient(url), workspace);
+      if (this.disposed || this.activeThreadId !== thread || !this.contextState.current(epoch, this.settings.getBackendBaseUrl()) || process !== this.historyProcess) return;
+      this.workBlocked = !activity.supported || activity.processId !== process ? "Project activity is unavailable. Reconnect before sending."
+        : activity.threads.some(t => (t.turnActive || t.agentsRunning || t.sessionsRunning) && !(t.threadId === thread && this.latestLiveState?.turnKind === "notice")) ? "Work is running in this project. You can browse and edit drafts." : "";
+    } catch { if (this.activeThreadId === thread && this.contextState.current(epoch, this.settings.getBackendBaseUrl()) && process === this.historyProcess) this.workBlocked = "Project activity is unavailable. Reconnect before sending."; }
+    this.publishHistory();
+  }
+
+  private historySaved = false;
+  private historyFailed = false;
+  private historyLiveAt = 0;
+  private historyNextAt = 0;
+  private historyFailures = 0;
+  private historyMutation = 0;
+  private historyReadOwner = 0;
+  private historyProcess: string | null = null;
+  private historyNotice: string | undefined;
+  private historyProjection = "";
+  private readonly historyEchoes = new Map<string, Set<string>>();
+
+  private historyKey(threadId: string): string {
+    return HistoryCache.key(this.settings.getBackendBaseUrl(), this.ui.getWorkspacePath() ?? "", threadId);
+  }
+  private clearActionableHistory(): void {
+    this.latestLiveState = null;
+    this.lastLiveSignature = null;
+    this.ui.clearLiveGates(); this.ui.clearLivePlan(); this.ui.clearLiveReview();
+    this.ui.clearLiveError(); this.ui.clearLiveTodos(); this.ui.clearLiveSessions();
+    this.ui.renderProviderAccess(null);
+  }
+  private historyActionReady(): boolean {
+    return this.historyEpoch !== this.contextState.epoch || this.historyLoaded && !this.historyFailed
+      && this.historyLiveAt > 0 && Date.now() - this.historyLiveAt < 5000;
+  }
+  private publishHistory(): void {
+    if (this.disposed || !this.activeThreadId || this.historyEpoch !== this.contextState.epoch) return;
+    const fresh = this.historyLoaded && this.historyLiveAt > 0 && Date.now() - this.historyLiveAt < 5000;
+    const value: HistoryView = { threadId: this.activeThreadId,
+      phase: fresh && !this.historyFailed ? "current" : this.historyFailed ? "unavailable" : "loading",
+      navigationSafe: true, workBlocked: this.workBlocked, cached: this.historySaved, ...(this.historyNotice ? { notice: this.historyNotice } : {}) };
+    const signature = JSON.stringify(value);
+    if (signature !== this.historyProjection) { this.historyProjection = signature; this.ui.renderHistoryState?.(value); }
+  }
+  private attachHistory(threadId: string): void {
+    this.historyReader.cancel();
+    this.historyEpoch = this.contextState.epoch;
+    this.historyLoaded = false; this.historyFailed = false; this.historyLiveAt = 0; this.historyProcess = null; this.workBlocked = "Checking project activity…";
+    this.historyNextAt = 0; this.historyFailures = 0; this.historyProjection = ""; this.historyNotice = undefined;
+    this.clearActionableHistory();
+    this.ui.clearChatThread(threadId);
+    const cached = this.historyCache.get(this.historyKey(threadId));
+    this.historySaved = cached !== undefined;
+    if (cached) this.ui.replaceChatMessages(cached);
+    this.publishHistory();
+    if (!this.historyTimer) this.historyTimer = setInterval(() => {
+      if (this.disposed || !this.activeThreadId) return;
+      if (this.historyLiveAt && Date.now() - this.historyLiveAt >= 3000) void this.pollThreadLiveState();
+      if (this.historyLiveAt && Date.now() - this.historyLiveAt >= 5000) {
+        this.historyLiveAt = 0; this.historyFailed = true; this.clearActionableHistory(); this.publishHistory();
+      }
+      void this.reconcileTranscript(this.activeThreadId, this.lastReconciledCount);
+    }, 1000);
+  }
+  private get turnAbort(): AbortController | null { return this.turnOperation?.abort ?? null; }
+
+  private beginTurnOperation(threadId: string, pending: boolean): TurnOperation {
+    this.historyMutation++; this.historyReader.cancel();
+    const owner: TurnOperation = { threadId, url: this.settings.getBackendBaseUrl(),
+      epoch: this.contextView(), abort: new AbortController(), admitted: !pending, retired: false };
+    this.turnOperation = owner;
+    if (pending) this.pendingAdmissions.add(owner);
+    this.publishAdmission();
+    return owner;
+  }
+
+  private admitTurn(owner: TurnOperation, release = true): void {
+    if (this.disposed) { owner.abort.abort(); return; }
+    owner.admitted = true;
+    if (this.workReservation?.thread === owner.threadId) this.workReservation = null;
+    if (release) this.pendingAdmissions.delete(owner);
+    this.publishAdmission();
+    if (owner.retired) owner.abort.abort();
+  }
+
+  private finishTurn(owner: TurnOperation): void {
+    if (owner.unknown) return;
+    this.pendingAdmissions.delete(owner);
+    owner.abort.abort();
+    if (this.turnOperation === owner) this.turnOperation = null;
+    if (!this.disposed && owner.admitted && owner.threadId === this.activeThreadId && owner.url === this.settings.getBackendBaseUrl()) {
+      this.historyLoaded = false; this.historyLiveAt = 0; this.historyNextAt = 0; this.reconcilePending = true; this.publishHistory();
+      void this.pollThreadLiveState();
+    }
+    this.publishAdmission();
+  }
+
+  private pendingFor(threadId: string, url: string): boolean {
+    return [...this.pendingAdmissions].some(owner => owner.threadId === threadId && owner.url === url);
+  }
+
+  private publishAdmission(): void {
+    if (this.disposed) return;
+    const owner = this.pendingAdmissions.values().next().value as TurnOperation | undefined;
+    this.ui.renderChatAdmission?.(owner ? { threadId: owner.threadId,
+      state: owner.unknown ? "unknown" : "pending", checking: !!owner.unknown?.checking } : null);
+  }
+
+  /** Explicit, coalesced GET-only verification. Never infer rejection from absence. */
+  checkChatReceipt(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    if (this.receiptCheck) return this.receiptCheck;
+    this.receiptCheck = this.reconcileAdmissions().finally(() => { this.receiptCheck = null; });
+    return this.receiptCheck;
+  }
+
+  private async reconcileAdmissions(): Promise<void> {
+    for (const owner of this.pendingAdmissions) {
+      const unknown = owner.unknown;
+      if (!unknown || unknown.checking || owner.url !== this.settings.getBackendBaseUrl()) continue;
+      unknown.checking = true;
+      this.publishAdmission();
+      const readAbort = new AbortController();
+      const onDispose = () => readAbort.abort();
+      owner.abort.signal.addEventListener("abort", onDispose, { once: true });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        if (unknown.gateIdentity) {
+          if (!unknown.client.getGateDecisionReceipt) continue;
+          const identity = unknown.gateIdentity;
+          const reading = unknown.client.getGateDecisionReceipt(identity, readAbort.signal);
+          void reading.finally(() => { unknown.checking = false; this.publishAdmission(); }).catch(() => {});
+          const deadline = new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(() => { readAbort.abort(); reject(new Error("Receipt check timed out")); }, 4000);
+          });
+          const result = await Promise.race([reading, deadline]);
+          if (this.disposed || owner.unknown !== unknown || !this.pendingAdmissions.has(owner)) continue;
+          if (!result.found || !this.gateReceiptMatches(identity, result.receipt)) continue;
+          await unknown.accepted?.();
+          delete owner.unknown; this.admitTurn(owner); this.finishTurn(owner);
+          if (result.receipt.status === "launch_failed") this.ui.showWarning("The decision was accepted, but its work could not start. It has not been resent.");
+          continue;
+        }
+        const reading = unknown.messageId
+          ? this.readSavedHistory(owner.threadId, unknown.client).then(messages => ({ messages }))
+          : unknown.client.getThreadLiveState(owner.threadId, readAbort.signal);
+        // Physical occupancy remains reserved until the underlying read settles,
+        // even if a test/client ignores cancellation after the visible deadline.
+        void reading.finally(() => { unknown.checking = false; this.publishAdmission(); }).catch(() => {});
+        const deadline = new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => { readAbort.abort(); reject(new Error("Receipt check timed out")); }, 4000);
+        });
+        const thread = await Promise.race([reading, deadline]);
+        if (this.disposed || owner.unknown !== unknown || !this.pendingAdmissions.has(owner)) return;
+        if (!unknown.messageId) {
+          this.ui.showInfo("Live status checked. It cannot confirm receipt of this decision; the decision has not been resent.");
+          continue;
+        }
+        if (!("messages" in thread) || !thread.messages.some(message => message.id === unknown.messageId)) continue;
+        unknown.accepted?.();
+        delete owner.unknown;
+        this.admitTurn(owner);
+        this.finishTurn(owner);
+        if (!this.turnOperation && !this.pendingAdmissions.size) this.ui.setChatInputEnabled(true);
+        this.lastLiveSignature = null;
+        void this.pollThreadLiveState();
+        if (this.activeThreadId === owner.threadId && this.settings.getBackendBaseUrl() === owner.url) {
+          this.ui.showInfo("The backend confirmed receipt of the pending message.");
+          this.ui.setChatInputEnabled(true);
+          this.lastLiveSignature = null;
+          this.reconcilePending = true;
+          void this.pollThreadLiveState();
+        }
+      } catch { /* Still unknown. No POST, draft restore or speculative retry. */ }
+      finally {
+        clearTimeout(timer);
+        owner.abort.signal.removeEventListener("abort", onDispose);
+        this.publishAdmission();
+      }
+    }
+  }
   private seenStepIds = new Set<string>();
   private latestLiveReview: { taskId: string; shadowWorkspacePath: string | null } | null = null;
   private livePollInFlight = false;
@@ -250,11 +517,22 @@ export class CrucibleController {
   private contextView(reset = false): number {
     const url = this.settings.getBackendBaseUrl();
     if (reset || this.contextState.thread !== this.activeThreadId || this.contextState.url !== url) {
+      this.historyReader.cancel();
       this.contextState.navigate(this.activeThreadId, url);
+      if (!this.disposed && this.historyEpoch >= 0) {
+        this.historyEpoch = this.contextState.epoch;
+        this.historyLoaded = false; this.historyLiveAt = 0; this.historyFailed = false;
+        this.historyProjection = ""; this.clearActionableHistory(); this.publishHistory();
+      }
       this.livePollInFlight = false;
       this.streamEpoch++;
-      this.turnAbort?.abort();
-      this.turnAbort = null;
+      if (this.turnOperation) {
+        this.turnOperation.retired = true;
+        // Headers may still be pending after the server launched work. Keep that
+        // owner registered across A→B→A; retire only its visible attachment.
+        if (this.turnOperation.admitted) this.turnOperation.abort.abort();
+        this.turnOperation = null;
+      }
     }
     this.renderContext();
     return this.contextState.epoch;
@@ -269,7 +547,7 @@ export class CrucibleController {
 
   async reconnectContextUsage(): Promise<void> {
     this.contextView(true);
-    this._liveResumeThreadId = null;
+    if (this.activeThreadId) this.attachHistory(this.activeThreadId);
     this.lastLiveSignature = null;
     await this.pollThreadLiveState();
   }
@@ -308,6 +586,8 @@ export class CrucibleController {
   }
 
   async startTask(): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
     const workspacePath = this.ui.getWorkspacePath();
     if (!workspacePath) {
       this.ui.showError("Open a workspace folder before starting a Crucible task.");
@@ -325,6 +605,7 @@ export class CrucibleController {
 
     let submission: { taskId: string };
     try {
+      await verifyWork(); if (!isCurrentWork()) return;
       submission = await client.submitTask({
         goal,
         workspacePath,
@@ -356,7 +637,9 @@ export class CrucibleController {
     this.startPolling();
     this.startStream(submission.taskId);
     this.ui.showInfo(`Started Crucible task ${submission.taskId}`);
-  }
+  
+});
+}
 
   openReviewPanel(): void {
     // The unified chat panel replaced the review panel.
@@ -385,6 +668,17 @@ export class CrucibleController {
         return client.getMemoryCuration(tid);
       },
     };
+  }
+
+  async buildDependencyIndex(action: () => Promise<void>): Promise<void> {
+    if (this.historyEpoch < 0 || !this.activeThreadId) throw new Error("Open a connected conversation before building the index.");
+    let dispatched = false, failed = false; let failure: unknown;
+    await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (_verify, current) => {
+      if (!current()) return; dispatched = true;
+      try { await action(); } catch (error) { failed = true; failure = error; throw error; }
+    });
+    if (!dispatched) throw new Error("Wait for current project work and reconnect this conversation before building the index.");
+    if (failed) throw failure;
   }
 
   memoryThreadId(): string {
@@ -483,6 +777,8 @@ export class CrucibleController {
   }
 
   async acceptPatch(): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
     if (!this.session) {
       this.ui.showWarning("No active task to accept.");
       return;
@@ -503,9 +799,13 @@ export class CrucibleController {
 
     await this.pullLatestTask();
     this.ui.showInfo("Patch accepted.");
-  }
+  
+});
+}
 
   async rejectPatch(): Promise<void> {
+    await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
     if (!this.session) {
       this.ui.showWarning("No active task to reject.");
       return;
@@ -518,6 +818,7 @@ export class CrucibleController {
 
     const client = this.clientForSession();
     try {
+      await verifyWork(); if (!isCurrentWork()) return;
       this.latestResult = await client.rejectPatch(this.session.taskId, reason);
     } catch (error) {
       if (isConflictError(error)) {
@@ -531,9 +832,13 @@ export class CrucibleController {
 
     await this.pullLatestTask();
     this.ui.showInfo("Patch rejected.");
+  
+    });
   }
 
   async providePlanFeedback(feedback: string | null): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
     if (!this.session) {
       this.ui.showWarning("No active task for plan feedback.");
       return;
@@ -571,9 +876,13 @@ export class CrucibleController {
     } catch (error) {
       this.ui.showError(`Failed to provide plan feedback: ${formatError(error)}`);
     }
-  }
+  
+});
+}
 
   async resumeTask(): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
     if (!this.session) {
       this.ui.showWarning("No active task to resume.");
       return;
@@ -595,6 +904,7 @@ export class CrucibleController {
     const client = this.clientForSession();
     let response: ResumeTaskResponse;
     try {
+      await verifyWork(); if (!isCurrentWork()) return;
       response = await client.resumeTask(this.session.taskId, {
         stage,
         budgetOverride: maxIterations !== undefined ? { maxIterations } : undefined,
@@ -617,7 +927,9 @@ export class CrucibleController {
     await this.sessionStore.save(this.session);
     this.startPolling();
     this.ui.showInfo(`Resumed as new task ${response.taskId}`);
-  }
+  
+});
+}
 
   async openInlineDiff(relativePath: string, shadowPath: string): Promise<void> {
     const workspacePath = this.ui.getWorkspacePath();
@@ -722,19 +1034,11 @@ export class CrucibleController {
     this.ui.openChatPanel();
     this.ui.renderChatThreadList(threads, this.activeThreadId ?? "");
     if (this.activeThreadId) {
-      try {
-        const thread = await client.getChatThread(this.activeThreadId);
-        if (!current()) return;
-        this.ui.clearChatThread(this.activeThreadId);
-        this.renderContext(true);
-        for (const message of thread.messages) {
-          this.ui.appendChatMessage(message);
-        }
-        void this.refreshAgentRoster(this.activeThreadId);
-        void this.refreshTeams(this.activeThreadId);
-      } catch {
-        // non-fatal — panel opens empty
-      }
+      this.attachHistory(this.activeThreadId);
+      await this.reconcileTranscript(this.activeThreadId, 0, true);
+      if (!current()) return;
+      void this.refreshAgentRoster(this.activeThreadId);
+      void this.refreshTeams(this.activeThreadId);
     }
     if (!current()) return;
     // Re-derive any pending gate/plan from persisted state so cards survive the
@@ -753,6 +1057,7 @@ export class CrucibleController {
     try {
       thread = await client.createChatThread(workspacePath);
     } catch (error) {
+      if (!current()) return;
       this.ui.showError(`Failed to create chat thread: ${formatError(error)}`);
       return;
     }
@@ -760,11 +1065,12 @@ export class CrucibleController {
     this.activeThreadId = thread.threadId;
     epoch = this.contextView();
     this.ui.openChatPanel();
-    this.ui.clearChatThread(thread.threadId);
+    this.attachHistory(thread.threadId);
+    this.historyLoaded = true; this.historySaved = true; this.lastReconciledCount = 0;
+    this.historyCache.put(this.historyKey(thread.threadId), []);
     this.ui.clearLiveGates();
     this.ui.clearLivePlan();
     this.lastLiveSignature = null;
-    this._liveResumeThreadId = null;
     this.agentViews.closeAll();
     this.teamViews.closeAll();
     this.lastLiveTeamIds = new Set();
@@ -784,29 +1090,13 @@ export class CrucibleController {
   async switchChatThread(threadId: string): Promise<void> {
     this.activeThreadId = threadId;
     const epoch = this.contextView(true);
-    const url = this.settings.getBackendBaseUrl();
-    const client = this.createClient(url);
-    const thread = await client.getChatThread(threadId);
-    if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl()) || url !== this.settings.getBackendBaseUrl()) return;
-    this.ui.clearChatThread(threadId);
+    this.attachHistory(threadId);
     this.renderContext(true);
-    // Drop the previous thread's live cards; the new thread's /live poll repopulates.
-    this.ui.clearLiveGates();
-    this.ui.clearLivePlan();
-    this.lastLiveSignature = null;
-    this._liveResumeThreadId = null;
-    this.agentViews.closeAll();
-    this.teamViews.closeAll();
-    this.lastLiveTeamIds = new Set();
-    this.lastTurnActive = false;
-    this.forgetUsage();
-    for (const message of thread.messages) {
-      this.ui.appendChatMessage(message);
-    }
-    this.lastReconciledCount = thread.messages.length;
-    this.reconcilePending = false;
-    void this.refreshAgentRoster(threadId);
-    void this.refreshTeams(threadId);
+    this.agentViews.closeAll(); this.teamViews.closeAll();
+    this.lastLiveTeamIds = new Set(); this.lastTurnActive = false; this.forgetUsage();
+    await this.reconcileTranscript(threadId, 0, true);
+    if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl())) return;
+    void this.refreshAgentRoster(threadId); void this.refreshTeams(threadId);
     this.startLiveStatePolling();
   }
 
@@ -839,11 +1129,19 @@ export class CrucibleController {
     threadId: string, gateId: string, decision: "approve" | "feedback" | "reject",
     feedback?: string,
   ): Promise<void> {
+
+await this.runProjectWork(threadId, "team_plan", gateId, async (verifyWork, isCurrentWork) => {
+
+
+    let dispatched = false;
     try {
       const expectedProcessId = await this.approvalReady();
+      await verifyWork(); if (!isCurrentWork()) return;
+      dispatched = true;
       if (expectedProcessId) await this.clientForChat().decideTeamPlan(threadId, gateId, decision, feedback, expectedProcessId);
       else await this.clientForChat().decideTeamPlan(threadId, gateId, decision, feedback);
     } catch (err) {
+      if (dispatched && this.holdUnknownContinuation(err, "team_plan", gateId)) return;
       this.ui.retryDecision?.(threadId, "team_plan", gateId);
       if (await this.recoverApproval(err)) return;
       if (this.isBenignGateMiss(err)) return;   // the card was already answered or stale
@@ -852,7 +1150,10 @@ export class CrucibleController {
     }
     this.lastLiveSignature = null;
     void this.pollThreadLiveState();
-  }
+  
+});
+
+}
 
   /** A fresh webview or another thread has no usage yet: the next poll fetches it and
    * re-sends it even when the numbers did not change. */
@@ -922,26 +1223,46 @@ export class CrucibleController {
   /** Reconcile by replacement (spec §6): messages written while nothing streamed this
    * thread — a notice marker, a breadcrumb — reach the webview without a reload. Swaps
    * the messages only; agents, views, live cards and subscriptions are untouched. */
-  private async reconcileTranscript(threadId: string, expected: number): Promise<void> {
+  private readSavedHistory(threadId: string, client = this.clientForChat(), key = this.historyKey(threadId)): Promise<ChatMessage[]> {
+    return this.historyReader.read(key, async signal => {
+      const thread = await client.getChatThread(threadId, signal);
+      if (thread.threadId !== threadId) throw new Error("History identity mismatch");
+      return thread.messages;
+    });
+  }
+
+  private async reconcileTranscript(threadId: string, expected: number, force = false): Promise<void> {
     const epoch = this.contextView();
-    if (expected === this.lastReconciledCount) {
-      this.reconcilePending = false;
-      return;
+    if (this.activeThreadId !== threadId || this.disposed || this.turnAbort || this.pendingAdmissions.size) {
+      this.reconcilePending = true; return;
     }
-    let messages: ChatMessage[];
+    if (Date.now() < this.historyNextAt && (this.historyFailures > 0 || !force && expected === this.lastReconciledCount)) return;
+    const key = this.historyKey(threadId), mutation = this.historyMutation;
+    const process = this.historyProcess, readOwner = ++this.historyReadOwner;
+    const current = () => !this.disposed && this.contextState.current(epoch, this.settings.getBackendBaseUrl())
+      && this.activeThreadId === threadId && key === this.historyKey(threadId)
+      && mutation === this.historyMutation && !this.turnAbort && !this.pendingAdmissions.size
+      && process === this.historyProcess && readOwner === this.historyReadOwner;
+    this.historyNextAt = Date.now() + 2000;
     try {
-      messages = (await this.clientForChat().getChatThread(threadId)).messages;
+      const messages = await this.readSavedHistory(threadId, this.clientForChat(), key);
+      if (!current()) return;
+      const echoes = this.historyEchoes.get(key);
+      if (echoes) {
+        for (const message of messages) if (message.id) echoes.delete(message.id);
+        if (echoes.size) { this.reconcilePending = true; return; }
+        this.historyEchoes.delete(key);
+      }
+      this.historyLoaded = true; this.historySaved = true; this.historyFailed = false; this.historyFailures = 0;
+      this.historyNotice = this.historyCache.put(key, messages) ? undefined : "This conversation is too large to keep an extra saved copy.";
+      this.lastReconciledCount = messages.length; this.reconcilePending = false;
+      this.ui.replaceChatMessages(messages); this.publishHistory();
     } catch {
-      return; // the next poll retries
+      if (!current()) return;
+      this.historyFailed = true;
+      this.historyNextAt = Date.now() + Math.min(15000, 2000 * 2 ** Math.min(this.historyFailures++, 3));
+      this.clearActionableHistory(); this.publishHistory();
     }
-    if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl())) return;
-    if (this.activeThreadId !== threadId || this.turnAbort !== null) {
-      this.reconcilePending = true;
-      return;
-    }
-    this.lastReconciledCount = messages.length;
-    this.reconcilePending = false;
-    this.ui.replaceChatMessages(messages);
   }
 
   onAttention(listener: (threadId: string, pendingGates: number) => void): void {
@@ -1001,24 +1322,34 @@ export class CrucibleController {
   }
 
   async previewRewind(messageId: string): Promise<void> {
+    if (!this.historyActionReady()) { this.ui.showWarning("Reconnect saved history before rewinding."); return; }
     if (!this.activeThreadId) return;
     const client = this.createClient(this.settings.getBackendBaseUrl());
+    const epoch = this.contextView();
+    const mutation = this.historyMutation, process = this.historyProcess;
+    const threadId = this.activeThreadId;
     try {
-      this.ui.showRewindPreview(await client.previewRewind(this.activeThreadId, messageId));
+      const preview = await client.previewRewind(threadId, messageId);
+      if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl()) || !this.historyActionReady() || mutation !== this.historyMutation || process !== this.historyProcess) return;
+      this.ui.showRewindPreview(preview);
     } catch (error) {
       this.ui.showError(`Could not preview rewind: ${formatError(error)}`);
     }
   }
 
   async rewindTo(messageId: string): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
+    if (!this.historyActionReady()) { this.ui.showWarning("Reconnect saved history before rewinding."); return; }
     const threadId = this.activeThreadId;
     if (!threadId) return;
     const client = this.createClient(this.settings.getBackendBaseUrl());
     const epoch = this.contextView();
+    const mutation = this.historyMutation, process = this.historyProcess;
     const imageAttachments: { name: string; mediaType: string; dataUrl: string; bytes: number }[] = [];
     let result;
     try {
-      const original = (await client.getChatThread(threadId)).messages.find(m => m.id === messageId);
+      const original = (await this.readSavedHistory(threadId, client)).find(m => m.id === messageId);
       if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl())) return;
       const previews = original?.metadata?.["image_previews"];
       if (Array.isArray(previews)) {
@@ -1030,6 +1361,12 @@ export class CrucibleController {
         }
         if (previews.some(p => !p?.dataUrl)) this.ui.showError("Some rewound image previews are unavailable; reattach those images before sending.");
       }
+      if (!this.historyActionReady() || mutation !== this.historyMutation || process !== this.historyProcess
+          || !this.contextState.current(epoch, this.settings.getBackendBaseUrl())) {
+        this.ui.showWarning("Reconnect saved history before rewinding."); return;
+      }
+      await verifyWork(); if (!isCurrentWork()) return;
+      this.historyMutation++; this.historyReader.cancel();
       result = await client.rewindThread(threadId, messageId);
     } catch (error) {
       // A refusal (409 turn in flight / live task) has to be visible. Falling through
@@ -1040,8 +1377,10 @@ export class CrucibleController {
     // The server is authoritative about what survived, so reload rather than mutating
     // the transcript locally. Mirrors switchChatThread's clear-then-append.
     if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl())) return;
-    await this.switchChatThread(threadId);
-    if (this.activeThreadId !== threadId) return;
+    const reopening = this.switchChatThread(threadId);
+    const reopenEpoch = this.contextState.epoch;
+    await reopening;
+    if (this.activeThreadId !== threadId || !this.contextState.current(reopenEpoch, this.settings.getBackendBaseUrl())) return;
     this.ui.prefillComposer(result.prefillText, { threadId, imageAttachments });
     if (result.failed.length > 0) {
       this.ui.showError(
@@ -1049,7 +1388,9 @@ export class CrucibleController {
         + `could not be restored: ${result.failed.map((f) => f.path).join(", ")}`,
       );
     }
-  }
+  
+});
+}
 
   async sendChatMessage(
     text: string, stepReview?: boolean, forcedSkills?: string[], mentionedPaths?: string[],
@@ -1058,16 +1399,50 @@ export class CrucibleController {
     draftId?: string,
     originalDraftText?: string,
   ): Promise<void> {
+const originThread = this.activeThreadId, originWorkspace = this.ui.getWorkspacePath(), originUrl = this.settings.getBackendBaseUrl();
+let entered = false;
+await this.runProjectWork(this.activeThreadId ?? "", "message", undefined, async (verifyWork, isCurrentWork) => {
+entered = true;
+
+    if (this.disposed) return;
     const workspacePath = this.ui.getWorkspacePath() ?? "";
     const client = this.createClient(this.settings.getBackendBaseUrl());
     let sendEpoch = this.contextView();
-    const currentSend = () => this.contextState.current(sendEpoch, this.settings.getBackendBaseUrl());
+    const sendMutation = this.historyMutation, sendProcess = this.historyProcess;
+    const currentSend = () => !this.disposed && this.contextState.current(sendEpoch, this.settings.getBackendBaseUrl()) && this.ui.getWorkspacePath() === workspacePath;
     // InputArea already cleared the draft: every refusal gives the text back (spec §5.3).
-    const restoreDraft = () => this.ui.restoreDraft(originalDraftText ?? text, draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined);
+    const restoreDraft = () => {
+      const recovery = draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined;
+      if (currentSend()) this.ui.restoreDraft(originalDraftText ?? text, recovery);
+      else this.ui.staleDraft?.(originalDraftText ?? text, recovery);
+    };
+    const staleSend = () => {
+      if (currentSend()) return false;
+      this.ui.staleDraft?.(originalDraftText ?? text, draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined);
+      return true;
+    };
+    if (this.historyEpoch === this.contextState.epoch && (!this.historyLoaded || this.historyFailed
+        || !this.historyLiveAt || Date.now() - this.historyLiveAt >= 5000)) {
+      restoreDraft(); this.ui.showWarning("Wait for saved history and live status to reconnect before sending."); return;
+    }
+    if (this.activeThreadId && [...this.historyEchoes.values()].reduce((count, ids) => count + ids.size, 0) >= 128) {
+      restoreDraft(); this.ui.showWarning("Wait for queued messages to appear in saved history before sending more."); return;
+    }
+    // One unresolved POST per controller/project, across visible attachments.
+    // Keep both hosts' full original payload in memory if receipt becomes unknown.
+    const submission = [text, stepReview, forcedSkills, mentionedPaths, planMode, imageAttachments, draftId, originalDraftText] as const;
+    if (this.pendingAdmissions.size || Buffer.byteLength(JSON.stringify(submission), "utf8") > 64 * 1024 * 1024) {
+      restoreDraft();
+      this.ui.showWarning(this.pendingAdmissions.size
+        ? "A request's receipt is still pending. Refresh to check; do not send it again."
+        : "This draft exceeds the 64 MiB in-memory submission limit.");
+      return;
+    }
+    const pinnedSubmission = structuredClone(submission);
     let expectedProcessId: string | undefined;
     try { if (this.approval) expectedProcessId = await this.approvalReady(); }
     catch (error) {
-      if (!currentSend()) return;
+      if (staleSend()) return;
       if (this.activeThreadId) this.ui.retryDecision?.(this.activeThreadId, "mode");
       restoreDraft();
       this.ui.setChatInputEnabled(true);
@@ -1075,29 +1450,39 @@ export class CrucibleController {
       return;
     }
     if (this.approval && !(await this.approval.confirmFirstSend())) {
-      if (!currentSend()) return;
+      if (staleSend()) return;
       if (this.activeThreadId) this.ui.retryDecision?.(this.activeThreadId, "mode");
       restoreDraft();
       this.ui.setChatInputEnabled(true);
       return;
     }
 
-    if (!currentSend()) return;
+    if (staleSend()) return;
+    if (!this.historyActionReady() || sendMutation !== this.historyMutation || sendProcess !== this.historyProcess) { restoreDraft(); this.ui.showWarning("Reconnect saved history before sending."); return; }
+    if (this.pendingAdmissions.size) {
+      restoreDraft();
+      this.ui.showWarning("Another request is awaiting receipt confirmation. Refresh before sending more work.");
+      return;
+    }
     if (!this.activeThreadId) {
       try {
         const thread = await client.createChatThread(workspacePath);
-        if (!currentSend()) return;
+        if (draftId) this.ui.draftCreated?.(draftId, thread.threadId);
+        if (staleSend()) return;
         this.activeThreadId = thread.threadId;
         sendEpoch = this.contextView();
         this.ui.openChatPanel();
       } catch (error) {
-        if (!currentSend()) return;
+        if (staleSend()) return;
         this.ui.showError(`Failed to create chat thread: ${formatError(error)}`);
         restoreDraft();
         return;
       }
     }
 
+    if (!this.historyActionReady() || sendMutation !== this.historyMutation || sendProcess !== this.historyProcess) { restoreDraft(); this.ui.showWarning("Reconnect saved history before sending."); return; }
+    try { await verifyWork(); if (!isCurrentWork()) return; }
+    catch (error) { restoreDraft(); this.ui.showWarning(formatError(error)); return; }
     const threadId = this.activeThreadId;
     const mentionedFiles =
       mentionedPaths && mentionedPaths.length && workspacePath
@@ -1109,6 +1494,9 @@ export class CrucibleController {
     // (the same optimistic-echo gap that once hid @-mention links). We choose the id
     // here and hand it to the backend, which honours it.
     const messageId = randomUUID().replace(/-/g, "");
+    const echoKey = this.historyKey(threadId);
+    const echoes = this.historyEchoes.get(echoKey) ?? new Set<string>();
+    echoes.add(messageId); this.historyEchoes.set(echoKey, echoes);
     this.ui.appendChatMessage({
       role: "user",
       content: text,
@@ -1122,9 +1510,17 @@ export class CrucibleController {
     });
 
     this.ui.setChatInputEnabled(false);
+    const owner = this.beginTurnOperation(threadId, true);
+    let acknowledged = false;
+    const accepted = () => {
+      if (this.disposed) { owner.abort.abort(); return; }
+      this.admitTurn(owner, false);
+      if (!acknowledged) { acknowledged = true; if (draftId) this.ui.draftAccepted?.(draftId, threadId); }
+    };
     let result: SendChatResult;
     try {
-      result = await client.sendChatMessage(threadId, text, undefined, {
+      result = await client.sendChatMessage(threadId, text, owner.abort.signal, {
+        onAdmitted: accepted,
         ...(expectedProcessId ? { expectedProcessId } : {}),
         ...(stepReview !== undefined ? { stepReview } : {}),
         ...(forcedSkills?.length ? { forcedSkills } : {}),
@@ -1134,66 +1530,76 @@ export class CrucibleController {
         messageId,
       });
     } catch (error) {
-      if (!currentSend()) return;
-      // InputArea already cleared the draft: give the text back (spec §5.3).
+      if (this.disposed) { this.finishTurn(owner); return; }
+      if (!owner.admitted && error instanceof ChatAdmissionUnknownError) {
+        owner.unknown = { client, messageId, accepted, submission: pinnedSubmission, checking: false };
+        this.publishAdmission();
+        if (currentSend()) {
+          this.ui.showWarning("Message receipt is unknown. The original draft is retained; use Check receipt without resending.");
+          this.ui.setChatInputEnabled(false);
+        }
+        return;
+      }
+      this.finishTurn(owner);
+      if (owner.admitted) {
+        if (currentSend()) {
+          this.ui.showWarning("Message accepted; its response was interrupted. Refresh to recover the conversation.");
+          this.ui.setChatInputEnabled(true);
+          this.lastLiveSignature = null;
+          void this.pollThreadLiveState();
+        }
+        return;
+      }
+      if (staleSend()) return;
+      // A definite rejection returns the original draft, not an uncertain send.
+      this.historyEchoes.get(echoKey)?.delete(messageId);
       this.ui.removeChatMessage(messageId);
       if (this.activeThreadId) this.ui.retryDecision?.(this.activeThreadId, "mode");
       restoreDraft();
       this.ui.setChatInputEnabled(true);
-      if (await this.recoverApproval(error)) return;
+      if (await this.recoverApproval(error) || !currentSend()) return;
       if (!this.isBenignConflict(error)) {
         this.ui.showError(`Failed to send: ${formatError(error)}`);
       }
       return;
     }
-    if (!currentSend()) return;
+    accepted(); // Also supports older clients without the header callback.
+    this.admitTurn(owner);
+    if (!currentSend()) { this.finishTurn(owner); return; }
     if (result.kind === "queued") {
       // A notice turn took the message; its relay is already live (spec §5.3). The
       // bubble says it is queued until that turn takes it.
       this.ui.markQueued(messageId);
+      this.finishTurn(owner);
       this.ui.setChatInputEnabled(true);
       return;
     }
-    this.turnAbort = new AbortController();
-    await this.streamTurn(result.events);
-  }
-
-  // Thread currently being live-resumed (channel re-subscribe) — idempotency guard.
-  private _liveResumeThreadId: string | null = null;
-
-  /**
-   * Resume the live overlay for an in-flight controller turn after a webview reload.
-   * Subscribe-only relay (no turn launch) over GET /v1/channels/{id}/stream; reuses
-   * streamTurn's event rendering. Best-effort: events older than the 50-event replay
-   * buffer (and everything after a backend restart) come from the reconstructed
-   * transcript, not here.
-   */
-  private async resumeLiveOverlay(threadId: string): Promise<void> {
-    const epoch = this.contextView();
-    try {
-      this.turnAbort = new AbortController();
-      await this.streamTurn(this.clientForChat().streamChannel(`chat:${threadId}`));
-    } catch (error) {
-      // A closed/empty channel is expected (turn already done) — clear the guard so a
-      // later turn can resume, and let the /live poll keep driving durable state.
-      if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl())) return;
-      this._liveResumeThreadId = null;
-      if (!(error instanceof Error && error.name === "AbortError")) {
-        // non-fatal
-      }
+    try { await this.streamTurn(result.events, owner); }
+    catch (error) {
+      // Revalidate after the outer await: navigation may occur in the microtask
+      // between iterator failure and this caller receiving its rejection.
+      if (!currentSend()) return;
+      this.ui.showError(`Stream error: ${formatError(error)}`);
     }
-  }
+  
+});
+if (!entered) {
+  const recovery = draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined;
+  if (originThread === this.activeThreadId && originWorkspace === this.ui.getWorkspacePath() && originUrl === this.settings.getBackendBaseUrl()) this.ui.restoreDraft(originalDraftText ?? text, recovery);
+  else this.ui.staleDraft?.(originalDraftText ?? text, recovery);
+}
+}
 
   /**
    * Consume a chat-turn SSE stream and render its events. Shared by sendChatMessage
    * and the controller mode-decision dispatch — both stream the same chat events.
    * The caller disables input + sets `turnAbort`; this owns the loop and teardown.
    */
-  private async streamTurn(stream: AsyncIterable<StreamEvent>): Promise<void> {
-    const epoch = this.contextView();
-    const url = this.settings.getBackendBaseUrl();
+  private async streamTurn(stream: AsyncIterable<StreamEvent>, owner: TurnOperation): Promise<void> {
+    const epoch = owner.epoch;
+    const url = owner.url;
     const streamEpoch = ++this.streamEpoch;
-    const current = () => this.contextState.current(epoch, this.settings.getBackendBaseUrl()) && this.streamEpoch === streamEpoch;
+    const current = () => !this.disposed && !owner.retired && this.turnOperation === owner && this.contextState.current(epoch, this.settings.getBackendBaseUrl()) && this.streamEpoch === streamEpoch;
     let currentTaskId: string | undefined;
     let completed = false;
     try {
@@ -1410,7 +1816,13 @@ export class CrucibleController {
         }
       }
     } catch (error) {
-      // Swallow AbortError — turn was stopped by the user intentionally.
+      if (!this.disposed && error instanceof ChatAdmissionUnknownError && !owner.admitted) {
+        // Retain even a retired pending decision before finally can release it.
+        owner.unknown = { client: this.createClient(owner.url), checking: false };
+        throw error;
+      }
+      // Retired stream failures must not reach generic router recovery for B/new A.
+      if (!current()) return;
       if (error instanceof Error && error.name === "AbortError") {
         // do nothing
       } else {
@@ -1419,11 +1831,10 @@ export class CrucibleController {
         throw error;
       }
     } finally {
-      if (current()) {
+      if (current() && !owner.unknown) {
       if (!completed) { this.contextState.fail(epoch, url); this.renderContext(); }
       this.openToolEvent = {}; // clear cross-turn stale ids
       this.ui.updateWorkbar(null);
-      this.turnAbort = null;
       this.ui.hideChatThinking();
       this.ui.updateRetryStatus(null);
       // tokenProgress is deliberately NOT cleared here — see the turn-start clear above.
@@ -1431,6 +1842,7 @@ export class CrucibleController {
       this.ui.finalizeAgentMessage();
       this.ui.setChatInputEnabled(true);
       }
+      this.finishTurn(owner);
     }
   }
 
@@ -1439,6 +1851,8 @@ export class CrucibleController {
     action: "implement" | "feedback",
     feedback?: string
   ): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
     if (action === "implement") {
       const client = this.createClient(this.settings.getBackendBaseUrl());
       try {
@@ -1495,7 +1909,9 @@ export class CrucibleController {
         this.ui.setChatInputEnabled(true);
       }
     }
-  }
+  
+});
+}
 
   async streamTaskIntoChatThread(taskId: string, openingEntry = "Generating execution plan…"): Promise<void> {
     const client = this.createClient(this.settings.getBackendBaseUrl());
@@ -1656,6 +2072,8 @@ export class CrucibleController {
   }
 
   async acceptStep(taskId: string): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
     const client = this.clientForChat();
     try {
       await client.sendStepDecision(this.liveTaskIdOr(taskId), "accept");
@@ -1663,9 +2081,13 @@ export class CrucibleController {
       if (this.isBenignConflict(error)) return;
       this.ui.showError(`Failed to accept step: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }
+  
+});
+}
 
   async discardStep(taskId: string): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
     const client = this.clientForChat();
     try {
       await client.sendStepDecision(this.liveTaskIdOr(taskId), "discard");
@@ -1673,7 +2095,84 @@ export class CrucibleController {
       if (this.isBenignConflict(error)) return;
       this.ui.showError(`Failed to discard step: ${error instanceof Error ? error.message : String(error)}`);
     }
+  
+});
+}
+
+  private gateReceiptMatches(identity: GateDecisionIdentity, receipt: GateDecisionReceipt): boolean {
+    return (Object.keys(identity) as (keyof GateDecisionIdentity)[]).every(key => identity[key] === receipt[key]);
   }
+
+  /** New cards use an exact JSON acceptance, never the legacy streamed endpoints. */
+  async handleExactGateDecision(action: GateAction, onAccepted: (isCurrent: () => boolean) => Promise<void>): Promise<void> {
+
+await this.runProjectWork(action.threadId, action.kind, action.gateId, async (verifyWork, isCurrentWork) => {
+
+
+    const kind = action.kind === "feedback" ? "mode" : action.kind;
+    const retry = () => this.ui.retryDecision?.(action.threadId, kind, action.gateId);
+    if (this.disposed || action.threadId !== this.activeThreadId || !this.historyActionReady()
+        || this.pendingAdmissions.size || this.turnOperation || !this.historyProcess) { retry(); return; }
+    const client = this.clientForChat(), process = this.historyProcess, workspace = this.ui.getWorkspacePath();
+    if (!client.claimChatGate || !client.getGateDecisionReceipt || !client.getChatActivity) { retry(); this.ui.showWarning("Reconnect to a backend with exact gate decisions before continuing."); return; }
+    // Reservation precedes approval, confirmation, network and digest awaits.
+    const owner = this.beginTurnOperation(action.threadId, true), mutation = this.historyMutation;
+    const current = () => !this.disposed && !owner.retired && this.turnOperation === owner
+      && action.threadId === this.activeThreadId && this.settings.getBackendBaseUrl() === owner.url
+      && this.ui.getWorkspacePath() === workspace && this.contextState.current(owner.epoch, owner.url);
+    const fresh = () => current() && this.historyActionReady() && process === this.historyProcess && mutation === this.historyMutation;
+    let identity: GateDecisionIdentity | undefined, accepted = false;
+    const acknowledge = async () => {
+      if (accepted) return; accepted = true;
+      // An acceptance cannot become retryable if local persistence fails afterwards.
+      try { await onAccepted(current); }
+      catch (error) { this.ui.showWarning(`Decision accepted; local preference could not be saved: ${formatError(error)}`); }
+    };
+    const readAbort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let postTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const expected = await this.approvalReady();
+      if (!fresh() || expected !== process || !this.approval?.current().confirmed) throw new Error("Approval or conversation changed before the decision.");
+      if (!(await this.approval.confirmFirstSend()) || !fresh()) throw new Error("Decision cancelled or history no longer current.");
+      const started = Date.now();
+      timer = setTimeout(() => readAbort.abort(), 4000);
+      const [activity, live] = await Promise.all([
+        client.getChatActivity(this.ui.getWorkspacePath() ?? "", readAbort.signal),
+        client.getThreadLiveState(action.threadId, readAbort.signal),
+      ]);
+      const gate = live.pendingGates.find(g => g.gateId === action.gateId && g.kind === kind && !g.agent && !g.team);
+      if (!fresh() || readAbort.signal.aborted || Date.now() - started >= 4000 || !activity.supported
+          || activity.processId !== process || live.processId !== process || live.gateClaimVersion !== 1
+          || !live.approval?.supported || !live.approval.owned || live.approval.processId !== process || !gate
+          || !activity.threads.some(t => t.threadId === action.threadId && !t.turnActive)
+          || activity.threads.some(t => t.threadId !== action.threadId && (t.turnActive || t.agentsRunning || t.sessionsRunning))) {
+        throw new Error("Refresh the current gate and project activity before deciding.");
+      }
+      const claim: GateDecisionClaim = { version: 1, requestId: randomUUID(), processId: process,
+        workspacePath: activity.workspacePath, gateId: action.gateId, kind: action.kind, value: action.value };
+      identity = await gateDecisionIdentity(action.threadId, claim);
+      if (!fresh() || readAbort.signal.aborted) throw new Error("The conversation changed before dispatch.");
+      postTimer = setTimeout(() => owner.abort.abort(), 15_000);
+      const receipt = await client.claimChatGate(action.threadId, claim, { signal: owner.abort.signal });
+      if (!this.gateReceiptMatches(identity, receipt)) throw new ChatAdmissionUnknownError(new Error("Receipt identity mismatch"));
+      await acknowledge(); this.admitTurn(owner); this.finishTurn(owner);
+      if (receipt.status === "launch_failed") this.ui.showWarning("The decision was accepted, but its work could not start. It has not been resent.");
+    } catch (error) {
+      if (identity && error instanceof ChatAdmissionUnknownError && !this.disposed) {
+        owner.unknown = { client, gateIdentity: identity, submission: [structuredClone(action)], accepted: acknowledge, checking: false };
+        this.pendingAdmissions.add(owner); this.publishAdmission();
+        this.ui.showWarning("Decision receipt is unknown. Use Check receipt; do not submit it again."); return;
+      }
+      this.finishTurn(owner);
+      if (current() || this.activeThreadId === action.threadId && this.contextState.current(owner.epoch, owner.url)) {
+        retry(); this.ui.showWarning(`Decision not sent: ${formatError(error)}`);
+      }
+    } finally { clearTimeout(timer); clearTimeout(postTimer); readAbort.abort(); }
+  
+});
+
+}
 
   /**
    * Resolve the controller mode gate (Phase F2). A STREAMED dispatch: edit/explain
@@ -1681,24 +2180,59 @@ export class CrucibleController {
    * so consume it through streamTurn exactly like a normal message turn.
    */
   async handleModeDecisionFromChat(threadId: string, mode: string): Promise<void> {
-    if (threadId !== this.activeThreadId) return;
+
+await this.runProjectWork(threadId, "mode", undefined, async (verifyWork, isCurrentWork) => {
+
+
+    if (this.disposed || threadId !== this.activeThreadId || this.pendingAdmissions.size) return;
+    let owner: TurnOperation | undefined;
     const epoch = this.contextView();
-    const current = () => this.contextState.current(epoch, this.settings.getBackendBaseUrl()) && threadId === this.activeThreadId;
+    const mutation = this.historyMutation, process = this.historyProcess;
+    const current = () => !this.disposed && this.contextState.current(epoch, this.settings.getBackendBaseUrl()) && threadId === this.activeThreadId;
     try {
       const expectedProcessId = await this.approvalReady();
-      if (!current()) return;
+      if (!current() || this.pendingAdmissions.size || !this.historyActionReady() || mutation !== this.historyMutation || process !== this.historyProcess) return;
+      if (Buffer.byteLength(mode, "utf8") > 64 * 1024 * 1024) {
+        this.ui.showWarning("This decision exceeds the 64 MiB in-memory submission limit.");
+        return;
+      }
+      await verifyWork(); if (!isCurrentWork()) return;
       this.ui.setChatInputEnabled(false);
-      this.turnAbort = new AbortController();
+      owner = this.beginTurnOperation(threadId, true);
+      const admittedOwner = owner;
+      const options = { signal: owner.abort.signal, onAdmitted: () => this.admitTurn(admittedOwner) };
       const client = this.clientForChat();
-      await this.streamTurn(expectedProcessId ? client.postModeDecision(threadId, mode, expectedProcessId) : client.postModeDecision(threadId, mode));
+      await this.streamTurn(client.postModeDecision(threadId, mode, expectedProcessId, options), owner);
     } catch (error) {
+      if (this.disposed) { if (owner) this.finishTurn(owner); return; }
+      if (owner && !owner.admitted && error instanceof ChatAdmissionUnknownError) {
+        owner.unknown = { client: this.createClient(owner.url), submission: ["mode", mode], checking: false };
+        this.pendingAdmissions.add(owner);
+        this.publishAdmission();
+        if (current()) {
+          this.ui.showWarning("Decision receipt is unknown. Do not submit it again; refresh authoritative live state.");
+          this.ui.setChatInputEnabled(false);
+        }
+        return;
+      }
+      if (owner) this.finishTurn(owner);
       if (!current()) return;
+      if (owner?.admitted) {
+        this.ui.showWarning("Decision accepted; refresh to recover its interrupted response.");
+        this.ui.setChatInputEnabled(true);
+        this.lastLiveSignature = null;
+        void this.pollThreadLiveState();
+        return;
+      }
       this.ui.retryDecision?.(threadId, "mode");
       this.ui.setChatInputEnabled(true);
-      if (await this.recoverApproval(error)) return;
+      if (await this.recoverApproval(error) || !current()) return;
       this.ui.showError(`Failed to send the decision: ${formatError(error)}`);
     }
-  }
+  
+});
+
+}
 
   /**
    * Resolve the controller clarify gate. A STREAMED dispatch: the answer re-enters the
@@ -1706,24 +2240,59 @@ export class CrucibleController {
    * consume via streamTurn like a normal turn (mirror of handleModeDecisionFromChat).
    */
   async handleClarifyDecisionFromChat(threadId: string, answer: string): Promise<void> {
-    if (threadId !== this.activeThreadId) return;
+
+await this.runProjectWork(threadId, "clarify", undefined, async (verifyWork, isCurrentWork) => {
+
+
+    if (this.disposed || threadId !== this.activeThreadId || this.pendingAdmissions.size) return;
+    let owner: TurnOperation | undefined;
     const epoch = this.contextView();
-    const current = () => this.contextState.current(epoch, this.settings.getBackendBaseUrl()) && threadId === this.activeThreadId;
+    const mutation = this.historyMutation, process = this.historyProcess;
+    const current = () => !this.disposed && this.contextState.current(epoch, this.settings.getBackendBaseUrl()) && threadId === this.activeThreadId;
     try {
       const expectedProcessId = await this.approvalReady();
-      if (!current()) return;
+      if (!current() || this.pendingAdmissions.size || !this.historyActionReady() || mutation !== this.historyMutation || process !== this.historyProcess) return;
+      if (Buffer.byteLength(answer, "utf8") > 64 * 1024 * 1024) {
+        this.ui.showWarning("This decision exceeds the 64 MiB in-memory submission limit.");
+        return;
+      }
+      await verifyWork(); if (!isCurrentWork()) return;
       this.ui.setChatInputEnabled(false);
-      this.turnAbort = new AbortController();
+      owner = this.beginTurnOperation(threadId, true);
+      const admittedOwner = owner;
+      const options = { signal: owner.abort.signal, onAdmitted: () => this.admitTurn(admittedOwner) };
       const client = this.clientForChat();
-      await this.streamTurn(expectedProcessId ? client.postClarifyDecision(threadId, answer, expectedProcessId) : client.postClarifyDecision(threadId, answer));
+      await this.streamTurn(client.postClarifyDecision(threadId, answer, expectedProcessId, options), owner);
     } catch (error) {
+      if (this.disposed) { if (owner) this.finishTurn(owner); return; }
+      if (owner && !owner.admitted && error instanceof ChatAdmissionUnknownError) {
+        owner.unknown = { client: this.createClient(owner.url), submission: ["clarify", answer], checking: false };
+        this.pendingAdmissions.add(owner);
+        this.publishAdmission();
+        if (current()) {
+          this.ui.showWarning("Decision receipt is unknown. Do not submit it again; refresh authoritative live state.");
+          this.ui.setChatInputEnabled(false);
+        }
+        return;
+      }
+      if (owner) this.finishTurn(owner);
       if (!current()) return;
+      if (owner?.admitted) {
+        this.ui.showWarning("Decision accepted; refresh to recover its interrupted response.");
+        this.ui.setChatInputEnabled(true);
+        this.lastLiveSignature = null;
+        void this.pollThreadLiveState();
+        return;
+      }
       this.ui.retryDecision?.(threadId, "clarify");
       this.ui.setChatInputEnabled(true);
-      if (await this.recoverApproval(error)) return;
+      if (await this.recoverApproval(error) || !current()) return;
       this.ui.showError(`Failed to send the decision: ${formatError(error)}`);
     }
-  }
+  
+});
+
+}
 
   /**
    * Resolve the controller per-edit review gate (Phase F3). A plain POST — the
@@ -1736,18 +2305,29 @@ export class CrucibleController {
     reason: string,
     gateId: string,
   ): Promise<void> {
+
+await this.runProjectWork(threadId, "edit", gateId, async (verifyWork, isCurrentWork) => {
+
+
     const client = this.clientForChat();
     try {
       await client.postEditDecision(threadId, decision, reason, gateId || undefined);
     } catch (error) {
       if (this.isBenignGateMiss(error)) return;
+      if (this.holdUnknownContinuation(error, "edit", gateId)) return;
       this.ui.showError(
         `Failed to send edit decision: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-  }
+  
+});
+
+}
 
   async applyInlineChange(inlineTaskId: string): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
+    if (!this.historyActionReady()) { this.ui.showWarning("Reconnect saved history before changing files."); return; }
     const client = this.createClient(this.settings.getBackendBaseUrl());
     try {
       await client.applyInlineChange(inlineTaskId);
@@ -1756,9 +2336,14 @@ export class CrucibleController {
     } catch (error) {
       this.ui.showError(`Failed to apply inline change: ${formatError(error)}`);
     }
-  }
+  
+});
+}
 
   async discardInlineChange(inlineTaskId: string): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
+    if (!this.historyActionReady()) { this.ui.showWarning("Reconnect saved history before changing files."); return; }
     const client = this.createClient(this.settings.getBackendBaseUrl());
     try {
       await client.discardInlineChange(inlineTaskId);
@@ -1766,9 +2351,13 @@ export class CrucibleController {
     } catch (error) {
       this.ui.showError(`Failed to discard inline change: ${formatError(error)}`);
     }
-  }
+  
+});
+}
 
   async acceptTaskPatch(taskId: string): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
     try {
       const result = await this.clientForChat().acceptPatch(taskId);
       this.ui.showInfo("Task finished — changes are in your workspace.");
@@ -1786,9 +2375,13 @@ export class CrucibleController {
       if (this.isBenignConflict(error)) return;
       this.ui.showError(`Failed to finish task: ${formatError(error)}`);
     }
-  }
+  
+});
+}
 
   async rejectTaskPatch(taskId: string, reason: string): Promise<void> {
+    await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
     try {
       await this.clientForChat().rejectPatch(taskId, reason.trim() || "closed from chat");
       // Tier B: reject is now a TRUE revert (the backend restores the pre-execution state
@@ -1804,6 +2397,8 @@ export class CrucibleController {
       if (this.isBenignConflict(error)) return;
       this.ui.showError(`Failed to discard changes: ${formatError(error)}`);
     }
+  
+    });
   }
 
   /** Cooperative Stop for the running task (work-bar). revert rolls the workspace back to
@@ -1918,6 +2513,8 @@ export class CrucibleController {
   }
 
   async resumeTaskById(taskId: string, stage: "plan" | "execute"): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
     let childId: string;
     try {
       const response = await this.clientForChat().resumeTask(taskId, { stage });
@@ -1958,38 +2555,66 @@ export class CrucibleController {
     if (stage === "execute") {
       await this.streamTaskIntoChatThread(childId, "Resuming execution…");
     }
+  
+});
+}
+
+  /** Retire only this view attachment. The server owns accepted background work. */
+  canDetachProjectView(): boolean { return !this.workReservation && this.pendingAdmissions.size === 0; }
+  detachProjectView(): void {
+    if (!this.canDetachProjectView()) throw new Error("Finish the pending project action before switching projects.");
+    this.contextView(true);
+    this.stopPolling(); this.stopStream(); this.stopLiveStatePolling();
+    if (this.historyTimer) clearInterval(this.historyTimer); this.historyTimer=null;
+    this.agentViews.closeAll(); this.teamViews.closeAll();
   }
 
   dispose(): void {
-    this.contextView(true);
-    this.stopPolling();
-    this.stopStream();
-    this.stopLiveStatePolling();
-    this.agentViews.closeAll();
-    this.teamViews.closeAll();
+    this.disposed = true;
+    for (const owner of this.pendingAdmissions) {
+      owner.retired = true;
+      delete owner.unknown;
+      owner.abort.abort();
+    }
+    this.pendingAdmissions.clear();
+    this.turnOperation?.abort.abort();
+    // Teardown must work before Setup has supplied a backend URL. Do not acquire
+    // configuration or render a fresh context while retiring this attachment.
+    this.contextState.navigate(null, "");
+    this.streamEpoch++;
+    const errors: unknown[] = [];
+    for (const clean of [
+      () => this.stopPolling(), () => this.stopStream(), () => this.stopLiveStatePolling(),
+      () => this.workAuthority.dispose(), () => this.historyReader.dispose(),
+      () => this.historyCache.clear(), () => this.historyEchoes.clear(),
+      () => { if (this.historyTimer) clearInterval(this.historyTimer); this.historyTimer = null; },
+      () => this.agentViews.closeAll(), () => this.teamViews.closeAll(),
+    ]) { try { clean(); } catch (error) { errors.push(error); } }
+    if (errors.length) throw new AggregateError(errors, "Some conversation resources could not be closed.");
   }
 
   async stopActiveTurn(): Promise<void> {
     // Detached turns are not cancelled by disconnecting the SSE anymore — Stop is an
     // explicit POST /stop (a slimmer cousin of task /abort). Still abort the local SSE
     // reader so the relay loop unwinds promptly; the server-side cancel is the real stop.
+    const epoch = this.contextView();
     this.turnAbort?.abort();
     const threadId = this.activeThreadId;
     if (!threadId) return;
+    const current = () => this.activeThreadId === threadId && this.contextState.current(epoch, this.settings.getBackendBaseUrl());
     try {
       const result = await this.clientForChat().stopChatTurn(threadId);
       // We aborted our SSE reader above, so the backend's live "✗ Stopped" breadcrumb
       // broadcast never reaches the open webview (finding 7) — only its durable copy
       // survives (shows on reopen). Render it optimistically, like accept/discard; a
       // reopen replaces it with the durable copy (no dup). Gated on ok = a real stop.
-      if (result.ok) this.appendBreadcrumbMessage("", "✗ Stopped");
+      if (current() && result.ok) this.appendBreadcrumbMessage("", "✗ Stopped");
     } catch (error) {
-      if (this.isBenignConflict(error)) return;
+      if (!current() || this.isBenignConflict(error)) return;
       // A failed stop is non-fatal — the turn finishes on its own; log only.
       this.ui.showWarning(`Stop failed: ${formatError(error)}`);
     } finally {
-      this.lastLiveSignature = null;
-      void this.pollThreadLiveState();
+      if (current()) { this.lastLiveSignature = null; void this.pollThreadLiveState(); }
     }
   }
 
@@ -2141,6 +2766,8 @@ export class CrucibleController {
     decision: "approve" | "reject",
     remember: boolean
   ): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
     try {
       await this.clientForChat().sendScopeDecision(
         this.liveTaskIdOr(taskId),
@@ -2150,25 +2777,35 @@ export class CrucibleController {
       if (this.isBenignConflict(err)) return;
       this.ui.showError(`Failed to send scope decision: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }
+  
+});
+}
 
   async handleValidationDecisionFromChat(
     taskId: string,
     decision: "accept" | "reject"
   ): Promise<void> {
+await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (verifyWork, isCurrentWork) => {
+
     try {
       await this.clientForChat().sendValidationDecision(this.liveTaskIdOr(taskId), decision);
     } catch (err) {
       if (this.isBenignConflict(err)) return;
       this.ui.showError(`Failed to send validation decision: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }
+  
+});
+}
 
   async handleCommandDecisionFromChat(
     taskId: string,
     decision: CommandDecision,
     gateId: string,
   ): Promise<void> {
+
+await this.runProjectWork(taskId, "command", gateId, async (verifyWork, isCurrentWork) => {
+
+
     try {
       // Task gates carry "task:{taskId}:command" ids and resolve on the task route;
       // every other command gate is a controller gate on the thread (taskId carries the
@@ -2180,25 +2817,37 @@ export class CrucibleController {
       await this.clientForChat().postChatCommandDecision(taskId, decision, gateId || undefined);
     } catch (err) {
       if (this.isBenignGateMiss(err)) return;
+      if (this.holdUnknownContinuation(err, "command", gateId)) return;
       this.ui.showError(`Failed to send command decision: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }
+  
+});
+
+}
 
   async handleMcpDecisionFromChat(
     threadId: string,
     decision: McpToolDecision,
     gateId: string,
   ): Promise<void> {
+
+await this.runProjectWork(threadId, "mcp_tool", gateId, async (verifyWork, isCurrentWork) => {
+
+
     try {
       // mcp_tool gates are controller-only (no task path) — always the chat route.
       await this.clientForChat().postChatMcpDecision(threadId, decision, gateId || undefined);
     } catch (err) {
       if (this.isBenignGateMiss(err)) return;
+      if (this.holdUnknownContinuation(err, "mcp_tool", gateId)) return;
       this.ui.showError(
         `Failed to send MCP decision: ${err instanceof Error ? err.message : String(err)}`
       );
     }
-  }
+  
+});
+
+}
 
   private async handleScopeExtensionRequest(
     taskId: string,
@@ -2393,6 +3042,7 @@ export class CrucibleController {
    * This is what makes gate/plan cards reappear after a webview reload.
    */
   async pollThreadLiveState(): Promise<void> {
+    if (this.disposed) return;
     const epoch = this.contextView();
     const pollEpoch = this.contextPollEpoch;
     const currentPoll = () => pollEpoch === this.contextPollEpoch && this.contextState.current(epoch, this.settings.getBackendBaseUrl());
@@ -2413,6 +3063,7 @@ export class CrucibleController {
       this.contextState.fail(epoch, url);
       this.renderContext();
       this.livePollFailing = true;
+      this.historyLiveAt = 0; this.historyFailed = true; this.clearActionableHistory(); this.publishHistory();
       return;
     }
     if (!currentPoll() || threadId !== this.activeThreadId) return;
@@ -2422,32 +3073,26 @@ export class CrucibleController {
       this.livePollFailing = false;
       for (const listener of this.backendReachableListeners) listener();
     }
+    if (this.historyProcess && live.processId && this.historyProcess !== live.processId) {
+      this.contextView(true); this.attachHistory(threadId); return;
+    }
+    if (!this.historyProcess && live.processId && this.historyEpoch === epoch) {
+      this.historyReader.cancel(); this.historyLoaded = false; this.historyNextAt = 0;
+    }
+    this.historyProcess = live.processId ?? null;
     this.latestLiveState = live;
+    void this.refreshWorkStatus(threadId, epoch);
     this.approval?.observe(live.approval, live.processId);
     this.maybeRefreshUsage(threadId, live);
 
-    // Live-resume: a fresh webview (reload mid-turn) reconstructs the transcript from
-    // the thread fetch, but the live overlay (streaming pills/chunks) died with the old
-    // SSE. When /live reports an in-flight turn or a controller gate, re-subscribe to the
-    // chat channel (subscribe-only — does NOT relaunch the turn) to resume the overlay
-    // from the broadcaster's replay buffer onward. Idempotent via _liveResumeThreadId.
-    //
-    // CRITICAL: only resume when NO local turn stream is active (`turnAbort === null`).
-    // During a normal sendChatMessage/mode-decision turn, turnAbort is set and /live also
-    // reports turn_active=true — without this guard the 1s poll would open a SECOND
-    // streamTurn on the same channel (the broadcaster replays its buffer to every new
-    // subscriber), double-rendering every event and clobbering the live turnAbort. A
-    // fresh webview after a reload has turnAbort === null, which is exactly when resume
-    // is needed (the original stream died with the old SSE; the detached turn lives on).
-    // Main-agent gates only (spec §6): a background agent's gate never opens a relay.
-    const channelActive = live.turnActive
-      || live.pendingGates.some((g) => !g.agent && (g.kind === "mode" || g.kind === "edit"));
-    if (channelActive && this.turnAbort === null && this._liveResumeThreadId !== threadId) {
-      this._liveResumeThreadId = threadId;
-      void this.resumeLiveOverlay(threadId);
-    } else if (!channelActive && this._liveResumeThreadId === threadId) {
-      this._liveResumeThreadId = null; // turn ended — allow a future resume
+    // Saved-history following is independent of live signature/count. Never replay
+    // durable SSE events on reattachment; the replay buffer has no event cursor.
+    if (this.historyEpoch === epoch) {
+      this.historyLiveAt = Date.now();
+      this.publishHistory();
     }
+    void this.reconcileTranscript(threadId, live.messageCount,
+      this.lastTurnActive && !live.turnActive);
 
     const signature = JSON.stringify({
       taskId: live.activeTaskId,
@@ -2488,17 +3133,8 @@ export class CrucibleController {
       turnKind: live.turnKind,
       messageCount: live.messageCount,
     });
-    if (signature === this.lastLiveSignature) {
-      if (this.reconcilePending && this.turnAbort === null) {
-        void this.reconcileTranscript(threadId, live.messageCount);
-      }
-      return; // dedup — nothing actionable changed
-    }
+    if (signature === this.lastLiveSignature) return;
     this.lastLiveSignature = signature;
-    if (live.messageCount !== this.lastReconciledCount) {
-      if (this.turnAbort === null) void this.reconcileTranscript(threadId, live.messageCount);
-      else this.reconcilePending = true;
-    }
 
     if (live.pendingGates.length > 0) {
       this.ui.renderLiveGates(live.pendingGates.map((g) => ({

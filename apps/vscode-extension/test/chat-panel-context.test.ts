@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { describe, expect, test, vi } from "vitest";
+import { createControllerViewUI } from "../src/controller-view-ui.js";
+import { ChatView } from "../src/chat-view.js";
+import { DraftSession } from "../src/drafts/draft-session.js";
+import { routeChatMessage } from "../src/chat-message-router.js";
 import { ThemeHub, themeReadyReply } from "../src/theme-settings.js";
 const text = readFileSync(new URL("../src/chat-panel.ts", import.meta.url), "utf8");
 const tree = ts.createSourceFile("chat-panel.ts", text, ts.ScriptTarget.Latest, true);
@@ -10,14 +14,24 @@ const js = ts.transpile(declaration.getText(tree), { target: ts.ScriptTarget.ES2
 // The class source runs without its module scope, so bind the theme helpers it uses
 // (theming Phase 1: the message handler answers themeReady before anything else).
 const themeHub = new ThemeHub();
-const ChatPanel = new Function("exports", "themeReadyReply", "themeHub", "randomUUID", `${js}; return ChatPanel;`)({}, themeReadyReply, themeHub, randomUUID);
+const panelNotices = { window: { showErrorMessage: vi.fn() } };
+const ChatPanel = new Function("exports", "themeReadyReply", "themeHub", "randomUUID", "routeChatMessage", "ChatView", "DraftSession", "vscode", `${js}; return ChatPanel;`)({}, themeReadyReply, themeHub, randomUUID, routeChatMessage, ChatView, DraftSession, panelNotices);
 function setup() {
   const host = Object.create(ChatPanel.prototype) as any;
   let receive!: (message: unknown) => void;
   const postMessage = vi.fn();
   host.panel = { webview: { postMessage, onDidReceiveMessage: (fn: typeof receive) => { receive = fn; } }, onDidDispose: () => {} };
-  host.onReady = async () => {}; host.lastWorkbarInfo = null; host.lastContextUsage = null; host.contextUsageStale = false; host.modelRefreshEpoch = 0;
+  host.onGetPlanMode = () => false; host.onGetStepReview = () => true; host.onReady = async () => {}; host.lastWorkbarInfo = null; host.lastContextUsage = null; host.contextUsageStale = false; host.modelRefreshEpoch = 0;
   host.fullAccessQuestions = new Map();
+  host.draftGeneration = {};
+  host.drafts = new DraftSession({ post: (message: Record<string, unknown>) => host.panel?.webview.postMessage(message), identity: () => host.panel ? host.draftGeneration : null, admission: (value: unknown) => host.renderChatAdmission(value) });
+  // This fixture bypasses the constructors, so mirror retained defaults explicitly.
+  host.chatAdmission = null; host.receiptCheckHandler = async () => {};
+  host.viewPort = {
+    postMessage: (message: Record<string, unknown>) => { host.drafts.observe(message); host.panel?.webview.postMessage(message); },
+    isOpen: () => host.panel !== null, identity: () => host.panel,
+    createRequestId: randomUUID, listModels: () => host.onListModels(),
+  };
   return { host, postMessage, receive: (m: unknown) => receive(m) };
 }
 describe("ChatPanel first-send Full access question", () => {
@@ -64,10 +78,9 @@ describe("ChatPanel context bridge", () => {
     }
     visit(ast);
     if (!adapter || !ts.isObjectLiteralExpression(adapter)) throw new Error("Production UI adapter missing");
-    const bridge = adapter.properties.find(n => ts.isPropertyAssignment(n) && n.name.getText(ast) === "renderContextUsage");
-    if (!bridge || !ts.isPropertyAssignment(bridge)) throw new Error("Context forwarding missing");
+    expect(adapter.properties.some(n => ts.isSpreadAssignment(n) && n.expression.getText(ast) === "createControllerViewUI(chatPanel)")).toBe(true);
     const { host, postMessage } = setup();
-    const forward = new Function("chatPanel", ts.transpile(`return (${bridge.initializer.getText(ast)});`, { target: ts.ScriptTarget.ES2022 }))(host);
+    const forward = createControllerViewUI(host).renderContextUsage;
     const observation = { input_tokens: 52063, context_window: 272000 };
     forward(observation, false);
     forward(null, true);
@@ -100,4 +113,129 @@ describe("ChatPanel context bridge", () => {
     receive({ type: "themeReady" });
     expect(postMessage).toHaveBeenCalledExactlyOnceWith({ type: "themeChanged", appearance: "dark", accent: "violet" });
   });
+});
+
+
+describe("ChatPanel async reply lifetime", () => {
+  test.each(["replace", "dispose"])("does not reply to an old view after %s", async action => {
+    const { host, postMessage, receive } = setup();
+    let finish!: (value: string[]) => void;
+    host.onListPrompts = () => new Promise<string[]>(resolve => { finish = resolve; });
+    host.registerHandlers();
+    receive({ type: "listPrompts" });
+    const replacementPost = vi.fn();
+    host.panel = action === "replace" ? { webview: { postMessage: replacementPost } } : null;
+    finish(["review"]);
+    await Promise.resolve(); await Promise.resolve();
+    expect(postMessage).not.toHaveBeenCalled();
+    if (action === "replace") expect(replacementPost).toHaveBeenCalledExactlyOnceWith({ type: "promptList", names: ["review"] });
+    else expect(replacementPost).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("ChatPanel shared view construction and handshake", () => {
+  test("constructs without eagerly reading a view before the adapter is initialized", async () => {
+    const host = new ChatPanel({});
+    await expect(host.confirmFullAccessFirstSend("repo")).resolves.toBe("cancel");
+  });
+  test("keeps the complete ready replay before preferences and hydration", async () => {
+    const { host, postMessage, receive } = setup();
+    host.registerHandlers();
+    host.renderApproval({ tier: "unknown", snapshot: null, mode: null, confirmed: false,
+      pending: false, warningDismissed: false, trusted: true, error: null, notice: null });
+    const answer = host.confirmFullAccessFirstSend("repo");
+    const requestId = postMessage.mock.calls.find(([message]) => message.type === "confirmFullAccessFirstSend")![0].requestId;
+    host.updateWorkbar({ phaseLabel: "Exploring" });
+    host.onReady = async () => { postMessage({ type: "hydrationStarted" }); };
+    postMessage.mockClear(); receive({ type: "webviewReady" });
+    expect(postMessage.mock.calls.map(([message]) => message.type)).toEqual([
+      "approvalState", "confirmFullAccessFirstSend", "chatAdmission", "renderContextUsage", "updateWorkbar",
+      "planModeState", "reviewPrefState", "hydrationStarted",
+    ]);
+    expect(postMessage.mock.calls[2][0]).toEqual({ type: "chatAdmission", admission: null });
+    receive({ type: "fullAccessFirstSendChoice", requestId, choice: "cancel" });
+    await expect(answer).resolves.toBe("cancel");
+  });
+});
+
+
+describe("ChatPanel real constructor port lifetime", () => {
+  test("projects to the current panel and rejects an old panel's model result", async () => {
+    const constructor = declaration.members.find(ts.isConstructorDeclaration)!;
+    const modelIndex = constructor.parameters.findIndex(parameter => parameter.name.getText(tree) === "onListModels");
+    expect(modelIndex).toBeGreaterThan(0);
+    let finish!: (value: unknown) => void;
+    const args: unknown[] = Array.from({ length: modelIndex + 1 }, () => undefined);
+    args[0] = {};
+    args[modelIndex] = () => new Promise(resolve => { finish = resolve; });
+    const host = new ChatPanel(...args);
+    const oldPost = vi.fn(); const currentPost = vi.fn();
+    host.panel = { webview: { postMessage: oldPost } };
+    host.appendChunk("old");
+    const pending = host.refreshModels();
+    host.panel = { webview: { postMessage: currentPost } };
+    host.appendChunk("current");
+    finish({ current: null, options: ["stale"] }); await pending;
+    expect(oldPost).toHaveBeenCalledExactlyOnceWith({ type: "appendChunk", chunk: "old" });
+    expect(currentPost).toHaveBeenCalledExactlyOnceWith({ type: "appendChunk", chunk: "current" });
+    host.onListModels = async () => ({ current: null, options: ["fresh"] });
+    await host.refreshModels();
+    expect(currentPost).toHaveBeenLastCalledWith({ type: "modelList", current: null, options: ["fresh"] });
+  });
+});
+
+
+describe("ChatPanel shared draft integration", () => {
+  test("flushes the active composer before attention or history selection and guards a prepared first send", async () => {
+    const { host, postMessage, receive } = setup(); host.registerHandlers(); host.clearThread("a");
+    receive({ type: "draft/read", requestId: "read", threadId: "a" });
+    host.onSwitchThread = vi.fn(async () => {});
+    const attention = host.switchThread("b");
+    const requestId = postMessage.mock.calls.find(([message]) => message.type === "draft/flush")![0].requestId;
+    expect(host.onSwitchThread).not.toHaveBeenCalled();
+    receive({ type: "draft/save", requestId: "save", threadId: "a", revision: 1, version: 0,
+      draft: { text: "last edit", imageAttachments: [], mentionedPaths: ["a.ts"] } });
+    receive({ type: "draft/flushAck", requestId }); await attention;
+    expect(host.onSwitchThread).toHaveBeenCalledExactlyOnceWith("b");
+    receive({ type: "draft/begin", requestId: "begin", threadId: "a", revision: 2, draftId: "draft",
+      draft: { text: "first-send question", imageAttachments: [], mentionedPaths: [] } });
+    await expect(host.switchThread("c")).rejects.toThrow("pending");
+    expect(postMessage).toHaveBeenCalledWith({ type: "chatAdmission", admission: { threadId: "a", state: "pending", checking: false } });
+    host.restoreDraft("first-send question", { draftId: "draft", imageAttachments: [] });
+    expect(postMessage.mock.calls.some(([message]) => message.type === "draft/changed" && message.snapshot.returned?.draft.text === "first-send question")).toBe(true);
+  });
+  test("a reload cannot acknowledge the previous renderer's outstanding navigation flush", async () => {
+    vi.useFakeTimers();
+    try {
+      const { host, postMessage, receive } = setup(); host.registerHandlers();
+      receive({ type: "draft/read", requestId: "read", threadId: "new" });
+      host.onSwitchThread = vi.fn(async () => {});
+      const navigation = expect(host.switchThread("b")).rejects.toThrow("Navigation was cancelled");
+      const requestId = postMessage.mock.calls.find(([message]) => message.type === "draft/flush")![0].requestId;
+      receive({ type: "webviewReady" }); receive({ type: "draft/flushAck", requestId });
+      await vi.advanceTimersByTimeAsync(2001); await navigation;
+      expect(host.onSwitchThread).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+
+test("a late identified send after reload is refused without consuming its returned draft; a new preparation still dispatches", async () => {
+  const { host, receive, postMessage } = setup(); host.registerHandlers(); host.clearThread("a"); host.onMessage = vi.fn(async () => {});
+  receive({ type: "draft/read", requestId: "read", threadId: "a" });
+  receive({ type: "draft/begin", requestId: "begin", threadId: "a", revision: 1, draftId: "old",
+    draft: { text: "original", imageAttachments: [], mentionedPaths: [] } });
+  receive({ type: "webviewReady" });
+  receive({ type: "sendMessage", draftId: "old", text: "late original" });
+  await Promise.resolve(); expect(host.onMessage).not.toHaveBeenCalled();
+  receive({ type: "draft/read", requestId: "verify", threadId: "a" });
+  expect(postMessage.mock.calls.find(([message]) => message.requestId === "verify")![0].snapshot.returned.draft.text).toBe("original");
+  receive({ type: "sendMessage", draftId: "old", text: "duplicate after read" });
+  expect(host.onMessage).not.toHaveBeenCalled();
+  host.clearThread("b"); receive({ type: "draft/read", requestId: "read-b", threadId: "b" });
+  receive({ type: "draft/begin", requestId: "begin-b", threadId: "b", revision: 1, draftId: "new",
+    draft: { text: "current", imageAttachments: [], mentionedPaths: [] } });
+  receive({ type: "sendMessage", draftId: "new", text: "current" }); await Promise.resolve();
+  expect(host.onMessage).toHaveBeenCalledTimes(1); expect(host.onMessage.mock.calls[0][6]).toBe("new");
 });

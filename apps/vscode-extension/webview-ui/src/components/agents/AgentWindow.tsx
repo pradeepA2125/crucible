@@ -12,6 +12,7 @@ import { useNow } from "./useNow";
 import { usageText, usageTitle } from "../../usage";
 
 interface Props {
+  presentation?: "modal" | "embedded";
   agentId: string;
   siblings: string[];
   onSwitch(agentId: string): void;
@@ -20,7 +21,7 @@ interface Props {
 
 /** ⤢ — one agent full height in a centered chat-width column (spec §10): meta, ■ Stop, sibling tabs.
  * One window at a time; Esc, ✕ or a backdrop click closes it. */
-export function AgentWindow({ agentId, siblings, onSwitch, onClose }: Props) {
+export function AgentWindow({ agentId, siblings, onSwitch, onClose, presentation = "modal" }: Props) {
   const ui = useAgentsUi();
   const agent = rosterRow(ui.agents, agentId);
   const running = !isTerminalAgent(agent.status);
@@ -30,15 +31,15 @@ export function AgentWindow({ agentId, siblings, onSwitch, onClose }: Props) {
   const { ref, onScroll } = useFollowBottom(`${agentId}|${viewToken(ui.views[agentId])}`);
 
   const dialogRef = useRef<HTMLDivElement>(null);
-  useModalFocus(dialogRef, onClose);
+  useModalFocus(dialogRef, onClose, undefined, presentation === "modal");
 
   return (
-    <div role="presentation" className="scrim absolute inset-0 z-40"
+    <div role="presentation" className={presentation === "modal" ? "scrim absolute inset-0 z-40" : "flex min-h-0 flex-1 flex-col overflow-hidden"}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (presentation === "modal" && e.target === e.currentTarget) onClose();
       }}>
-      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`Sub-agent ${agent.label}`}
-        className="surface-card absolute left-1/2 -translate-x-1/2 w-[calc(100%-24px)] max-w-[760px] bottom-3 top-10 flex flex-col overflow-hidden">
+      <div ref={dialogRef} tabIndex={-1} role={presentation === "modal" ? "dialog" : "region"} aria-modal={presentation === "modal" ? true : undefined} aria-label={`Sub-agent ${agent.label}`}
+        className={presentation === "modal" ? "surface-card absolute left-1/2 -translate-x-1/2 w-[calc(100%-24px)] max-w-[760px] bottom-3 top-10 flex flex-col overflow-hidden" : "flex min-h-0 flex-1 flex-col overflow-hidden"}>
         <div className="accent-wash px-3 pb-2 pt-2.5" style={{ borderBottom: "1px solid var(--color-border)" }}>
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: TONE_COLOR[toneOf(agent.status)] }} />

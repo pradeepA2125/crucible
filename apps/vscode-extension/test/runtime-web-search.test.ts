@@ -18,7 +18,7 @@ describe.each([
     const mapper = RuntimeManager.prototype as unknown as {
       extraEnvFromSettings(): Record<string, string>;
     };
-    const extraEnv = mapper.extraEnvFromSettings();
+    const extraEnv = mapper.extraEnvFromSettings.call({ host: { configuration: () => getConfiguration() } });
     expect(extraEnv[envKey]).toBe(value === undefined ? undefined : String(value));
     const env = buildBackendEnv("/ws", { backend: "gemini", model: "m", extraEnv }, "/rt", "darwin-arm64");
     expect(env[envKey]).toBe(value === undefined ? defaultValue : String(value));

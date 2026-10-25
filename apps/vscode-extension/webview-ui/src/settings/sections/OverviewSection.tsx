@@ -1,9 +1,10 @@
 import { Icon } from "../../components/Icon";
 import { SectionHeader } from "../SectionHeader";
 import type { SettingsState } from "../types";
-import { SECTIONS, type SectionId } from "./meta";
+import { sectionsForHost, type SectionId } from "./meta";
 
 interface Props {
+  desktop?: boolean;
   state: SettingsState;
   onNavigate: (id: SectionId) => void;
 }
@@ -17,7 +18,7 @@ function plural(n: number, word: string): string {
  * Copilot CLI's Overview page. Cards stagger in and lift on hover; the
  * subline of each card surfaces the live state (active model, counts).
  */
-export function OverviewSection({ state, onNavigate }: Props) {
+export function OverviewSection({ state, onNavigate, desktop = false }: Props) {
   const sublines: Partial<Record<SectionId, string>> = {
     provider: state.provider ? `${state.provider.backend} · ${state.provider.model}` : "not configured",
     mcp: plural(state.mcp.servers.length, "server"),
@@ -32,7 +33,7 @@ export function OverviewSection({ state, onNavigate }: Props) {
         description="Configure the provider, tools, and policies that shape how the agent works in this workspace."
       />
       <div className="grid grid-cols-2 gap-3">
-        {SECTIONS.map((s, i) => (
+        {sectionsForHost(desktop).map((s, i) => (
           <button
             key={s.id}
             type="button"

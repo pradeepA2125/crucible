@@ -70,3 +70,24 @@ describe("inputAvailability — background agents (spec §5.3, §6)", () => {
     expect(inputAvailability({ ...base, turnActive: true }).disabled).toBe(true);
   });
 });
+
+
+it.each(["pending", "unknown"] as const)("%s admission outranks even an active notice turn without inventing work", state => {
+  const admission = { threadId: "origin", state, checking: false };
+  const idle = inputAvailability({ ...base, chatAdmission: admission });
+  expect(idle.disabled).toBe(true); expect(idle.showStop).toBe(false); expect(idle.placeholder).not.toMatch(/working/i);
+  const notice = inputAvailability({ ...base, activeThreadId: "origin", turnActive: true, turnKind: "notice", chatAdmission: admission });
+  expect(notice.disabled).toBe(true); expect(notice.showStop).toBe(true);
+  const other = inputAvailability({ ...base, activeThreadId: "other", turnActive: true, turnKind: "notice", chatAdmission: admission });
+  expect(other.disabled).toBe(true); expect(other.showStop).toBe(false);
+});
+
+
+it("saved copies never offer a work start before history freshness returns", () => {
+  for (const phase of ["loading", "unavailable"] as const) {
+    const result = inputAvailability({ ...base, historyState: { threadId: "a", phase, cached: true } });
+    expect(result.disabled).toBe(true); expect(result.showStop).toBe(false);
+    expect(inputAvailability({ ...base, turnActive: true, historyState: { threadId: "a", phase, cached: true } }).showStop).toBe(true);
+  }
+  expect(inputAvailability({ ...base, historyState: { threadId: "a", phase: "current", cached: true } }).disabled).toBe(false);
+});

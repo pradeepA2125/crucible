@@ -213,12 +213,12 @@ describe("approval view publishing", () => {
 });
 
 describe("workspace trust", () => {
-  it("applies Accept edits instead of a saved Full access and keeps the preference", async () => {
+  it("keeps old Full access at Ask until explicitly selected", async () => {
     const t = setup({ saved: "full_access", trusted: false });
     await t.c.connect();
-    expect(t.setApprovalMode).toHaveBeenCalledWith(expect.objectContaining({ autoAccept: true, shellPolicy: "ask", resolveWaiting: false }));
-    expect(t.saveMode).not.toHaveBeenCalled();
-    expect(t.c.current()).toMatchObject({ mode: "accept_edits", trusted: false, notice: null });
+    expect(t.setApprovalMode).toHaveBeenCalledWith(expect.objectContaining({ autoAccept: false, shellPolicy: "ask", resolveWaiting: false }));
+    expect(t.saveMode).toHaveBeenCalledWith("ask");
+    expect(t.c.current()).toMatchObject({ mode: "ask", trusted: false, notice: null });
   });
   it("downgrades a backend already running with Full access", async () => {
     const t = setup({ owned: true, shellPolicy: "allow_all", trusted: false });
@@ -233,17 +233,17 @@ describe("workspace trust", () => {
     expect(t.setApprovalMode).not.toHaveBeenCalled();
     expect(t.c.current().error).toContain("trusted workspace");
   });
-  it("re-applies the saved Full access once trust is granted", async () => {
+  it("does not reapply old Full access when trust is granted", async () => {
     const t = setup({ saved: "full_access", trusted: false }); await t.c.connect();
     t.trust(); await t.c.trustGranted();
-    expect(t.c.current()).toMatchObject({ mode: "full_access", trusted: true });
+    expect(t.c.current()).toMatchObject({ mode: "ask", trusted: true });
     expect(t.acknowledged()).toBe(false);
   });
 });
 
 describe("first send under Full access", () => {
   async function fullAccess(firstSend: FirstSendChoice) {
-    const t = setup({ saved: "full_access", firstSend }); await t.c.connect();
+    const t = setup({ saved: "full_access", firstSend,owned:true,shellPolicy:"allow_all" }); await t.c.connect();
     expect(t.c.current().mode).toBe("full_access");
     return t;
   }

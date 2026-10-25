@@ -89,12 +89,15 @@ async fn posts_with_the_token_after_a_valid_proof() {
     let (port, seen) = stub_backend(TOKEN, 202).await;
     let home = tempfile::tempdir().unwrap();
     put_token(home.path(), port, TOKEN);
+    std::env::set_var("CRUCIBLE_INDEX_KEY", "limited-index-test-key");
     let notifier = BackendNotifier::new(home.path().to_path_buf()).unwrap();
     notifier.notify_index_build(&format!("http://localhost:{port}"), "/ws").await;
     let seen = seen.lock().unwrap().clone();
     assert!(seen[0].starts_with("GET /health?nonce="));
     assert!(!seen[0].to_lowercase().contains("authorization"));
     assert!(seen[1].starts_with("POST /v1/index/build"));
+    assert!(seen[1].contains("x-crucible-indexer: limited-index-test-key"));
+    assert!(!seen[1].contains("x-crucible-owner"));
     assert!(seen[1].contains(&format!("authorization: Bearer {TOKEN}")));
     assert!(seen[1].to_lowercase().contains(&format!("host: 127.0.0.1:{port}")));
 }

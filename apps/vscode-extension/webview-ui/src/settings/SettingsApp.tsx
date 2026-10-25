@@ -1,3 +1,6 @@
+import { DesktopUpdates } from "./DesktopUpdates";
+import { DesktopPreferences } from "./DesktopPreferences";
+import { DraftPersistence } from "./DraftPersistence";
 import { useEffect, useRef, useState } from "react";
 import { BtnPrimary } from "../components/shared/buttons";
 import { NavRail } from "./NavRail";
@@ -23,6 +26,7 @@ import { vscode } from "./vscodeApi";
  * rebuilt snapshot. Sections are pure presentation over {state, busy, send}.
  */
 export default function SettingsApp({ initialSection = "overview" }: { initialSection?: SectionId } = {}) {
+  const [desktop,setDesktop]=useState(false);
   const [state, setState] = useState<SettingsState | null>(null);
   const [local, setLocal] = useState<{ appearance: Appearance; accent: Accent } | null>(null);
   const [instructions, setInstructions] = useState<{ content: string; exists: boolean } | null>(null);
@@ -39,13 +43,15 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
       // anywhere (a settings.json edit, the chat's settings overlay). Keep the
       // Appearance radios in step; it isn't a reply to this panel's own action,
       // so it doesn't clear `busy`.
-      const raw = msg as { type?: unknown; appearance?: unknown; accent?: unknown };
+      const raw = msg as { type?: unknown; appearance?: unknown; accent?: unknown; configuredAppearance?: unknown; host?:unknown };
       if (raw.type === "themeChanged") {
+        setDesktop(raw.host==="desktop");
         if (isAppearance(raw.appearance) && isAccent(raw.accent)) {
-          setLocal({ appearance: raw.appearance, accent: raw.accent });
+          setLocal({ appearance: isAppearance(raw.configuredAppearance) ? raw.configuredAppearance : raw.appearance, accent: raw.accent });
         }
         return;
       }
+      if (!["settings/state", "settings/instructions", "settings/error", "settings/localState", "settings/navigate"].includes(msg.type)) return;
       setBusy(false);
       if (msg.type === "settings/state") {
         setState(msg.state);
@@ -112,7 +118,7 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
 
   return (
     <div className="flex h-full min-h-0">
-      <NavRail active={section} counts={counts} onSelect={setSection} />
+      <NavRail desktop={desktop} active={section} counts={counts} onSelect={setSection} />
       <main className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[560px] p-5">
           {error && (state || section === "appearance") && (
@@ -134,18 +140,21 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
               </BtnPrimary>
             </div>
           )}
+          <div hidden={!desktop || section !== "desktop"}><DesktopPreferences hostDesktop={desktop} /></div>
+          <div hidden={!desktop || section !== "updates"}><DesktopUpdates hostDesktop={desktop} /></div>
+          <div hidden={!desktop || section !== "drafts"}><DraftPersistence hostDesktop={desktop} /></div>
           <div key={section} className="anim-section">
             {section === "appearance" && local && (
               <AppearanceSection appearance={local.appearance} accent={local.accent} busy={busy} send={send} />
             )}
-            {section !== "appearance" && !props && (
+            {section !== "appearance" && section !== "drafts" && section !== "desktop" && section !== "updates" && !props && (
               <div className="grid justify-items-start gap-3">
                 <p className="text-text-2">Can’t reach the Crucible backend, so this section can’t load.</p>
                 {error && <p className="text-text-3" style={{ fontSize: "var(--fs-meta)" }}>{error}</p>}
                 <BtnPrimary onClick={() => { setError(null); vscode.postMessage({ type: "settings/load" }); }}>Retry</BtnPrimary>
               </div>
             )}
-            {props && section === "overview" && <OverviewSection state={props.state} onNavigate={setSection} />}
+            {props && section === "overview" && <OverviewSection desktop={desktop} state={props.state} onNavigate={setSection} />}
             {props && section === "provider" && <ProviderSection {...props} />}
             {props && section === "mcp" && <McpSection {...props} />}
             {props && section === "skills" && <SkillsSection {...props} />}

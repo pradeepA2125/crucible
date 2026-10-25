@@ -1,19 +1,10 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { createComposerModelHost } from "../src/composer-model-host.js";
 import { describe, expect, it, vi } from "vitest";
 
 const source = readFileSync(new URL("../src/extension.ts", import.meta.url), "utf8");
 const tree = ts.createSourceFile("extension.ts", source, ts.ScriptTarget.Latest, true);
-const names = new Set(["chatgptCatalogCache", "chatgptCatalogEpoch", "invalidateChatgptCatalog", "chatgptCatalog", "afterSettingsMutation", "claudeCatalogEpoch", "claudeCatalogCache"]);
-const statements: string[] = [];
-function visit(node: ts.Node): void {
-  if (ts.isVariableStatement(node) && node.declarationList.declarations.some((d) => names.has(d.name.getText(tree)))) {
-    statements.push(node.getText(tree));
-  }
-  ts.forEachChild(node, visit);
-}
-visit(tree);
-const js = ts.transpile(statements.join("\n"), { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None });
 type Model = { slug: string; displayName: string; contextWindow: number | null };
 function setup() {
   let registration: string | undefined = "reg";
@@ -21,16 +12,22 @@ function setup() {
   const listChatGPTModels = vi.fn(async (_registration: string): Promise<Model[]> => models);
   const refreshContextUsage = vi.fn(async () => {});
   const refreshModels = vi.fn(async () => {});
-  const host = new Function("runtimeManager", "controller", "chatPanel", `${js}\nreturn {
-    catalog: chatgptCatalog,
-    invalidate: typeof invalidateChatgptCatalog === 'undefined' ? () => {} : invalidateChatgptCatalog,
-    changed: typeof afterSettingsMutation === 'undefined' ? async () => {} : afterSettingsMutation,
-  };`)({ chatgptRegistration: () => registration }, { configClient: () => ({ listChatGPTModels }), refreshContextUsage }, { refreshModels }) as {
-    catalog: () => Promise<Model[] | undefined>;
-    invalidate: () => void;
-    changed: (kind: "auth" | "provider") => Promise<void>;
-  };
-  return { ...host, models, listChatGPTModels, refreshContextUsage, refreshModels, setRegistration: (value?: string) => { registration = value; } };
+  const host = createComposerModelHost({
+    client: () => ({
+      getConfig: async () => ({ provider: null }), listChatGPTModels,
+      listClaudeModels: async () => [],
+      setProvider: async () => ({ backend: "chatgpt", model: "fresh" }),
+    }),
+    runtime: {
+      chatgptRegistration: () => registration, claudeRegistration: () => undefined,
+      getProviderKey: async () => undefined, saveProvider: async () => {},
+      saveContextWindow: async () => {}, saveReasoningEffort: async () => {},
+    },
+    refreshContextUsage, refreshModels,
+  });
+  return { catalog: host.state, invalidate: () => host.afterSettingsMutation("auth"),
+    changed: host.afterSettingsMutation, models, listChatGPTModels, refreshContextUsage, refreshModels,
+    setRegistration: (value?: string) => { registration = value; } };
 }
 
 function findNode<T extends ts.Node>(root: ts.Node, predicate: (node: ts.Node) => node is T): T {
@@ -114,11 +111,12 @@ describe("host catalog and auth refresh", () => {
     let resolve!: (models: Model[]) => void;
     h.listChatGPTModels.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
     const stale = h.catalog();
-    h.invalidate();
-    expect(await h.catalog()).toEqual(h.models);
+    await vi.waitFor(() => expect(h.listChatGPTModels).toHaveBeenCalledTimes(1));
+    await h.invalidate();
+    expect((await h.catalog()).options).toEqual([expect.objectContaining({ model: "fresh" })]);
     resolve([{ slug: "stale", displayName: "Stale", contextWindow: 128000 }]);
-    expect(await stale).toBeUndefined();
-    expect(await h.catalog()).toEqual(h.models);
+    expect((await stale).options).toEqual([]);
+    expect((await h.catalog()).options).toEqual([expect.objectContaining({ model: "fresh" })]);
     expect(h.listChatGPTModels).toHaveBeenCalledTimes(2);
   });
 
@@ -127,9 +125,10 @@ describe("host catalog and auth refresh", () => {
     let resolve!: (models: Model[]) => void;
     h.listChatGPTModels.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
     const stale = h.catalog();
+    await vi.waitFor(() => expect(h.listChatGPTModels).toHaveBeenCalledTimes(1));
     h.setRegistration("other");
     resolve(h.models);
-    expect(await stale).toBeUndefined();
+    expect((await stale).options).toEqual([]);
     await h.catalog();
     expect(h.listChatGPTModels).toHaveBeenLastCalledWith("other");
   });

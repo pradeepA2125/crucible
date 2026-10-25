@@ -1,5 +1,6 @@
+import { createControllerViewUI } from "./controller-view-ui.js";
 import { isApprovalMode, type ApprovalMode } from "./approval-mode.js";
-import { HttpBackendClient, type ReasoningEffort } from "@crucible/editor-client";
+import { HttpBackendClient } from "@crucible/editor-client";
 import * as vscode from "vscode";
 import * as path from "node:path";
 
@@ -21,10 +22,9 @@ import {
   type ControllerUI,
 } from "./controller.js";
 import { buildMcpEntry, type McpEntryInput } from "./mcp-quickpick.js";
-import { buildModelOptions } from "./composer-models.js";
-import { PROVIDERS } from "./setup-data.js";
+import { createComposerModelHost } from "./composer-model-host.js";
 import { openReviewDiff } from "./review-diff.js";
-import { PROVIDER_KEY_ENV, RuntimeManager } from "./runtime/vscode-runtime.js";
+import { RuntimeManager } from "./runtime/vscode-runtime.js";
 import { SettingsPanel } from "./settings-panel.js";
 import { createSettingsHandler } from "./settings-data.js";
 import { buildSettingsDeps } from "./settings-deps.js";
@@ -104,131 +104,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   let controller: CrucibleController;
 
-  // What a hot-swap must send so the backend can build the transport even when its
-  // process env predates this provider (factory.py: request credentials override
-  // process env): the stored API key, or for the ChatGPT plan the registration id
-  // (an id, never a token).
-  const providerCredentials = async (backend: string): Promise<Record<string, string> | undefined> => {
-    if (backend === "claude_subscription") {
-      const registration = runtimeManager.claudeRegistration();
-      return registration ? { CRUCIBLE_CLAUDE_REGISTRATION: registration } : undefined;
-    }
-    if (backend === "chatgpt") {
-      const registration = runtimeManager.chatgptRegistration();
-      return registration ? { CRUCIBLE_CHATGPT_REGISTRATION: registration } : undefined;
-    }
-    const key = await runtimeManager.getProviderKey(backend);
-    const envVar = PROVIDER_KEY_ENV[backend];
-    return envVar && key ? { [envVar]: key } : undefined;
-  };
+  // These callbacks are lazy: controller and chatPanel are initialized below.
+  const composerModelHost = createComposerModelHost({
+    client: () => controller.configClient(),
+    runtime: runtimeManager,
+    refreshContextUsage: () => controller.refreshContextUsage(),
+    refreshModels: () => chatPanel.refreshModels(),
+  });
 
-  // The signed-in account's model catalog for the composer menu. Cached briefly: every
-  // modelList refresh would otherwise be a call to OpenAI. A failure (signed out, plan
-  // usage off) just means the menu offers no plan models.
-  let chatgptCatalogCache: { registration: string; at: number; models: { slug: string; displayName: string; contextWindow: number | null }[] } | null = null;
-  let chatgptCatalogEpoch = 0;
-  const invalidateChatgptCatalog = (): void => {
-    chatgptCatalogEpoch += 1;
-    chatgptCatalogCache = null;
-  };
-  const chatgptCatalog = async () => {
-    const registration = runtimeManager.chatgptRegistration();
-    if (!registration) return undefined;
-    if (chatgptCatalogCache?.registration === registration
-        && Date.now() - chatgptCatalogCache.at < 5 * 60_000) {
-      return chatgptCatalogCache.models;
-    }
-    const epoch = chatgptCatalogEpoch;
-    try {
-      const models = await controller.configClient().listChatGPTModels(registration);
-      if (epoch !== chatgptCatalogEpoch || runtimeManager.chatgptRegistration() !== registration) {
-        return undefined;
-      }
-      chatgptCatalogCache = { registration, at: Date.now(), models };
-      return models;
-    } catch {
-      return undefined;
-    }
-  };
-
-  let claudeCatalogCache: { registration: string; at: number; models: { slug: string; displayName: string; contextWindow: number | null }[] } | null = null;
-  let claudeCatalogEpoch = 0;
-  const claudeCatalog = async () => {
-    const registration = runtimeManager.claudeRegistration();
-    if (!registration) return undefined;
-    if (claudeCatalogCache?.registration === registration && Date.now() - claudeCatalogCache.at < 5 * 60_000) {
-      return claudeCatalogCache.models;
-    }
-    const epoch = claudeCatalogEpoch;
-    try {
-      const models = (await controller.configClient().listClaudeModels(registration)).filter(m => m.contextWindow !== null);
-      if (epoch !== claudeCatalogEpoch || runtimeManager.claudeRegistration() !== registration) return undefined;
-      claudeCatalogCache = { registration, at: Date.now(), models };
-      return models;
-    } catch { return undefined; }
-  };
-
-  // Composer model quick-swap: the current provider + the set of providers with a
-  // stored key (offered for hot-swap). Rebuilt after every swap.
-  const composerModelState = async () => {
-    const config = await controller.configClient().getConfig();
-    const keyed: string[] = [];
-    for (const p of PROVIDERS) {
-      if (p.keyEnvVar && (await runtimeManager.getProviderKey(p.id)) !== undefined) keyed.push(p.id);
-    }
-    const current = config.provider ?? null;
-    const [chatgptModels, claudeModels] = await Promise.all([chatgptCatalog(), claudeCatalog()]);
-    return {
-      current,
-      // Drives "Using ChatGPT plan · Manage usage" beside the model chip (UI/UX guidelines).
-      usesChatgptPlan: config.provider?.usesChatgptPlan ?? false,
-      usesClaudePlan: current?.backend === "claude_subscription",
-      options: buildModelOptions(current, keyed, PROVIDERS, chatgptModels, claudeModels),
-      effort: {
-        level: config.provider?.reasoningEffort ?? null,
-        support: config.provider?.reasoningEffortSupport ?? null,
-        // Sourced from GET /v1/config so it rides EVERY modelList refresh (not
-        // just the swap that produced it) — a plain listModels poll must not
-        // clear it. See CLAUDE.md's reasoning-effort-note durability fix.
-        note: config.provider?.reasoningEffortNote ?? null,
-      },
-    };
-  };
-
-  // Reasoning-effort dial quick-swap: mirrors the composer model swap above —
-  // reads the persisted rung back into the SAME modelList shape so the webview
-  // has one refresh path for both.
-  const setReasoningEffort = async (level: ReasoningEffort | null) => {
-    const config = await controller.configClient().getConfig();
-    const backend = config.provider?.backend;
-    if (!backend) throw new Error("no provider configured");
-    // model and credentials are NOT optional here, for the same reasons the model
-    // swap below passes them: ProviderRuntime.swap resolves `model or
-    // resolve_model(backend)`, and resolve_model reads the PROCESS ENV — so
-    // omitting the live model silently reverts a hot-swapped one, and on
-    // openai_compatible (a backend spawned as something else has no
-    // CRUCIBLE_OPENAI_COMPAT_MODEL in its env) it raises and the chip 400s.
-    // credentials likewise: the running backend's env may predate this key.
-    const credentials = await providerCredentials(backend);
-    const model = config.provider?.model;
-    const res = await controller.configClient().setProvider({
-      backend,
-      ...(model ? { model } : {}),
-      reasoningEffort: level,
-      ...(credentials ? { credentials } : {}),
-    });
-    // Persist what the backend ACTUALLY applied, not what was asked — a clamped
-    // rung must not come back on the next managed spawn as the unclamped one.
-    await runtimeManager.saveReasoningEffort(
-      res.reasoningEffort !== undefined ? res.reasoningEffort ?? undefined : level ?? undefined,
-    );
-    // The note itself now comes from composerModelState() (sourced off GET
-    // /v1/config), which is already current since setProvider just applied it —
-    // no need to thread it through this response separately.
-    return composerModelState();
-  };
-
-  const chatPanel = new ChatPanel(
+  const chatPanel: ChatPanel = new ChatPanel(
     context.extensionUri,
     (message, stepReview, forcedSkills, mentionedPaths, planMode, imageAttachments, draftId, originalDraftText) =>
       controller.sendChatMessage(message, stepReview, forcedSkills, mentionedPaths, planMode, imageAttachments, draftId, originalDraftText),
@@ -262,33 +146,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     () => controller.listSkills(),
     () => controller.openChat(),
     (threadId, decision, gateId) => controller.handleMcpDecisionFromChat(threadId, decision, gateId),
-    () => composerModelState(),
-    async (backend, model) => {
-      const credentials = await providerCredentials(backend);
-      // Resolve on the host from the signed-in account's cached catalog, not
-      // from webview input. Unknown windows leave the user's setting intact.
-      const catalogWindow = backend === "chatgpt"
-        ? (await chatgptCatalog())?.find((m) => m.slug === model)?.contextWindow
-        : undefined;
-      // Match ProviderSwapRequest's sanity bounds; unusable catalog metadata
-      // must not make an otherwise valid model swap fail validation.
-      const contextWindow = typeof catalogWindow === "number"
-        && Number.isSafeInteger(catalogWindow)
-        && catalogWindow >= 1024 && catalogWindow <= 10_000_000
-        ? catalogWindow : undefined;
-      const result = await controller.configClient().setProvider({
-        backend, model,
-        ...(credentials ? { credentials } : {}),
-        ...(contextWindow !== undefined ? { contextWindow } : {}),
-      });
-      await runtimeManager.saveProvider(backend, model);
-      // A rejected swap must not change the next managed spawn's window either.
-      const effectiveWindow = backend === "claude_subscription" ? result.contextWindow : contextWindow;
-      if (effectiveWindow !== undefined) await runtimeManager.saveContextWindow(effectiveWindow);
-      await controller.refreshContextUsage();
-      return composerModelState();
-    },
-    (level: ReasoningEffort | null) => setReasoningEffort(level),
+    () => composerModelHost.state(),
+    (backend, model) => composerModelHost.setModel(backend, model),
+    (level) => composerModelHost.setReasoningEffort(level),
     (section?: string) => {
       void vscode.commands.executeCommand("crucible.openSettingsPanel", section);
     },
@@ -315,9 +175,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     },
     (sessionId: string) => controller.fetchSessionTranscript(sessionId),
     () => runtimeManager.getPlanMode(),
-    async (enabled: boolean) => {
+    async (enabled: boolean, isCurrent: () => boolean = () => true) => {
+      const client = controller.configClient();
+      if (!isCurrent()) return;
       await runtimeManager.setPlanMode(enabled);
-      await controller.configClient().setPlanMode(enabled).catch(() => undefined);
+      if (!isCurrent()) return;
+      await client.setPlanMode(enabled).catch(() => undefined);
     },
     () => runtimeManager.getStepReview(),
     (messageId) => controller.previewRewind(messageId),
@@ -442,152 +305,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     openChatPanel: () => {
       chatPanel.show();
     },
-    appendChatMessage: (message) => {
-      chatPanel.appendMessage(message);
-    },
-    appendChatChunk: (chunk) => {
-      chatPanel.appendChunk(chunk);
-    },
-    showChatThinking: (message) => {
-      chatPanel.showThinking(message);
-    },
-    updateChatThinking: (message) => {
-      chatPanel.updateThinking(message);
-    },
-    hideChatThinking: () => {
-      chatPanel.hideThinking();
-    },
-    setChatInputEnabled: (enabled) => {
-      chatPanel.setInputEnabled(enabled);
-    },
-    renderChatThreadList: (threads, activeThreadId) => {
-      chatPanel.renderThreadList(threads, activeThreadId);
-    },
-    clearChatThread: (threadId) => {
-      chatPanel.clearThread(threadId);
-    },
-    showRewindPreview: (preview) => {
-      chatPanel.showRewindPreview(preview);
-    },
-    prefillComposer: (text, draft) => {
-      chatPanel.prefillComposer(text, draft);
-    },
-    resolveInlineChangeCard: (taskId, resolution) => {
-      chatPanel.resolveInlineChangeCard(taskId, resolution);
-    },
-    updateThreadTitle: (threadId, title) => {
-      chatPanel.updateThreadTitle(threadId, title);
-    },
-    appendChatThinkingEntry: (text) => {
-      chatPanel.appendThinkingEntry(text);
-    },
-    appendChatThinkingChunk: (chunk) => {
-      chatPanel.appendThinkingChunk(chunk);
-    },
-    finalizeAgentMessage: () => {
-      chatPanel.finalizeAgentMessage();
-    },
-    renderLiveGates: (gates) => {
-      chatPanel.renderLiveGates(gates);
-    },
-    clearLiveGates: () => {
-      chatPanel.clearLiveGates();
-    },
-    renderLivePlan: (plan) => {
-      chatPanel.renderLivePlan(plan);
-    },
-    clearLivePlan: () => {
-      chatPanel.clearLivePlan();
-    },
-    appendToolEvent: (event) => {
-      chatPanel.appendToolEvent(event);
-    },
-    appendToolResult: (id, output, isError, approvalNote, sandbox) => {
-      chatPanel.appendToolResult(id, output, isError, approvalNote, sandbox);
-    },
-    updateWorkbar: (info) => {
-      chatPanel.updateWorkbar(info);
-    },
-    updateRetryStatus: (status) => {
-      chatPanel.updateRetryStatus(status);
-    },
-    updateTokenProgress: (progress) => {
-      chatPanel.updateTokenProgress(progress);
-    },
-    updateEditFailure: (failure) => {
-      chatPanel.updateEditFailure(failure);
-    },
-    renderLiveReview: (review) => {
-      chatPanel.renderLiveReview(review);
-    },
-    clearLiveReview: () => {
-      chatPanel.clearLiveReview();
-    },
-    renderLiveError: (error) => {
-      chatPanel.renderLiveError(error);
-    },
-    clearLiveError: () => {
-      chatPanel.clearLiveError();
-    },
-    renderLiveTodos: (todos) => {
-      chatPanel.renderLiveTodos(todos);
-    },
-    renderProviderAccess: (access) => {
-      chatPanel.renderProviderAccess(access);
-    },
-    clearLiveTodos: () => {
-      chatPanel.clearLiveTodos();
-    },
-    renderLiveSessions: (sessions) => {
-      chatPanel.renderLiveSessions(sessions);
-    },
-    clearLiveSessions: () => {
-      chatPanel.clearLiveSessions();
-    },
-    sendLiveStatus: (status, turnActive, extra) => {
-      chatPanel.sendLiveStatus(status, turnActive, extra);
-    },
-    replaceChatMessages: (messages) => {
-      chatPanel.replaceMessages(messages);
-    },
-    markQueued: (id) => {
-      chatPanel.markQueued(id);
-    },
-    removeChatMessage: (id) => {
-      chatPanel.removeMessage(id);
-    },
-    restoreDraft: (text, recovery) => {
-      chatPanel.restoreDraft(text, recovery);
-    },
-    renderAgents: (agents) => {
-      chatPanel.renderAgents(agents);
-    },
-    agentDetail: (agentId, detail) => {
-      chatPanel.agentDetail(agentId, detail);
-    },
-    agentEvent: (agentId, event) => {
-      chatPanel.agentEvent(agentId, event);
-    },
-    renderThreadUsage: (usage) => {
-      chatPanel.renderThreadUsage(usage);
-    },
-    renderApproval: (view) => chatPanel.renderApproval(view),
-    retryDecision: (threadId, kind, gateId) => chatPanel.retryDecision(threadId, kind, gateId),
-    renderContextUsage: (usage, stale) => {
-      chatPanel.renderContextUsage(usage, stale);
-    },
-    renderTeams: (teams) => {
-      chatPanel.renderTeams(teams);
-    },
-    renderLiveTeams: (teams) => {
-      chatPanel.renderLiveTeams(teams);
-    },
-    teamDetail: (teamId, detail) => {
-      chatPanel.teamDetail(teamId, detail);
-    },
-    teamEvent: (teamId, event) => {
-      chatPanel.teamEvent(teamId, event);
-    },
+    ...createControllerViewUI(chatPanel),
+    renderChatAdmission: value => chatPanel.renderDraftAdmission(value),
+    draftCreated: (id, threadId) => chatPanel.draftCreated(id, threadId),
+    draftAccepted: (id, threadId) => chatPanel.draftAccepted(id, threadId),
+    staleDraft: (_text, recovery) => { if (recovery) chatPanel.rejectDraft(recovery.draftId); },
   };
 
   // Spec §3.5/§3.8: one gate per window. No request leaves before /health proves the
@@ -624,13 +346,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     });
   };
 
-  const afterSettingsMutation = async (kind: "auth" | "provider"): Promise<void> => {
-    if (kind === "auth") invalidateChatgptCatalog();
-    claudeCatalogEpoch += 1;
-    claudeCatalogCache = null;
-    // Both reads are backend-authoritative; catalog windows never drive the meter.
-    await Promise.all([controller.refreshContextUsage(), chatPanel.refreshModels()]);
-  };
+  const afterSettingsMutation = composerModelHost.afterSettingsMutation;
 
   // The chat webview embeds the settings UI (floating overlay); give it a settings
   // handler that shares the exact host wiring the standalone SettingsPanel uses.
@@ -655,6 +371,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const readSandboxEnabled = (): boolean =>
     vscode.workspace.getConfiguration("crucible").get<boolean>("sandbox.enabled", true);
+  chatPanel.configureGateActions(controller);
+
   controller.configureApproval({
     savedMode: () => { const mode = context.globalState.get<unknown>("crucible.approvalMode"); return isApprovalMode(mode) ? mode : undefined; },
     reviewOn: () => runtimeManager.getStepReview(),
@@ -684,8 +402,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void controller.setSandboxEnabled(readSandboxEnabled()).catch(() => undefined);
   }));
   context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => {
-    void controller.approvalTrustGranted();
+    const root=vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if(root)void runtimeManager.syncProjectTrust(root,true).then(()=>controller.approvalTrustGranted()).catch(error=>vscode.window.showWarningMessage(String(error)));
   }));
+  chatPanel.setReceiptCheckHandler(() => controller.checkChatReceipt());
   chatPanel.setApprovalHandler((mode, confirmed, remember) => controller.setApprovalMode(mode, confirmed, remember));
 
   // Task-subsystem flag (GET /v1/config): when off, the controller handles changes inline
@@ -719,8 +439,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       .then(async (choice: string | undefined) => {
         if (choice !== "Open thread") return;
         chatPanel.show();
-        await controller.switchChatThread(threadId);
-      });
+        await chatPanel.switchThread(threadId);
+      }).catch((error: unknown) => { void vscode.window.showErrorMessage(error instanceof Error ? error.message : "Unable to open the conversation."); });
   });
   const attentionTimer = setInterval(() => void controller.pollAttention(), 10_000);
   context.subscriptions.push({ dispose: () => clearInterval(attentionTimer) });

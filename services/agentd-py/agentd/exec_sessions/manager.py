@@ -278,7 +278,7 @@ class SessionManager:
             "unread_bytes": max(0, s.buffer.end - s.model_cursor),
         } for s in self._sessions.values() if s.thread_id == thread_id]
 
-    def live_summaries(self, thread_id: str) -> list[dict[str, object]]:
+    def live_summaries(self, thread_id: str | None) -> list[dict[str, object]]:
         """/live rows. INVARIANT: must serialize identically while nothing real
         changes — the webview dedups /live on a JSON signature, and a ticking
         age_sec or per-log-line unread_bytes would re-render the world at 1 Hz.
@@ -286,11 +286,12 @@ class SessionManager:
         (/live is read-only)."""
         return [{
             "id": s.session_id,
+            **({"thread_id": s.thread_id} if thread_id is None else {}),
             "command": s.command_line,
             "status": "running" if s.proc.is_running() else "exited",
             "exit_code": s.proc.exit_code(),
             "started_at": s.started_at,
-        } for s in self._sessions.values() if s.thread_id == thread_id]
+        } for s in self._sessions.values() if thread_id is None or s.thread_id == thread_id]
 
     def transcript(self, thread_id: str, session_id: str) -> dict[str, object] | None:
         sess = self._sessions.get(session_id)

@@ -1,0 +1,9 @@
+import{act,fireEvent,render,screen}from"@testing-library/react";import{expect,it,vi}from"vitest";
+import{DraftPersistence}from"../settings/DraftPersistence";import{vscode}from"../settings/vscodeApi";vi.mock("../settings/vscodeApi",()=>({vscode:{postMessage:vi.fn()}}));
+const post=(data:unknown)=>act(()=>window.dispatchEvent(new MessageEvent("message",{data})));
+it("does not add desktop controls or persistence requests to VS Code",()=>{vi.mocked(vscode.postMessage).mockClear();render(<DraftPersistence/>);post({type:"themeChanged",host:"vscode",appearance:"dark"});expect(screen.queryByText("Desktop drafts")).toBeNull();expect(vscode.postMessage).not.toHaveBeenCalled();});
+it("defaults off, requires secure storage, exposes explicit recovery, and keeps optout available if keychain locks",()=>{
+ render(<DraftPersistence hostDesktop/>);post({type:"desktop/persistence",enabled:false,available:false,legacy:false,recovery:false});const checkbox=screen.getByRole("checkbox");expect(checkbox).not.toBeChecked();expect(checkbox).toBeDisabled();
+ post({type:"desktop/persistence",enabled:false,available:true,legacy:true,recovery:true});fireEvent.click(checkbox);expect(vscode.postMessage).toHaveBeenCalledWith({type:"desktop/persistenceSet",enabled:true});fireEvent.click(screen.getByRole("button",{name:/interrupted draft/}));expect(screen.getByRole("alertdialog",{name:"Recover interrupted send"})).toBeInTheDocument();fireEvent.click(screen.getByRole("button",{name:"I checked history — recover text"}));expect(vscode.postMessage).toHaveBeenCalledWith({type:"desktop/recoverDraft",confirmed:true});
+ post({type:"desktop/persistence",enabled:true,available:false,legacy:false,recovery:true});expect(checkbox).not.toBeDisabled();post({type:"desktop/persistenceError",message:"Saved copy kept unchanged"});expect(screen.getByRole("alert")).toHaveTextContent("kept unchanged");
+});

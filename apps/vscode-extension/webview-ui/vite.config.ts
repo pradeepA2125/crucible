@@ -11,6 +11,9 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: resolve(__dirname, "index.html"),
+        lifecycle: resolve(__dirname, "lifecycle.html"),
+        desktopApp: resolve(__dirname, "desktop-app.html"),
+        desktopWelcome: resolve(__dirname, "desktop.html"),
         memory: resolve(__dirname, "memory.html"),
         graph: resolve(__dirname, "graph.html"),
         setup: resolve(__dirname, "setup.html"),

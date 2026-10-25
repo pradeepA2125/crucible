@@ -1,9 +1,12 @@
+import type { Components } from "react-markdown";
 import type { ReactNode } from "react";
 import remarkGfm from "remark-gfm";
 import { MessageMarkdown } from "../../file-references/MessageMarkdown";
 
 interface Props {
   content: string;
+  overrides?: Components;
+  disableFileReferences?: boolean;
 }
 
 /**
@@ -46,7 +49,7 @@ export const MARKDOWN_TABLE_CLASSES = [
  * theme accent; file references keep their accent links (MessageMarkdown). Shared by
  * QAMessage and AgentRow so an answer looks the same with or without tool steps.
  */
-export function MarkdownContent({ content }: Props) {
+export function MarkdownContent({ content, overrides, disableFileReferences }: Props) {
   return (
     <div
       className={[
@@ -70,7 +73,7 @@ export function MarkdownContent({ content }: Props) {
         ...MARKDOWN_TABLE_CLASSES,
       ].join(" ")}
     >
-      <MessageMarkdown content={content} />
+      <MessageMarkdown content={content} overrides={overrides} disableFileReferences={disableFileReferences} />
     </div>
   );
 }

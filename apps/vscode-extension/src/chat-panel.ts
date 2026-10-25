@@ -1,27 +1,91 @@
-import type { ApprovalView, FirstSendChoice } from "./approval-mode.js";
+import { createGateActions } from "./gate-actions.js";
+import { ChatView } from "./chat-view.js";
+import { DraftSession } from "./drafts/draft-session.js";
+import type { ChatAdmissionView } from "./controller.js";
+import type {
+  ChatMessageHandler,
+  PlanCardActionHandler,
+  InlineChangeActionHandler,
+  ViewDiffFileHandler,
+  NewChatHandler,
+  SwitchThreadHandler,
+  ScopeDecisionHandler,
+  ValidationDecisionHandler,
+  CommandDecisionHandler,
+  StepDecisionHandler,
+  ModeDecisionHandler,
+  ClarifyDecisionHandler,
+  EditDecisionHandler,
+  AcceptTaskHandler,
+  RejectTaskHandler,
+  ResumeTaskHandler,
+  StopTurnHandler,
+  AbortTaskHandler,
+  SetReviewPrefHandler,
+  ListPromptsHandler,
+  ExpandPromptHandler,
+  ListSkillsHandler,
+  McpDecisionHandler,
+  ComposerModelState,
+  ListModelsHandler,
+  SetModelHandler,
+  SetReasoningEffortHandler,
+  OpenSettingsHandler,
+  OpenMemoryPanelHandler,
+  OpenGraphPanelHandler,
+  ListWorkspaceFilesHandler,
+  FetchSessionTranscriptHandler,
+  OpenFileHandler,
+  GetPlanModeHandler,
+  GetStepReviewHandler,
+  RewindPreviewHandler,
+  RewindConfirmHandler,
+  SetPlanModeHandler
+} from "./chat-message-handlers.js";
+export type {
+  ChatMessageHandler,
+  PlanCardActionHandler,
+  InlineChangeActionHandler,
+  ViewDiffFileHandler,
+  NewChatHandler,
+  SwitchThreadHandler,
+  ScopeDecisionHandler,
+  ValidationDecisionHandler,
+  CommandDecisionHandler,
+  StepDecisionHandler,
+  ModeDecisionHandler,
+  ClarifyDecisionHandler,
+  EditDecisionHandler,
+  AcceptTaskHandler,
+  RejectTaskHandler,
+  ResumeTaskHandler,
+  StopTurnHandler,
+  AbortTaskHandler,
+  SetReviewPrefHandler,
+  ListPromptsHandler,
+  ExpandPromptHandler,
+  ListSkillsHandler,
+  McpDecisionHandler,
+  ComposerModelState,
+  ListModelsHandler,
+  SetModelHandler,
+  SetReasoningEffortHandler,
+  OpenSettingsHandler,
+  OpenMemoryPanelHandler,
+  OpenGraphPanelHandler,
+  ListWorkspaceFilesHandler,
+  FetchSessionTranscriptHandler,
+  OpenFileHandler,
+  GetPlanModeHandler,
+  GetStepReviewHandler,
+  RewindPreviewHandler,
+  RewindConfirmHandler,
+  SetPlanModeHandler
+} from "./chat-message-handlers.js";
+import { routeChatMessage, type ChatMessageActions, type ChatMessageView } from "./chat-message-router.js";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as vscode from "vscode";
-import type {
-  ProviderAccess,
-  AgentDetail,
-  AgentSummary,
-  ChatMessage,
-  ChatThreadSummary,
-  RewindPreview,
-  CommandDecision,
-  EffortSupport,
-  McpToolDecision,
-  ReasoningEffort,
-  SequencedStreamEvent,
-  TeamDetail,
-  TeamLive,
-  TeamSummary,
-  ThreadUsage,
-  ContextUsage,
-} from "@crucible/editor-client";
-import type { TeamViewEvent } from "./team-views.js";
-import type { LiveGateView, LivePlanView, LiveSessionsView, LiveTodosView } from "./controller.js";
 import type { SettingsInMsg, SettingsOutMsg } from "./settings-data.js";
 import type { FileReferenceBridge, FileReferenceCatalogMessage } from "./file-references/bridge.js";
 import { injectThemeAttributes, themeHub, themeReadyReply } from "./theme-settings.js";
@@ -33,130 +97,31 @@ export type SettingsHandlerFactory = (
   post: (msg: SettingsOutMsg) => void,
 ) => (msg: SettingsInMsg) => void | Promise<void>;
 
-export type ChatMessageHandler = (
-  message: string,
-  stepReview?: boolean,
-  forcedSkills?: string[],
-  mentionedPaths?: string[],
-  planMode?: boolean,
-  imageAttachments?: { name: string; mediaType: string; dataUrl: string; bytes: number }[],
-  draftId?: string,
-  originalDraftText?: string
-) => Promise<void>;
-export type PlanCardActionHandler = (
-  taskId: string,
-  action: "implement" | "feedback",
-  feedback?: string
-) => Promise<void>;
-export type InlineChangeActionHandler = (taskId: string) => Promise<void>;
-export type ViewDiffFileHandler = (relativePath: string, shadowPath: string) => Promise<void>;
-export type NewChatHandler = () => Promise<void>;
-export type SwitchThreadHandler = (threadId: string) => Promise<void>;
-export type ScopeDecisionHandler = (taskId: string, files: string[], decision: "approve" | "reject", remember: boolean) => Promise<void>;
-export type ValidationDecisionHandler = (taskId: string, decision: "accept" | "reject") => Promise<void>;
-export type CommandDecisionHandler = (taskId: string, decision: CommandDecision, gateId: string) => Promise<void>;
-export type StepDecisionHandler = (taskId: string, decision: "accept" | "discard") => Promise<void>;
-// Controller gates (Phase F): mode is a streamed dispatch, edit a plain ack.
-export type ModeDecisionHandler = (threadId: string, mode: string) => Promise<void>;
-export type ClarifyDecisionHandler = (threadId: string, answer: string) => Promise<void>;
-export type EditDecisionHandler = (threadId: string, decision: "accept" | "reject", reason: string, gateId: string) => Promise<void>;
-export type AcceptTaskHandler = (taskId: string) => Promise<void>;
-export type RejectTaskHandler = (taskId: string, reason: string) => Promise<void>;
-export type ResumeTaskHandler = (taskId: string, stage: "plan" | "execute") => Promise<void>;
-export type StopTurnHandler = () => void;
-// Tier B: Stop the running task (work-bar). revert rolls the workspace back vs keeps changes.
-export type AbortTaskHandler = (revert: boolean) => Promise<void>;
-// Tier B: live-mutable "Review each step" preference for the running task.
-export type SetReviewPrefHandler = (autoAccept: boolean) => Promise<void>;
-// P1: prompt-file expansion in the composer (.crucible/prompts/<name>.md).
-export type ListPromptsHandler = () => Promise<string[]>;
-export type ExpandPromptHandler = (
-  name: string,
-  args: string
-) => Promise<{ found: boolean; text: string }>;
-// P2: skill catalog for the composer's /skill forced-load.
-export type ListSkillsHandler = () => Promise<{ name: string; description: string }[]>;
-// P3: controller mcp_tool gate — approve/reject an external MCP tool call.
-export type McpDecisionHandler = (threadId: string, decision: McpToolDecision, gateId: string) => Promise<void>;
-
-// Composer model quick-swap (options are ModelOption[] from composer-models.ts, kept
-// as unknown[] here since chat-panel doesn't import that type; the webview mirrors it).
-export interface ComposerModelState {
-  current: { backend: string; model: string } | null;
-  /** The ChatGPT plan is in use: show "Using ChatGPT plan · Manage usage". */
-  usesChatgptPlan?: boolean;
-  /** The active backend uses the Claude subscription adapter. */
-  usesClaudePlan?: boolean;
-  options: unknown[];
-  // Reasoning-effort dial state, carried on the same modelList round-trip since
-  // capability (EffortSupport) is per-(backend, model) — it's stale the instant
-  // the model swaps, so it has to refresh in lockstep with the model list.
-  effort?: {
-    level: ReasoningEffort | null;
-    support: EffortSupport | null;
-    // Sourced from GET /v1/config (ProviderRuntime.reasoning_effort_note), so it
-    // rides every modelList refresh — including a plain listModels poll, not just
-    // the swap that produced it. This is what makes the clamp explanation durable
-    // across a model swap or reload instead of clearing on the next refresh.
-    note?: string | null;
-  };
-}
-export type ListModelsHandler = () => Promise<ComposerModelState>;
-export type SetModelHandler = (backend: string, model: string) => Promise<ComposerModelState>;
-export type SetReasoningEffortHandler = (
-  level: ReasoningEffort | null,
-) => Promise<ComposerModelState>;
-export type OpenSettingsHandler = (section?: string) => void;
-export type OpenMemoryPanelHandler = () => void;
-export type OpenGraphPanelHandler = () => void;
-export type ListWorkspaceFilesHandler = () => Promise<string[]>;
-export type FetchSessionTranscriptHandler = (
-  sessionId: string,
-) => Promise<import("@crucible/editor-client").SessionTranscript | null>;
-export type OpenFileHandler = (relativePath: string) => void;
-// Sticky Plan Mode toggle (survives across threads/reloads via extension globalState).
-export type GetPlanModeHandler = () => boolean;
-export type GetStepReviewHandler = () => boolean;
-/** Chat rewind: preview feeds the confirm dialog, confirm performs the destructive act. */
-export type RewindPreviewHandler = (messageId: string) => Promise<void>;
-export type RewindConfirmHandler = (messageId: string) => Promise<void>;
-export type SetPlanModeHandler = (enabled: boolean) => Promise<void>;
-
-export class ChatPanel {
+export class ChatPanel extends ChatView {
   private panel: vscode.WebviewPanel | null = null;
-  private approvalView: ApprovalView | null = null;
+  private draftGeneration: unknown = {};
+  private readonly drafts = new DraftSession({
+    post: message => { void this.panel?.webview.postMessage(message); },
+    identity: () => this.panel ? this.draftGeneration : null,
+    admission: value => this.renderChatAdmission(value),
+  });
+  renderDraftAdmission(value: ChatAdmissionView | null): void { this.drafts.renderAdmission(value); }
+  draftCreated(id: string, threadId: string): void { this.drafts.created(id, threadId); }
+  draftAccepted(id: string, threadId: string): void { this.drafts.accepted(id, threadId); }
+  rejectDraft(id: string): boolean { return !!this.drafts.reject(id); }
+  override restoreDraft(text: string, recovery?: Parameters<ChatView["restoreDraft"]>[1]): void {
+    if (!recovery || !this.rejectDraft(recovery.draftId)) super.restoreDraft(text, recovery);
+  }
+  newChat(): Promise<void> { return this.drafts.navigate(() => this.onNewChat()); }
+  switchThread(threadId: string): Promise<void> { return this.drafts.navigate(() => this.onSwitchThread(threadId)); }
+
+  private receiptCheckHandler: () => Promise<void> = async () => {};
+  setReceiptCheckHandler(handler: () => Promise<void>): void { this.receiptCheckHandler = handler; }
   private approvalHandler: ((mode: unknown, confirmed: boolean, remember: boolean) => Promise<void>) | null = null;
 
   setApprovalHandler(handler: (mode: unknown, confirmed: boolean, remember: boolean) => Promise<void>): void {
     this.approvalHandler = handler;
   }
-  retryDecision(threadId: string, kind: "mode" | "clarify" | "team_plan", gateId?: string): void {
-    void this.panel?.webview.postMessage({ type: "decisionRetry", threadId, kind, gateId });
-  }
-
-  // The first-send Full access question is asked by the React app, not a VS Code modal, so the
-  // same dialog guards a standalone host. Pending questions survive a webview reload.
-  private fullAccessQuestions = new Map<string, { workspace: string; resolve(choice: FirstSendChoice): void }>();
-  confirmFullAccessFirstSend(workspace: string): Promise<FirstSendChoice> {
-    if (!this.panel) return Promise.resolve("cancel");
-    const requestId = randomUUID();
-    return new Promise(resolve => {
-      this.fullAccessQuestions.set(requestId, { workspace, resolve });
-      void this.panel?.webview.postMessage({ type: "confirmFullAccessFirstSend", requestId, workspace });
-    });
-  }
-  private answerFullAccessQuestion(requestId: unknown, choice: unknown): void {
-    const question = typeof requestId === "string" ? this.fullAccessQuestions.get(requestId) : undefined;
-    if (!question) return;
-    this.fullAccessQuestions.delete(requestId as string);
-    question.resolve(choice === "continue" || choice === "accept_edits" ? choice : "cancel");
-  }
-
-  renderApproval(view: ApprovalView): void {
-    this.approvalView = view;
-    void this.panel?.webview.postMessage({ type: "approvalState", approval: view });
-  }
-
   private themeSubscription: (() => void) | null = null;
   private fileReferenceBridge: FileReferenceBridge | null = null;
 
@@ -173,6 +138,11 @@ export class ChatPanel {
   // registerHandlers so it can post replies into the live panel.
   private settingsHandlerFactory: SettingsHandlerFactory | null = null;
   private settingsHandle: ((msg: SettingsInMsg) => void | Promise<void>) | null = null;
+
+  private gateActions?: ReturnType<typeof createGateActions>;
+  configureGateActions(controller: import("./controller.js").CrucibleController): void {
+    this.gateActions = createGateActions({ controller, drafts: this.drafts, setPlanMode: this.onSetPlanMode, post: message => { this.drafts.observe(message); void this.panel?.webview.postMessage(message); } });
+  }
 
   constructor(
     private readonly extensionUri: vscode.Uri,
@@ -227,7 +197,15 @@ export class ChatPanel {
       threadId: string, gateId: string, decision: "approve" | "feedback" | "reject",
       feedback?: string,
     ) => Promise<void> = async () => {}
-  ) {}
+  ) {
+    super({
+      postMessage: (message) => { this.drafts.observe(message); void this.panel?.webview.postMessage(message); },
+      isOpen: () => this.panel !== null,
+      identity: () => this.panel,
+      createRequestId: randomUUID,
+      listModels: () => this.onListModels(),
+    });
+  }
 
   /** Injects the settings handler factory for the embedded settings overlay. Called
    * once by extension.ts after clientFactory is available; the handler itself is
@@ -238,6 +216,7 @@ export class ChatPanel {
 
   /** Called by the webview serializer when VS Code restores a persisted panel. */
   reattach(restoredPanel: vscode.WebviewPanel): void {
+    this.drafts.resetView();
     this.panel = restoredPanel;
     // Restored panels keep serialized options — reset before building html so
     // the CSP and localResourceRoots are correct for the new build path.
@@ -292,7 +271,68 @@ export class ChatPanel {
           void this.panel?.webview.postMessage(out);
         })
       : null;
+    const mountedPanel = this.panel;
+    const actions: ChatMessageActions = {
+      legacyTaskActions: {
+        onPlanAction: (...args) => this.onPlanAction(...args),
+        onApplyInlineChange: (...args) => this.onApplyInlineChange(...args),
+        onDiscardInlineChange: (...args) => this.onDiscardInlineChange(...args),
+        onScopeDecision: (...args) => this.onScopeDecision(...args),
+        onValidationDecision: (...args) => this.onValidationDecision(...args),
+        onStepDecision: (...args) => this.onStepDecision(...args),
+        onAcceptTask: (...args) => this.onAcceptTask(...args),
+        onRejectTask: (...args) => this.onRejectTask(...args),
+        onResumeTask: (...args) => this.onResumeTask(...args),
+        onAbortTask: (...args) => this.onAbortTask(...args),
+      },
+      onViewDiffFile: (...args) => this.onViewDiffFile(...args),
+      onCheckChatReceipt: () => this.receiptCheckHandler(),
+      onMessage: (...args) => this.drafts.send(args[6], () => this.onMessage(...args)),
+      onNewChat: () => this.newChat(),
+      onSwitchThread: id => this.switchThread(id),
+      onCommandDecision: (...args) => this.onCommandDecision(...args),
+      onGateDecision: action => this.gateActions?.submit(action) ?? Promise.resolve(),
+      onModeDecision: (...args) => this.onModeDecision(...args),
+      onClarifyDecision: (...args) => this.onClarifyDecision(...args),
+      onEditDecision: (...args) => this.onEditDecision(...args),
+      onStopTurn: (...args) => this.onStopTurn(...args),
+      onSetReviewPref: (...args) => this.onSetReviewPref(...args),
+      onListPrompts: (...args) => this.onListPrompts(...args),
+      onExpandPrompt: (...args) => this.onExpandPrompt(...args),
+      onListSkills: (...args) => this.onListSkills(...args),
+      onMcpDecision: (...args) => this.onMcpDecision(...args),
+      onListModels: (...args) => this.onListModels(...args),
+      onSetModel: (...args) => this.onSetModel(...args),
+      onSetReasoningEffort: (...args) => this.onSetReasoningEffort(...args),
+      onOpenSettings: (...args) => this.onOpenSettings(...args),
+      onOpenMemoryPanel: (...args) => this.onOpenMemoryPanel(...args),
+      onListWorkspaceFiles: (...args) => this.onListWorkspaceFiles(...args),
+      onOpenFile: (...args) => this.onOpenFile(...args),
+      onOpenGraphPanel: (...args) => this.onOpenGraphPanel(...args),
+      onFetchSessionTranscript: (...args) => this.onFetchSessionTranscript(...args),
+      onGetPlanMode: (...args) => this.onGetPlanMode(...args),
+      onSetPlanMode: enabled => this.gateActions?.setPlanMode(enabled) ?? this.onSetPlanMode(enabled),
+      onGetStepReview: (...args) => this.onGetStepReview(...args),
+      onRewindPreview: (...args) => this.onRewindPreview(...args),
+      onRewindConfirm: (...args) => this.onRewindConfirm(...args),
+      onReady: (...args) => this.onReady(...args),
+      onSetOpenAgents: (...args) => this.onSetOpenAgents(...args),
+      onStopAgent: (...args) => this.onStopAgent(...args),
+      onStopAllAgents: (...args) => this.onStopAllAgents(...args),
+      onSetOpenTeams: (...args) => this.onSetOpenTeams(...args),
+      onDisbandTeam: (...args) => this.onDisbandTeam(...args),
+      onTeamPlanDecision: (...args) => this.onTeamPlanDecision(...args),
+    };
+    const view: ChatMessageView = {
+      postMessage: (message) => { void this.panel?.webview.postMessage(message); },
+      replayState: () => this.replayState(),
+      answerFullAccessQuestion: (requestId, choice) => this.answerFullAccessQuestion(requestId, choice),
+      setApprovalMode: (mode, confirmed, remember) => this.approvalHandler?.(mode, confirmed, remember) ?? Promise.resolve(),
+      refreshModels: () => this.refreshModels(),
+      showError: (message) => { void vscode.window.showErrorMessage(message); },
+    };
     this.panel.webview.onDidReceiveMessage((msg: unknown) => {
+      if (mountedPanel !== this.panel) return;
       const themeReply = themeReadyReply(msg, themeHub);
       if (themeReply) {
         void this.panel?.webview.postMessage(themeReply);
@@ -312,479 +352,24 @@ export class ChatPanel {
         void this.settingsHandle?.(m as unknown as SettingsInMsg);
         return;
       }
-      let p: Promise<void>;
-      if (m["type"] === "webviewReady") {
-        if (this.approvalView) this.renderApproval(this.approvalView);
-        for (const [requestId, { workspace }] of this.fullAccessQuestions) {
-          void this.panel?.webview.postMessage({ type: "confirmFullAccessFirstSend", requestId, workspace });
-        }
-        this.renderContextUsage(this.lastContextUsage, this.contextUsageStale);
-        // Webview state resets on reload; the workbar is SSE-fed (not in the
-        // /live poll), so replay the last posted value or step progress shows
-        // a bare "Executing…" until the next step_started event.
-        if (this.lastWorkbarInfo !== null) {
-          this.updateWorkbar(this.lastWorkbarInfo);
-        }
-        void this.panel?.webview.postMessage({
-          type: "planModeState", enabled: this.onGetPlanMode ? this.onGetPlanMode() : false,
-        });
-        void this.panel?.webview.postMessage({
-          type: "reviewPrefState",
-          enabled: this.onGetStepReview ? this.onGetStepReview() : true,
-        });
-        p = this.onReady();
-      } else if (m["type"] === "fullAccessFirstSendChoice") {
-        this.answerFullAccessQuestion(m["requestId"], m["choice"]);
-        p = Promise.resolve();
-      } else if (m["type"] === "setApprovalMode") {
-        p = this.approvalHandler?.(m["mode"], m["confirmedFullAccess"] === true, m["dontShowAgain"] === true) ?? Promise.resolve();
-      } else if (m["type"] === "setPlanMode") {
-        // The checkbox is a fully controlled prop (sourced from globalState, not local
-        // state, so it survives across threads/reloads) — without echoing the persisted
-        // value back here, it would never visually update after a click, and the stale
-        // prop value would keep riding every sendMessage until the next webview reload.
-        const enabled = m["enabled"] === true;
-        p = Promise.resolve(this.onSetPlanMode ? this.onSetPlanMode(enabled) : undefined).then(
-          () => {
-            void this.panel?.webview.postMessage({ type: "planModeState", enabled });
-          }
-        );
-      } else if (m["type"] === "sendMessage") {
-        const forcedSkills = Array.isArray(m["forcedSkills"])
-          ? (m["forcedSkills"] as string[])
-          : undefined;
-        const mentionedPaths = Array.isArray(m["mentionedPaths"])
-          ? (m["mentionedPaths"] as string[])
-          : undefined;
-        const imageAttachments = Array.isArray(m["imageAttachments"])
-          ? (m["imageAttachments"] as { name: string; mediaType: string; dataUrl: string; bytes: number }[])
-              .filter((a) => typeof a?.name === "string" && typeof a?.mediaType === "string"
-                && typeof a?.dataUrl === "string" && typeof a?.bytes === "number")
-          : undefined;
-        // ModeGate's "Chat about this approach" feedback field posts sendMessage with
-        // no planMode at all (it doesn't track the composer's toggle state) — falling
-        // back to `undefined === true` -> false would silently drop a Plan-Mode turn
-        // into ACTIVE the moment the user types feedback on the card, contradicting the
-        // whole point of Plan Mode persisting through a plan-refinement round-trip.
-        // Fall back to the persisted (single-source-of-truth) value only when the
-        // field is genuinely absent, not when it's explicitly false.
-        const planMode = typeof m["planMode"] === "boolean"
-          ? (m["planMode"] as boolean)
-          : (this.onGetPlanMode ? this.onGetPlanMode() : false);
-        p = this.onMessage(m["text"] as string, m["stepReview"] === true, forcedSkills, mentionedPaths, planMode, imageAttachments, typeof m["draftId"] === "string" ? m["draftId"] : undefined, typeof m["originalDraftText"] === "string" ? m["originalDraftText"] : undefined);
-      } else if (m["type"] === "implementPlan") {
-        p = this.onPlanAction(m["taskId"] as string, "implement");
-      } else if (m["type"] === "planFeedback") {
-        p = this.onPlanAction(m["taskId"] as string, "feedback", m["feedback"] as string);
-      } else if (m["type"] === "newChat") {
-        p = this.onNewChat();
-      } else if (m["type"] === "switchThread") {
-        p = this.onSwitchThread(m["threadId"] as string);
-      } else if (m["type"] === "applyInlineChange") {
-        p = this.onApplyInlineChange(m["taskId"] as string);
-      } else if (m["type"] === "discardInlineChange") {
-        p = this.onDiscardInlineChange(m["taskId"] as string);
-      } else if (m["type"] === "viewDiffFile") {
-        p = this.onViewDiffFile(m["path"] as string, m["shadowPath"] as string ?? "");
-      } else if (m["type"] === "scopeDecision") {
-        const files = Array.isArray(m["files"]) ? m["files"] as string[] : [];
-        const decision = m["decision"] === "approve" ? "approve" : "reject";
-        const remember = m["remember"] === true;
-        p = this.onScopeDecision(m["taskId"] as string, files, decision, remember);
-      } else if (m["type"] === "validationDecision") {
-        const decision = m["decision"] === "accept" ? "accept" : "reject";
-        p = this.onValidationDecision(m["taskId"] as string, decision);
-      } else if (m["type"] === "commandDecision") {
-        const decision: CommandDecision = {
-          approve: m["approve"] === true,
-          remember: m["remember"] === true,
-          scope: (m["scope"] === "prefix" || m["scope"] === "binary") ? m["scope"] : "exact",
-          ruleValue: typeof m["ruleValue"] === "string" ? (m["ruleValue"] as string) : undefined,
-        };
-        p = this.onCommandDecision(m["taskId"] as string, decision, typeof m["gateId"] === "string" ? m["gateId"] : "");
-      } else if (m["type"] === "mcpDecision") {
-        p = this.onMcpDecision(m["threadId"] as string, {
-          approve: m["approve"] === true,
-          remember: m["remember"] === true,
-        }, typeof m["gateId"] === "string" ? m["gateId"] : "");
-      } else if (m["type"] === "stepDecision") {
-        const decision = m["decision"] === "accept" ? "accept" : "discard";
-        p = this.onStepDecision(m["taskId"] as string, decision);
-      } else if (m["type"] === "rewindPreview") {
-        p = this.onRewindPreview(m["messageId"] as string);
-      } else if (m["type"] === "rewindConfirm") {
-        p = this.onRewindConfirm(m["messageId"] as string);
-      } else if (m["type"] === "modeDecision") {
-        p = this.onModeDecision(m["threadId"] as string, m["mode"] as string);
-      } else if (m["type"] === "clarifyDecision") {
-        p = this.onClarifyDecision(m["threadId"] as string, m["answer"] as string);
-      } else if (m["type"] === "editDecision") {
-        const decision = m["decision"] === "accept" ? "accept" : "reject";
-        p = this.onEditDecision(m["threadId"] as string, decision, (m["reason"] as string) ?? "", typeof m["gateId"] === "string" ? m["gateId"] : "");
-      } else if (m["type"] === "acceptTask") {
-        p = this.onAcceptTask(m["taskId"] as string);
-      } else if (m["type"] === "rejectTask") {
-        p = this.onRejectTask(m["taskId"] as string, (m["reason"] as string) ?? "");
-      } else if (m["type"] === "resumeTask") {
-        const stage = m["stage"] === "plan" ? "plan" : "execute";
-        p = this.onResumeTask(m["taskId"] as string, stage);
-      } else if (m["type"] === "setOpenAgents") {
-        const ids = Array.isArray(m["agentIds"])
-          ? (m["agentIds"] as unknown[]).filter((x): x is string => typeof x === "string")
-          : [];
-        this.onSetOpenAgents(ids);
-        return;
-      } else if (m["type"] === "stopAgent") {
-        p = this.onStopAgent(String(m["agentId"] ?? ""));
-      } else if (m["type"] === "stopAllAgents") {
-        p = this.onStopAllAgents();
-      } else if (m["type"] === "setOpenTeams") {
-        const ids = Array.isArray(m["teamIds"])
-          ? (m["teamIds"] as unknown[]).filter((x): x is string => typeof x === "string")
-          : [];
-        this.onSetOpenTeams(ids);
-        return;
-      } else if (m["type"] === "disbandTeam") {
-        p = this.onDisbandTeam(String(m["teamId"] ?? ""));
-      } else if (m["type"] === "teamPlanDecision") {
-        const d = m["decision"];
-        if (d !== "approve" && d !== "feedback" && d !== "reject") return;
-        p = this.onTeamPlanDecision(String(m["threadId"] ?? ""), String(m["gateId"] ?? ""), d,
-                                    typeof m["feedback"] === "string" ? m["feedback"] : undefined);
-      } else if (m["type"] === "stopTurn") {
-        this.onStopTurn();
-        return;
-      } else if (m["type"] === "abortTask") {
-        p = this.onAbortTask(m["revert"] === true);
-      } else if (m["type"] === "setReviewPref") {
-        // autoAccept is the INVERSE of the checkbox: checked = review each step =
-        // do not auto-accept. Persist, then echo the checkbox value back — the box is
-        // a controlled prop, so without the echo it never visually updates.
-        const autoAccept = m["autoAccept"] === true;
-        p = Promise.resolve(this.onSetReviewPref(autoAccept)).then(() => {
-          void this.panel?.webview.postMessage({
-            type: "reviewPrefState", enabled: !autoAccept,
-          });
-        });
-      } else if (m["type"] === "listPrompts") {
-        p = (async () => {
-          const names = await this.onListPrompts();
-          this.panel?.webview.postMessage({ type: "promptList", names });
-        })();
-      } else if (m["type"] === "listSkills") {
-        p = (async () => {
-          const skills = await this.onListSkills();
-          this.panel?.webview.postMessage({ type: "skillList", skills });
-        })();
-      } else if (m["type"] === "listWorkspaceFiles") {
-        p = (async () => {
-          const paths = await this.onListWorkspaceFiles();
-          this.panel?.webview.postMessage({ type: "workspaceFileList", paths });
-        })();
-      } else if (m["type"] === "fetchSessionTranscript") {
-        const sessionId = m["sessionId"] as string;
-        p = (async () => {
-          const transcript = await this.onFetchSessionTranscript(sessionId);
-          this.panel?.webview.postMessage({ type: "sessionTranscript", sessionId, transcript });
-        })();
-      } else if (m["type"] === "openFile") {
-        this.onOpenFile(m["path"] as string);
-        return;
-      } else if (m["type"] === "expandPrompt") {
-        const name = m["name"] as string;
-        const args = (m["args"] as string) ?? "";
-        p = (async () => {
-          const result = await this.onExpandPrompt(name, args);
-          this.panel?.webview.postMessage({
-            type: "promptExpanded",
-            requestId: m["requestId"],
-            name,
-            found: result.found,
-            text: result.text,
-          });
-        })();
-      } else if (m["type"] === "listModels") {
-        p = this.refreshModels();
-      } else if (m["type"] === "setModel") {
-        // Handles its own errors so a swap failure never re-enables input via
-        // the generic p.catch — it renders in-popover and the composer stays put.
-        p = (async () => {
-          try {
-            const result = await this.onSetModel(m["backend"] as string, m["model"] as string);
-            this.panel?.webview.postMessage({ type: "modelList", ...result });
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            this.panel?.webview.postMessage({ type: "modelSwapError", message });
-          }
-        })();
-      } else if (m["type"] === "setReasoningEffort") {
-        // Handles its own errors so a swap failure never re-enables input via
-        // the generic p.catch — mirrors the setModel branch above.
-        p = (async () => {
-          try {
-            const result = await this.onSetReasoningEffort(m["level"] as ReasoningEffort | null);
-            this.panel?.webview.postMessage({ type: "modelList", ...result });
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            this.panel?.webview.postMessage({ type: "effortSwapError", message });
-          }
-        })();
-      } else if (m["type"] === "openSettings") {
-        this.onOpenSettings(typeof m["section"] === "string" ? m["section"] : undefined);
-        return;
-      } else if (m["type"] === "openMemoryPanel") {
-        this.onOpenMemoryPanel();
-        return;
-      } else if (m["type"] === "openGraphPanel") {
-        this.onOpenGraphPanel();
-        return;
-      } else {
-        return;
+      if (m["type"] === "webviewReady") { this.draftGeneration = {}; this.drafts.resetView(); }
+      if (this.drafts.handle(m)) return;
+      try {
+        this.drafts.dispatch(m);
+        void routeChatMessage(msg, actions, view);
+      } catch (error) {
+        if (typeof m["draftId"] === "string") this.drafts.rejectPrepared(m["draftId"]);
+        void vscode.window.showErrorMessage(error instanceof Error ? error.message : "Chat request failed.");
       }
-      p.catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        this.panel?.webview.postMessage({ type: "setInputEnabled", enabled: true });
-        vscode.window.showErrorMessage(`Chat error: ${message}`);
-      });
     });
     this.panel.onDidDispose(() => {
-      for (const { resolve } of this.fullAccessQuestions.values()) resolve("cancel");
-      this.fullAccessQuestions.clear();
+      if (mountedPanel !== this.panel) return;
+      this.disposeViewState();
+      this.drafts.resetView();
       this.themeSubscription?.();
       this.themeSubscription = null;
       this.panel = null;
     });
-  }
-
-  appendMessage(message: ChatMessage): void {
-    this.panel?.webview.postMessage({ type: "appendMessage", message });
-  }
-
-  appendChunk(chunk: string): void {
-    this.panel?.webview.postMessage({ type: "appendChunk", chunk });
-  }
-
-  showThinking(message: string): void {
-    this.panel?.webview.postMessage({ type: "showThinking", message });
-  }
-
-  updateThinking(message: string): void {
-    this.panel?.webview.postMessage({ type: "updateThinking", message });
-  }
-
-  hideThinking(): void {
-    this.panel?.webview.postMessage({ type: "hideThinking" });
-  }
-
-  setInputEnabled(enabled: boolean): void {
-    this.panel?.webview.postMessage({ type: "setInputEnabled", enabled });
-  }
-
-  renderThreadList(
-    threads: ChatThreadSummary[],
-    activeThreadId: string
-  ): void {
-    this.panel?.webview.postMessage({ type: "renderThreadList", threads, activeThreadId });
-  }
-
-  clearThread(threadId?: string): void {
-    this.panel?.webview.postMessage({ type: "clearThread", ...(threadId === undefined ? {} : { threadId }) });
-  }
-
-  showRewindPreview(preview: RewindPreview): void {
-    this.panel?.webview.postMessage({ type: "rewindPreviewResult", preview });
-  }
-
-  prefillComposer(text: string, draft?: { threadId: string; imageAttachments: { name: string; mediaType: string; dataUrl: string; bytes: number }[] }): void {
-    this.panel?.webview.postMessage({ type: "composerPrefill", text, ...draft });
-  }
-
-  resolveInlineChangeCard(taskId: string, resolution: "applied" | "discarded"): void {
-    this.panel?.webview.postMessage({ type: "resolveInlineChangeCard", taskId, resolution });
-  }
-
-  updateThreadTitle(threadId: string, title: string): void {
-    this.panel?.webview.postMessage({ type: "thread_title_updated", payload: { thread_id: threadId, title } });
-  }
-
-  appendThinkingEntry(text: string): void {
-    this.panel?.webview.postMessage({ type: "appendThinkingEntry", text });
-  }
-
-  appendThinkingChunk(chunk: string): void {
-    this.panel?.webview.postMessage({ type: "appendThinkingChunk", chunk });
-  }
-
-  finalizeAgentMessage(): void {
-    this.panel?.webview.postMessage({ type: "finalizeAgentMessage" });
-  }
-
-  // Live, state-driven cards (Class A). The webview keeps a single slot per kind and
-  // replaces in place, so these are safe to call every poll tick.
-  // Every pending gate as a list (spec §4.5); an empty list clears the gate cards.
-  renderLiveGates(gates: LiveGateView[]): void {
-    this.panel?.webview.postMessage({ type: "renderLiveGates", gates });
-  }
-
-  clearLiveGates(): void {
-    this.panel?.webview.postMessage({ type: "renderLiveGates", gates: [] });
-  }
-
-  renderLivePlan(plan: LivePlanView): void {
-    this.panel?.webview.postMessage({ type: "renderLivePlan", plan });
-  }
-
-  clearLivePlan(): void {
-    this.panel?.webview.postMessage({ type: "clearLivePlan" });
-  }
-
-  renderLiveReview(review: { taskId: string; modifiedFiles: string[]; shadowWorkspacePath: string | null; stepsCompleted: number | null; stepsTotal: number | null; deviations: string[] }): void {
-    this.panel?.webview.postMessage({ type: "renderLiveReview", review });
-  }
-
-  clearLiveReview(): void {
-    this.panel?.webview.postMessage({ type: "clearLiveReview" });
-  }
-
-  renderLiveError(error: { taskId: string; status: "FAILED" | "ABORTED"; detail?: string }): void {
-    this.panel?.webview.postMessage({ type: "renderLiveError", error });
-  }
-
-  clearLiveError(): void {
-    this.panel?.webview.postMessage({ type: "clearLiveError" });
-  }
-
-  renderLiveTodos(todos: LiveTodosView): void {
-    this.panel?.webview.postMessage({ type: "renderLiveTodos", todos });
-  }
-
-  renderProviderAccess(access: ProviderAccess | null): void {
-    this.panel?.webview.postMessage({ type: "renderProviderAccess", access });
-  }
-
-  clearLiveTodos(): void {
-    this.panel?.webview.postMessage({ type: "clearLiveTodos" });
-  }
-
-  renderLiveSessions(sessions: LiveSessionsView): void {
-    this.panel?.webview.postMessage({ type: "renderLiveSessions", sessions });
-  }
-
-  clearLiveSessions(): void {
-    this.panel?.webview.postMessage({ type: "clearLiveSessions" });
-  }
-
-  sendLiveStatus(
-    status: string | null, turnActive: boolean,
-    extra?: { turnKind: "user" | "notice" | null; agentsRunning: number },
-  ): void {
-    this.panel?.webview.postMessage({
-      type: "liveStatus", status, turnActive,
-      turnKind: extra?.turnKind ?? null, agentsRunning: extra?.agentsRunning ?? 0,
-    });
-  }
-
-  replaceMessages(messages: ChatMessage[]): void {
-    this.panel?.webview.postMessage({ type: "replaceMessages", messages });
-  }
-
-  removeMessage(id: string): void {
-    this.panel?.webview.postMessage({ type: "removeChatMessage", id });
-  }
-
-  markQueued(id: string): void {
-    this.panel?.webview.postMessage({ type: "markQueued", id });
-  }
-
-  restoreDraft(text: string, recovery?: { draftId: string; mentionedPaths?: string[]; imageAttachments: { name: string; mediaType: string; dataUrl: string; bytes: number }[] }): void {
-    this.panel?.webview.postMessage(recovery ? { type: "draftRecovery", text, ...recovery } : { type: "composerPrefill", text });
-  }
-
-  renderAgents(agents: AgentSummary[]): void {
-    this.panel?.webview.postMessage({ type: "renderAgents", agents });
-  }
-
-  agentDetail(agentId: string, detail: AgentDetail): void {
-    this.panel?.webview.postMessage({ type: "agentDetail", agentId, detail });
-  }
-
-  agentEvent(agentId: string, event: SequencedStreamEvent): void {
-    this.panel?.webview.postMessage({ type: "agentEvent", agentId, event });
-  }
-
-  private modelRefreshEpoch = 0;
-
-  async refreshModels(): Promise<void> {
-    const panel = this.panel;
-    const epoch = ++this.modelRefreshEpoch;
-    const result = await this.onListModels();
-    if (epoch === this.modelRefreshEpoch && panel === this.panel) {
-      panel?.webview.postMessage({ type: "modelList", ...result });
-    }
-  }
-
-  private lastContextUsage: ContextUsage | null = null;
-  private contextUsageStale = false;
-
-  renderContextUsage(usage: ContextUsage | null, stale: boolean): void {
-    this.lastContextUsage = usage;
-    this.contextUsageStale = stale;
-    this.panel?.webview.postMessage({ type: "renderContextUsage", usage, stale });
-  }
-
-  renderThreadUsage(usage: ThreadUsage | null): void {
-    this.panel?.webview.postMessage({ type: "renderThreadUsage", usage });
-  }
-
-  renderTeams(teams: TeamSummary[]): void {
-    this.panel?.webview.postMessage({ type: "renderTeams", teams });
-  }
-
-  renderLiveTeams(teams: TeamLive[]): void {
-    this.panel?.webview.postMessage({ type: "renderLiveTeams", teams });
-  }
-
-  teamDetail(teamId: string, detail: TeamDetail): void {
-    this.panel?.webview.postMessage({ type: "teamDetail", teamId, detail });
-  }
-
-  teamEvent(teamId: string, event: TeamViewEvent): void {
-    this.panel?.webview.postMessage({ type: "teamEvent", teamId, event });
-  }
-
-  appendToolEvent(event: { id: number; tool: string; args: Record<string, unknown>; thought?: string; source: "explore" | "execution" | "planning" }): void {
-    this.panel?.webview.postMessage({ type: "appendToolEvent", event });
-  }
-
-  appendToolResult(id: number, output: string, isError: boolean, approvalNote?: string, sandbox?: "blocked" | "outside"): void {
-    this.panel?.webview.postMessage({ type: "appendToolResult", id, output, isError,
-      ...(approvalNote ? { approvalNote } : {}), ...(sandbox ? { sandbox } : {}) });
-  }
-
-  private lastWorkbarInfo: { stepIndex?: number; totalSteps?: number; stepTitle?: string; phaseLabel?: string } | null = null;
-
-  updateWorkbar(info: { stepIndex?: number; totalSteps?: number; stepTitle?: string; phaseLabel?: string } | null): void {
-    this.lastWorkbarInfo = info;
-    this.panel?.webview.postMessage({ type: "updateWorkbar", info });
-  }
-
-  updateRetryStatus(status: { attempt: number; max_attempts: number; reason: string; message: string } | null): void {
-    this.panel?.webview.postMessage({ type: "updateRetryStatus", status });
-  }
-
-  updateTokenProgress(
-    progress: {
-      thinking: number;
-      output: number;
-      input: number | null;
-      exact: boolean;
-    } | null,
-  ): void {
-    this.panel?.webview.postMessage({ type: "updateTokenProgress", progress });
-  }
-
-  updateEditFailure(failure: { reason: string; ops: number } | null): void {
-    this.panel?.webview.postMessage({ type: "updateEditFailure", failure });
   }
 
   private buildHtml(): string {
