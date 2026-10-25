@@ -1,8 +1,9 @@
 import { Icon } from "../components/Icon";
 import type { IconName } from "../components/Icon";
-import { SECTIONS, OVERVIEW_TINT, type SectionId } from "./sections/meta";
+import { sectionsForHost, OVERVIEW_TINT, type SectionId } from "./sections/meta";
 
 interface NavRailProps {
+  desktop?: boolean;
   active: SectionId;
   counts: Partial<Record<SectionId, number>>;
   onSelect: (id: SectionId) => void;
@@ -16,10 +17,10 @@ const PAD_TOP = 8; // p-2
  * NavRail — Copilot-style left navigation. A single glowing 2px indicator
  * bar slides (spring ease) to the active item instead of re-rendering per row.
  */
-export function NavRail({ active, counts, onSelect }: NavRailProps) {
+export function NavRail({ active, counts, onSelect, desktop = false }: NavRailProps) {
   const items: { id: SectionId; label: string; icon: IconName; tint: string }[] = [
     { id: "overview", label: "Overview", icon: "home", tint: OVERVIEW_TINT },
-    ...SECTIONS.map((s) => ({ id: s.id as SectionId, label: s.label, icon: s.icon, tint: s.tint })),
+    ...sectionsForHost(desktop).map((s) => ({ id: s.id as SectionId, label: s.label, icon: s.icon, tint: s.tint })),
   ];
   const activeIdx = Math.max(0, items.findIndex((i) => i.id === active));
 

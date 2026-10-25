@@ -43,3 +43,9 @@ describe("DiffPanes", () => {
     expect(container.innerHTML).toBe("");
   });
 });
+
+ it("keeps plus/minus-prefixed source lines and does not number a no-newline notice", () => {
+  render(<DiffPanes entries={[{ path: "a.ts", additions: 1, deletions: 1, unified_diff: "--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n---old\n+++new\n\\ No newline at end of file" }]} />);
+  expect(screen.getByText("--old")).toBeInTheDocument(); expect(screen.getByText("++new")).toBeInTheDocument();
+  expect(screen.getByText("\\ No newline at end of file")).toBeInTheDocument(); expect(screen.queryByText("2")).toBeNull();
+});

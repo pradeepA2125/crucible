@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -130,5 +131,50 @@ describe("ThreadView sub-agent wiring", () => {
     expect(postMessage).toHaveBeenCalledWith({ type: "setOpenAgents", agentIds: ["a"] });
     act(() => { screen.getByRole("button", { name: "Open limiter in a window" }).click(); });
     expect(screen.getByRole("dialog", { name: "Sub-agent limiter" })).toBeInTheDocument();
+  });
+});
+
+describe("embedded desktop inspection", () => {
+  it("uses ordinary focus and leaves Escape to other controls", () => {
+    const close = vi.fn();
+    render(<AgentsContext.Provider value={ui}><AgentWindow presentation="embedded" agentId="a" siblings={["a"]} onSwitch={() => {}} onClose={close} /></AgentsContext.Provider>);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("region", { name: "Sub-agent limiter" })).toBeInTheDocument();
+    const stop = screen.getByRole("button", { name: "■ Stop" }); stop.focus();
+    fireEvent.keyDown(document, { key: "Escape" }); fireEvent.keyDown(window, { key: "Escape" });
+    expect(close).not.toHaveBeenCalled(); expect(stop).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Close agent window" }));
+    expect(close).toHaveBeenCalledOnce(); expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "stopAgent" }));
+  });
+  it("keeps a single subscription union across inline rows, tabs, hide, thread change and unmount", () => {
+    const state = { view: "thread", threads: [], activeThreadId: "t", streaming: null, thinkingStatus: null,
+      inputEnabled: true, liveGates: [], livePlan: null, liveReview: null, liveError: null, contextUsage: null, contextUsageStale: false,
+      liveTodos: null, providerAccess: null, threadUsage: null, liveSessions: null, sessionTranscripts: {}, workbar: null,
+      retryStatus: null, tokenProgress: null, editFailure: null, liveStatus: null, turnActive: false, turnKind: null,
+      queuedIds: [], agentsRunning: 0, planMode: false, stepReview: true,
+      agents: ui.agents, agentViews: {}, teams: {}, teamViews: {},
+      messages: [{ role: "agent", content: "", type: "agent_dispatch", timestamp: "t", metadata: { agent_ids: ["a", "b"] } }],
+    } as AppState;
+    const open = vi.fn();
+    const draw = (visible: boolean, activeThreadId = "t") => <StrictMode><ThreadView state={{ ...state, activeThreadId }} chrome="embedded"
+      workspace={{ visible, open, render: panels => visible ? panels.map(panel => <div key={panel.id}>{panel.content}</div>) : null }}
+      onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} /></StrictMode>;
+    const view = render(draw(true));
+    expect(screen.queryByRole("button", { name: "Back to history" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Expand limiter" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open docs in a window" }));
+    expect(open).toHaveBeenCalledOnce(); expect(screen.getByRole("region", { name: "Sub-agent docs" })).toBeInTheDocument();
+    expect(postMessage).toHaveBeenLastCalledWith({ type: "setOpenAgents", agentIds: ["a", "b"] });
+    view.rerender(draw(false)); expect(postMessage).toHaveBeenLastCalledWith({ type: "setOpenAgents", agentIds: ["a"] });
+    view.rerender(draw(true)); expect(postMessage).toHaveBeenLastCalledWith({ type: "setOpenAgents", agentIds: ["a", "b"] });
+    fireEvent.click(screen.getByRole("button", { name: "Close agent window" }));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: "setOpenAgents", agentIds: ["a"] });
+    view.rerender(draw(true, "other"));
+    expect(postMessage).toHaveBeenLastCalledWith({ type: "setOpenAgents", agentIds: [] });
+    expect(postMessage.mock.calls.filter(([m]) => m.type === "stopAgent" || m.type === "disbandTeam")).toHaveLength(0);
+    const sets = postMessage.mock.calls.filter(([m]) => m.type === "setOpenAgents").map(([m]) => m.agentIds);
+    const distinct = sets.filter((set, index) => !index || JSON.stringify(set) !== JSON.stringify(sets[index - 1]));
+    expect(distinct).toEqual([[], ["a"], ["a", "b"], ["a"], ["a", "b"], ["a"], []]);
+    view.unmount(); expect(postMessage).toHaveBeenLastCalledWith({ type: "setOpenTeams", teamIds: [] });
   });
 });

@@ -231,7 +231,7 @@ const CHIP_CONFIG = {
   failed:  { label: "Failed",  color: "var(--color-red)", bg: "var(--red-bg)", brd: "var(--red-brd)" },
 } as const;
 
-function StatusChip({ status }: { status?: ThreadSummary["status"] }) {
+export function StatusChip({ status }: { status?: ThreadSummary["status"] }) {
   if (!status) return null;
   const cfg = CHIP_CONFIG[status];
   return (
@@ -251,18 +251,20 @@ function StatusChip({ status }: { status?: ThreadSummary["status"] }) {
   );
 }
 
-function ThreadRow({ thread, isActive, navLocked, now, onClick }: ThreadRowProps) {
+export function ThreadRow({ thread, isActive, navLocked, now, onClick }: ThreadRowProps) {
   const relTime = relativeTime(thread.updatedAt ?? thread.createdAt, now);
 
   return (
     <div
       role="button"
-      tabIndex={0}
-      onClick={onClick}
+      aria-disabled={navLocked}
+      aria-current={isActive ? "page" : undefined}
+      tabIndex={navLocked ? -1 : 0}
+      onClick={() => { if (!navLocked) onClick(); }}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          onClick();
+          if (!navLocked) onClick();
         }
       }}
       className={[

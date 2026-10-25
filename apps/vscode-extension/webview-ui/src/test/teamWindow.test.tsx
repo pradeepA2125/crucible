@@ -56,7 +56,7 @@ const agent = (id: string, label: string, status: string): AgentSummaryView => (
 
 function renderWindow(tab = "board", team = TEAM, posts = POSTS,
                       statuses: { review: string; impl: string } = { review: "completed", impl: "running" },
-                      usage: TeamsUi["usage"] = null, activity = ACTIVITY) {
+                      usage: TeamsUi["usage"] = null, activity = ACTIVITY, presentation: "modal" | "embedded" = "modal") {
   const onTab = vi.fn();
   const onClose = vi.fn();
   const agentsUi: AgentsUi = {
@@ -67,7 +67,7 @@ function renderWindow(tab = "board", team = TEAM, posts = POSTS,
   const teamsUi: TeamsUi = { teams: { "team-1": team },
     views: { "team-1": { posts, lastSeq: 4, activity, lastAseq: 6 } }, openTeam: vi.fn(), usage };
   render(<AgentsContext.Provider value={agentsUi}><TeamsContext.Provider value={teamsUi}>
-    <TeamWindow teamId="team-1" tab={tab} onTab={onTab} onClose={onClose} />
+    <TeamWindow presentation={presentation} teamId="team-1" tab={tab} onTab={onTab} onClose={onClose} />
   </TeamsContext.Provider></AgentsContext.Provider>);
   return { onTab, onClose };
 }
@@ -256,4 +256,14 @@ describe("published team deliverables and directed communication", () => {
     fireEvent.click(screen.getByRole("button", { name: "Messages" }));
     expect(screen.queryByText("Explain the tradeoff")).toBeNull();
   });
+});
+
+it("embedded team keeps board/member content without a modal Escape handler", () => {
+  const { onClose, onTab } = renderWindow("board", TEAM, POSTS, undefined, null, ACTIVITY, "embedded");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.getByRole("region", { name: "Team auth" })).toBeInTheDocument();
+  fireEvent.keyDown(window, { key: "Escape" }); expect(onClose).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("tab", { name: /review/ })); expect(onTab).toHaveBeenCalledWith("agent-r");
+  fireEvent.click(screen.getByRole("button", { name: "Close team window" })); expect(onClose).toHaveBeenCalledOnce();
+  expect(postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "disbandTeam" }));
 });

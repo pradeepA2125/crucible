@@ -10,6 +10,7 @@ import type { DiffEntry, ToolEventView } from "../../types";
 
 interface Props {
   taskId: string;
+  readOnly?: boolean;
   diffEntries: DiffEntry[];
   resolved?: "applied" | "discarded" | null;
   thinkingLog?: string[];
@@ -20,7 +21,7 @@ interface Props {
  * DiffCard — inline change result card with file-by-file rows and accept/reject actions.
  * Matches .card / .diff-card / .dstats / .fdot in the hi-fi mockup.
  */
-export function DiffCard({ taskId, diffEntries, resolved, thinkingLog, toolEvents }: Props) {
+export function DiffCard({ taskId, readOnly = false, diffEntries, resolved, thinkingLog, toolEvents }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [localResolved, setLocalResolved] = useState<"applied" | "discarded" | null>(null);
 
@@ -33,13 +34,13 @@ export function DiffCard({ taskId, diffEntries, resolved, thinkingLog, toolEvent
   const fileCount = diffEntries.length;
 
   function handleAccept() {
-    if (effectiveResolved !== null) return; // one-shot guard (UX Rule 2)
+    if (readOnly || effectiveResolved !== null) return; // one-shot guard (UX Rule 2)
     setLocalResolved("applied");
     vscode.postMessage({ type: "applyInlineChange", taskId });
   }
 
   function handleReject() {
-    if (effectiveResolved !== null) return; // one-shot guard (UX Rule 2)
+    if (readOnly || effectiveResolved !== null) return; // one-shot guard (UX Rule 2)
     setLocalResolved("discarded");
     vscode.postMessage({ type: "discardInlineChange", taskId });
   }
@@ -132,7 +133,8 @@ export function DiffCard({ taskId, diffEntries, resolved, thinkingLog, toolEvent
 
       {/* ── Actions row ── */}
       <div className="flex gap-1.5 px-2.5 py-2 border-t border-border">
-        {effectiveResolved === null && (
+        {readOnly && effectiveResolved === null && <span className="text-caption text-text-2">Saved change — reconnect before applying.</span>}
+        {effectiveResolved === null && !readOnly && (
           <>
             <BtnPrimary flex icon="check" onClick={handleAccept}>
               Accept all

@@ -253,3 +253,15 @@ describe("DiffCard — resolved step-review record", () => {
     expect(screen.getByText("y = 2")).toBeTruthy();
   });
 });
+
+
+it("makes unresolved historical changes inspectable without accepting or discarding them", () => {
+  const { rerender } = render(<DiffCard taskId="saved" diffEntries={ENTRIES} />);
+  expect(screen.getByRole("button", { name: /accept all/i })).toBeTruthy();
+  rerender(<DiffCard taskId="saved" diffEntries={ENTRIES} readOnly />);
+  expect(screen.queryByRole("button", { name: /accept all|reject/i })).toBeNull();
+  fireEvent.click(screen.getByText("Changes ready"));
+  fireEvent.click(screen.getAllByTitle("Open diff in editor")[0]);
+  expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "viewDiffFile" }));
+  expect(postMessage.mock.calls.some(([m]) => /^(apply|discard)InlineChange$/.test(m.type))).toBe(false);
+});

@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import hmac
 import ipaddress
+import json
 import logging
 import os
 import re
@@ -26,6 +27,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from agentd.auth_token import TokenFileError, read_token, touch_token
 from agentd.startup import in_background
+from agentd.project_ownership import OWNER
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +173,10 @@ class AuthMiddleware:
                 if not hmac.compare_digest(presented, state.token):
                     await _respond(send, 401, "invalid token")
                     return
+        if not is_health and OWNER.active and scope["method"] not in ("GET","HEAD") and not OWNER.owns(headers) and not OWNER.indexer(scope):
+            body=json.dumps({"detail":{"code":"project_owner_required","message":"This project is controlled by another client. Inspection is read only.",**OWNER.status()}}).encode()
+            await send({"type":"http.response.start","status":409,"headers":[(b"content-type",b"application/json"),(b"cache-control",b"no-store")]})
+            await send({"type":"http.response.body","body":body});return
         await self.app(scope, receive, send)
 
 

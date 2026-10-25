@@ -54,6 +54,9 @@ export interface Diagnostic {
 }
 
 export interface ThreadSummary {
+  turnActive?: boolean;
+  pendingGates?: number;
+  gateKinds?: string[];
   threadId: string;
   title: string;
   createdAt: string;
@@ -419,6 +422,7 @@ export type ContextUsage = ContextUsageBase & (
 
 // ── Extension → Webview ──────────────────────────────────────────────────────
 export type ExtensionMessage =
+  | { type: "chatAdmission"; admission: { threadId: string; state: "pending" | "unknown"; checking: boolean } | null }
   | { type: "appendMessage"; message: ChatMsg }
   | { type: "appendChunk"; chunk: string }
   | { type: "appendThinkingEntry"; text: string }
@@ -433,6 +437,7 @@ export type ExtensionMessage =
   | { type: "showThinking"; message: string }
   | { type: "updateThinking"; message: string }
   | { type: "hideThinking" }
+  | { type: "historyState"; history: { threadId: string; phase: "loading" | "current" | "unavailable"; cached: boolean; notice?: string; navigationSafe?: boolean; workBlocked?: string } }
   | { type: "setInputEnabled"; enabled: boolean }
   | { type: "renderThreadList"; threads: ThreadSummary[]; activeThreadId: string }
   | { type: "clearThread"; threadId?: string }
@@ -485,6 +490,7 @@ export type ExtensionMessage =
 
 // ── Webview → Extension ──────────────────────────────────────────────────────
 export type WebviewMessage =
+  | { type: "checkChatReceipt" }
   | { type: "webviewReady" }
   | { type: "setApprovalMode"; mode: ApprovalMode; confirmedFullAccess?: boolean; dontShowAgain?: boolean }
   | { type: "fullAccessFirstSendChoice"; requestId: string; choice: "continue" | "accept_edits" | "cancel" }
@@ -510,6 +516,7 @@ export type WebviewMessage =
   | { type: "docDecision"; threadId: string; approve: boolean }
   | { type: "stepDecision"; taskId: string; decision: "accept" | "discard" }
   // Agentic chat controller: mode-recommendation gate pick + per-edit review decision
+  | { type: "gateDecision"; threadId: string; gateId: string; kind: "mode" | "clarify" | "feedback"; value: string; draft?: { revision: number; version: number } }
   | { type: "modeDecision"; threadId: string; mode: string }
   // Picking "implement" on the mode gate exits Plan Mode — flips the composer's
   // sticky toggle off via the same single write path the toggle itself uses.
@@ -574,6 +581,11 @@ export interface ApprovalModeView {
 }
 
 export interface AppState {
+  /** Each attachment/view transition advances even when a batched A→B→A ends on A. */
+  attachmentGeneration?: number;
+  historyNavigationBlocked?: boolean;
+  historyState?: { threadId: string; phase: "loading" | "current" | "unavailable"; cached: boolean; notice?: string; navigationSafe?: boolean; workBlocked?: string };
+  chatAdmission?: { threadId: string; state: "pending" | "unknown"; checking: boolean } | null;
   approval?: ApprovalModeView;
   view: "history" | "thread";
   threads: ThreadSummary[];

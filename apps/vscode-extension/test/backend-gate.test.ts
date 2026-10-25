@@ -82,9 +82,38 @@ describe("BackendGate", () => {
 
   it("authedFetchFor attaches the header after verifying", async () => {
     const { g, fetch } = gate(["authed"]);
-    await g.authedFetchFor("http://127.0.0.1:9")("http://127.0.0.1:9/v1/index/build", { method: "POST" });
+    await g.authedFetchFor("http://127.0.0.1:9")("http://127.0.0.1:9/v1/config", { method: "GET" });
     const init = fetch.mock.calls[0][1] as RequestInit;
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer T");
     expect(init.redirect).toBe("manual");
   });
+});
+
+it('does not probe or fetch for an already-aborted caller', async () => {
+  const { g, probe, fetch } = gate(['authed']), controller = new AbortController(), reason = new Error('cancelled'); controller.abort(reason);
+  await expect(g.authedFetchFor('http://127.0.0.1:9')('http://127.0.0.1:9/x', {signal:controller.signal})).rejects.toBe(reason);
+  expect(probe).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
+});
+it('cancelled health-probe waiter never sends its request while its sibling uses the shared proof', async () => {
+  let finish!: (result: ProbeResult) => void;
+  const probe = vi.fn(() => new Promise<ProbeResult>(resolve => {finish=resolve;})), fetch = vi.fn(async () => new Response('{}'));
+  const { g } = gate([], { probe, fetch }), controller = new AbortController(), reason = new Error('cancelled during proof');
+  const request = g.authedFetchFor('http://127.0.0.1:9');
+  const cancelled = request('http://127.0.0.1:9/cancelled', {signal:controller.signal}), sibling = request('http://127.0.0.1:9/sibling');
+  controller.abort(reason); finish('authed'); await expect(cancelled).rejects.toBe(reason); await sibling;
+  expect(probe).toHaveBeenCalledTimes(1); expect(fetch).toHaveBeenCalledTimes(1); expect(fetch.mock.calls[0]?.[0]).toBe('http://127.0.0.1:9/sibling');
+});
+it('preserves authenticated signal and re-proves the endpoint after cancelled application fetch', async () => {
+  const controller = new AbortController(); let observed: RequestInit | undefined;
+  let admitted!: () => void; const entered = new Promise<void>(resolve => { admitted = resolve; });
+  const fetch: GateDeps['fetch'] = vi.fn(async (_input, init) => {
+    observed = init; admitted();
+    if (!init?.signal) return new Response('{}');
+    return new Promise<Response>((_resolve,reject) => init.signal!.addEventListener('abort', () => reject(init.signal!.reason), {once:true}));
+  });
+  const { g, probe } = gate(['authed'], { fetch }), request = g.authedFetchFor('http://127.0.0.1:9');
+  const pending = request('http://127.0.0.1:9/x', {signal:controller.signal}); await entered;
+  expect(observed?.signal).toBe(controller.signal); expect((observed?.headers as Record<string,string>).authorization).toBe('Bearer T');
+  const reason = new Error('cancelled fetch'); controller.abort(reason); await expect(pending).rejects.toBe(reason);
+  await request('http://127.0.0.1:9/next'); expect(probe).toHaveBeenCalledTimes(2);
 });

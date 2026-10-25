@@ -74,6 +74,7 @@ const NO_PROVIDER_STATE: SettingsState = {
 export default function SetupApp() {
   const [step, setStep] = useState<Step>("welcome");
   const [localModels, setLocalModels] = useState(true);
+  const [runtimePath, setRuntimePath] = useState("~/.crucible/runtime");
   const localModelsChosen = useRef(false);
   const [progress, setProgress] = useState<Record<string, ProgressRow>>({});
   const [installOk, setInstallOk] = useState<boolean | null>(null);
@@ -140,6 +141,7 @@ export default function SetupApp() {
           if (!msg.hasAccounts) vscode.postMessage({ type: "settings/chatgptSignIn" });
           break;
         case "setup/preferences":
+          if(msg.runtimePath)setRuntimePath(msg.runtimePath);
           if (!localModelsChosen.current) setLocalModels(msg.localModels);
           break;
         case "setup/ready":
@@ -232,7 +234,7 @@ export default function SetupApp() {
               ))}
             </ul>
             <p className="px-3 pb-3 text-[11px] text-text-3">
-              Everything lands in <code>~/.crucible/runtime</code> — nothing touches your system Python or PATH.
+              Everything lands in <code className="break-all">{runtimePath}</code> — nothing touches your system Python or PATH.
             </p>
           </CardShell>
           <BtnPrimary className="self-start" icon="chev-r" onClick={() => setStep("models")}>

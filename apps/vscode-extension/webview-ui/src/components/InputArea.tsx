@@ -1,4 +1,7 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRetainedDraft } from "../drafts/useRetainedDraft";
+import { REVIEW_APPEND_BYTES, type RegisterReviewDraft, type ReviewDraftSink } from "../drafts/reviewDraft";
+import type { DraftPort } from "../drafts/types";
+import { useRef, useEffect, useState, useCallback, useId } from "react";
 import { Icon } from "./Icon";
 import { ModelMenu } from "./ModelMenu";
 import { ApprovalMenu, ApprovalNotice } from "./ApprovalMenu";
@@ -16,6 +19,8 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/tiff"]);
 
 interface Props {
+  draftStore?: DraftPort;
+  registerReviewDraft?: RegisterReviewDraft;
   availability: InputAvailability;
   draft: string;
   threadId?: string;
@@ -39,8 +44,10 @@ const MAX_TEXTAREA_HEIGHT = 96;
  * newline. When availability.showStop is true, a Stop button appears on the
  * left side of the footer row and posts { type: "stopTurn" } once.
  */
-export function InputArea({ availability, draft, threadId = "", onDraftChange, approval, planMode = false, stepReview = true, threadUsage, teamNames, contextUsage = null, contextUsageStale = false }: Props) {
+export function InputArea({ availability, draft, threadId = "", onDraftChange, approval, planMode = false, stepReview = true, threadUsage, teamNames, contextUsage = null, contextUsageStale = false, draftStore, registerReviewDraft }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const sendingRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
   const [pendingImages, setPendingImages] = useState(0);
@@ -62,7 +69,8 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
     setImageAttachments([]);
     setImageError("");
     recoveryId.current = null;
-    pendingSlashRef.current = null;
+    pendingSlashRef.current = null; setPromptPending(false);
+    trackedMentionsRef.current = [];
     onDraftChange("");
   }, [threadId, onDraftChange]);
   const currentDraft = useRef(draft);
@@ -75,16 +83,18 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
     const recover = (event: MessageEvent) => {
       const m = event.data;
       if (m?.type === "composerPrefill" && m.threadId === scope.current) {
+        retention.edited();
         ++readerGeneration.current;
         for (const reader of readers.current) reader.abort();
         readers.current.clear();
         setPendingImages(0);
         recoveryId.current = null;
-        pendingSlashRef.current = null;
+        pendingSlashRef.current = null; setPromptPending(false);
         setImageAttachments(m.imageAttachments ?? []);
         trackedMentionsRef.current = [];
         return;
       }
+      if (draftStore && m?.type === "draftRecovery") return;
       if (m?.type !== "draftRecovery" || m.draftId !== recoveryId.current || currentDraft.current || readers.current.size) return;
       recoveryId.current = null;
       setImageAttachments(m.imageAttachments ?? []);
@@ -93,20 +103,24 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
     };
     window.addEventListener("message", recover);
     return () => window.removeEventListener("message", recover);
-  }, [onDraftChange]);
+  }, [onDraftChange, draftStore]);
 
-  function sendDraft(text: string, forcedSkills?: string[]) {
-    if (availability.disabled || readers.current.size) return;
+  async function sendDraft(text: string, forcedSkills?: string[]) {
+    if ((availability.sendDisabled ?? availability.disabled) || readers.current.size || sendingRef.current || retention.returned || retention.choosing) return;
     const draftId = `${Date.now()}-${Math.random()}`;
+    const submitted = { text: currentDraft.current, imageAttachments, mentionedPaths: [...trackedMentionsRef.current] };
+    if (draftStore) {
+      sendingRef.current = true; setSubmitting(true);
+      try { if (!await retention.begin(draftId, submitted) || !alive.current) return; }
+      finally { sendingRef.current = false; if (alive.current) setSubmitting(false); }
+    }
     recoveryId.current = draftId;
-    vscode.postMessage({ type: "sendMessage", text, originalDraftText: currentDraft.current, stepReview, planMode, draftId,
+    vscode.postMessage({ type: "sendMessage", text, originalDraftText: submitted.text, stepReview, planMode, draftId,
       ...(forcedSkills ? { forcedSkills } : {}),
-      ...(trackedMentionsRef.current.length ? { mentionedPaths: trackedMentionsRef.current } : {}),
-      ...(imageAttachments.length ? { imageAttachments } : {}),
+      ...(submitted.mentionedPaths.length ? { mentionedPaths: submitted.mentionedPaths } : {}),
+      ...(submitted.imageAttachments.length ? { imageAttachments: submitted.imageAttachments } : {}),
     });
-    trackedMentionsRef.current = [];
-    setImageAttachments([]);
-    onDraftChange("");
+    if (!draftStore) { trackedMentionsRef.current = []; setImageAttachments([]); onDraftChange(""); }
   }
   const [stopping, setStopping] = useState(false);
   // One-shot guard for the Tier B task-abort buttons (keep / revert).
@@ -134,6 +148,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
 
   // The text we sent for expansion, held across the async host round-trip so a
   // "no such prompt" reply can fall back to sending it as a normal message.
+  const [promptPending, setPromptPending] = useState(false);
   const pendingSlashRef = useRef<{ text: string; requestId: string } | null>(null);
   // Known skill names for deterministic /skill forced-load (the catalog from the host).
   // A prompt file of the same name wins (the host resolves prompts first).
@@ -153,6 +168,28 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
   // Ordered set of paths inserted via the @ dropdown in the CURRENT draft — only
   // these resolve to a real mention on send (not any stray "@text" the user typed).
   const trackedMentionsRef = useRef<string[]>([]);
+  const retention = useRetainedDraft({ port: draftStore, threadId, text: draft, images: imageAttachments,
+    mentions: trackedMentionsRef, isReading: () => readers.current.size > 0, setText: onDraftChange, setImages: setImageAttachments });
+  const reviewReady = !!threadId && retention.loaded && !retention.returned && !retention.choosing && !promptPending && pendingImages === 0;
+  const reviewReason = !threadId ? "Open a conversation first." : !retention.loaded ? retention.notice || "Wait for the unsent draft to load." : retention.returned || retention.choosing ? "Resolve the other unsent draft first." : promptPending ? "Wait for the prompt expansion." : pendingImages ? "Wait for the images to finish loading." : undefined;
+  const reviewState = useRef({ ready: reviewReady, reason: reviewReason, threadId, change: onDraftChange, edited: retention.edited });
+  reviewState.current = { ready: reviewReady, reason: reviewReason, threadId, change: onDraftChange, edited: retention.edited };
+  const appendReview = useCallback((text: string) => {
+    const latest = reviewState.current;
+    if (!alive.current || scope.current !== latest.threadId || !latest.ready || pendingSlashRef.current) return latest.reason || "The composer is not ready for a review comment.";
+    const next = currentDraft.current + (currentDraft.current ? "\n\n" : "") + text;
+    if (new TextEncoder().encode(next).byteLength > REVIEW_APPEND_BYTES) return "The comment would exceed the draft size limit. Shorten the draft first.";
+    latest.edited(); currentDraft.current = next; latest.change(next); return undefined;
+  }, []);
+  useEffect(() => {
+    if (!registerReviewDraft) return;
+    const sink: ReviewDraftSink = { threadId, ready: reviewReady, reason: reviewReason, append: appendReview };
+    return registerReviewDraft(sink);
+  }, [registerReviewDraft, threadId, reviewReady, reviewReason, appendReview]);
+  const otherDraftId = useId();
+  const otherText = retention.returned?.draft.text.split(/\r?\n/, 1)[0] ?? "";
+  const otherPreview = otherText.length > 120 ? `${otherText.slice(0, 120)}…` : otherText;
+  const otherImages = retention.returned?.draft.imageAttachments.length ?? 0;
 
   useEffect(() => {
     function onMessage(e: MessageEvent) {
@@ -195,11 +232,11 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
     function onMessage(e: MessageEvent) {
       const m = e.data as Record<string, unknown>;
       if (m?.["type"] !== "promptExpanded" || !pendingSlashRef.current || m["requestId"] !== pendingSlashRef.current.requestId || currentDraft.current.trim() !== pendingSlashRef.current.text) return;
-      if (availability.disabled || readers.current.size) return;
+      if ((availability.sendDisabled ?? availability.disabled) || readers.current.size) return;
       const original = pendingSlashRef.current.text;
-      pendingSlashRef.current = null;
+      pendingSlashRef.current = null; setPromptPending(false);
       if (m["found"] === true) {
-        onDraftChange(m["text"] as string);
+        retention.edited(); onDraftChange(m["text"] as string);
         return;
       }
       // No prompt file matched — was it a /skill? Deterministic forced-load: send the
@@ -211,7 +248,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
       } else {
         sendDraft(original);
       }
-      onDraftChange("");
+      if (!draftStore) onDraftChange("");
       const el = textareaRef.current;
       if (el) el.style.height = "auto";
     }
@@ -220,8 +257,10 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
   }, [onDraftChange, stepReview, skillNames, planMode, imageAttachments, availability.disabled]);
 
   function addImageFiles(files: FileList | File[]) {
+    if (retention.choosing) return;
+    retention.edited();
     recoveryId.current = null;
-    pendingSlashRef.current = null;
+    pendingSlashRef.current = null; setPromptPending(false);
     const batch = Array.from(files);
     if (readers.current.size || batch.length + imageAttachments.length > 8 ||
         batch.reduce((n, f) => n + f.size, 0) + imageAttachments.reduce((n, f) => n + f.bytes, 0) > 24 * 1024 * 1024 ||
@@ -263,9 +302,10 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
   }
 
   function handleInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    retention.edited();
     const value = e.target.value;
     recoveryId.current = null;
-    pendingSlashRef.current = null;
+    pendingSlashRef.current = null; setPromptPending(false);
     onDraftChange(value);
     maybeRequestCatalogs(value);
     const cursor = e.target.selectionStart ?? value.length;
@@ -297,7 +337,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
     if (trigger.kind === "file" && !trackedMentionsRef.current.includes(id)) {
       trackedMentionsRef.current = [...trackedMentionsRef.current, id];
     }
-    onDraftChange(next);
+    retention.edited(); onDraftChange(next);
     setTrigger(null);
     requestAnimationFrame(() => {
       if (!el) return;
@@ -332,7 +372,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
   }
 
   function doSend() {
-    if (availability.disabled || readers.current.size) return;
+    if ((availability.sendDisabled ?? availability.disabled) || readers.current.size || sendingRef.current || retention.returned || retention.choosing) return;
     const trimmed = draft.trim();
     if (!trimmed && imageAttachments.length === 0) return;
     const slash = parseSlashCommand(trimmed);
@@ -341,15 +381,13 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
       // draft (user reviews, then sends again → real send); found=false falls back
       // to sending `original` as a normal message (see the listener above).
       const requestId = `${Date.now()}-${Math.random()}`;
-      pendingSlashRef.current = { text: trimmed, requestId };
+      pendingSlashRef.current = { text: trimmed, requestId }; setPromptPending(true);
       vscode.postMessage({ type: "expandPrompt", name: slash.name, args: slash.args, requestId });
       return;
     }
     trackedMentionsRef.current = trackedMentionsRef.current.filter(p => draft.includes(`@${p}`));
-    sendDraft(trimmed);
-    trackedMentionsRef.current = [];
-    setImageAttachments([]);
-    onDraftChange("");
+    void sendDraft(trimmed);
+    if (!draftStore) { trackedMentionsRef.current = []; setImageAttachments([]); onDraftChange(""); }
     // Reset height after clearing.
     const el = textareaRef.current;
     if (el) el.style.height = "auto";
@@ -400,7 +438,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
     tier: "older", snapshot: null, mode: stepReview ? "ask" : "accept_edits",
     confirmed: true, pending: false, warningDismissed: false, trusted: true, error: null, notice: null,
   };
-  const canSend = !availability.disabled && pendingImages === 0 && (draft.trim().length > 0 || imageAttachments.length > 0);
+  const canSend = !retention.choosing && !retention.returned && !submitting && !(availability.sendDisabled ?? availability.disabled) && pendingImages === 0 && (draft.trim().length > 0 || imageAttachments.length > 0);
 
   return (
     <div
@@ -414,6 +452,13 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
           onSelect={applyTriggerSelection}
         />
       )}
+      {draftStore && retention.notice && <p role="status" className="pb-2 text-meta text-text-3">{retention.notice}</p>}
+      {draftStore && <span role="status" className="sr-only">{retention.returned ? "Another unsent draft is saved." : ""}</span>}
+      {draftStore && retention.returned && <div id={otherDraftId} role="group" aria-label="Other unsent draft" className="flex items-center gap-2 pb-2 text-meta text-text-2">
+        <span>Another unsent draft is saved. Swap it in, or discard it before sending. {otherPreview}{otherImages > 0 ? ` · ${otherImages} image${otherImages === 1 ? "" : "s"}` : ""}</span>
+        <button type="button" disabled={retention.choosing} onClick={() => retention.choose("restore")} className="text-accent">Swap in</button>
+        <button type="button" disabled={retention.choosing} onClick={() => retention.choose("discard")} className="text-text-3">Discard other draft</button>
+      </div>}
       {(imageAttachments.length > 0 || pendingImages > 0 || imageError) && (
         <div data-testid="composer-images" className="flex flex-wrap gap-2 pb-2 pt-1">
           <span className="sr-only">
@@ -425,7 +470,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
               style={{ border: "1px solid var(--color-border-strong)", background: "var(--color-surface-2)" }}>
               <img width={56} height={56} src={image.dataUrl} alt={image.name} className="h-full w-full object-cover" />
               <button type="button" aria-label={`Remove ${image.name}`}
-                onClick={() => { recoveryId.current = null; pendingSlashRef.current = null; setImageAttachments(current => current.filter((_, index) => index !== i)); }}
+                disabled={retention.choosing} onClick={() => { retention.edited(); recoveryId.current = null; pendingSlashRef.current = null; setPromptPending(false); setImageAttachments(current => current.filter((_, index) => index !== i)); }}
                 className="absolute right-0.5 top-0.5 flex h-[18px] w-[18px] items-center justify-center rounded-full text-text opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
                 style={{ background: "var(--color-surface-3)", border: "1px solid var(--color-border-strong)" }}>
                 <Icon name="x" size={9} />
@@ -450,7 +495,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
         onChange={handleInput}
         onPaste={handlePaste}
         onKeyDown={handleKeyDown}
-        disabled={availability.disabled}
+        disabled={availability.disabled || retention.choosing}
         placeholder={!availability.disabled && planMode ? "Describe a plan…" : availability.placeholder}
         aria-label="Chat input" name="message" autoComplete="off"
         className={[
@@ -474,9 +519,9 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
           <button type="button" aria-label="Add context" aria-haspopup="menu" aria-expanded={addOpen} onClick={() => setAddOpen(!addOpen)}
             className="flex h-7 w-7 items-center justify-center rounded-control text-text-2 hover:bg-surface-2 hover:text-text"><Icon name="plus" size={14} /></button>
           {addOpen && <div role="menu" aria-label="Add context" style={addPosition} className="absolute bottom-full z-50 mb-2 grid rounded-card border border-border-strong bg-surface-3 p-1 text-body text-text">
-            <button type="button" role="menuitem" disabled={availability.disabled} onClick={() => { setAddOpen(false); imageInputRef.current?.click(); }} className="rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">Attach images</button>
-            <button type="button" role="menuitem" disabled={availability.disabled} onClick={() => insertTrigger("file")} className="rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">Mention a file @</button>
-            <button type="button" role="menuitem" disabled={availability.disabled} onClick={() => insertTrigger("slash")} className="rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">Commands /</button>
+            <button type="button" role="menuitem" disabled={availability.disabled || retention.choosing} onClick={() => { setAddOpen(false); imageInputRef.current?.click(); }} className="rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">Attach images</button>
+            <button type="button" role="menuitem" disabled={availability.disabled || retention.choosing} onClick={() => insertTrigger("file")} className="rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">Mention a file @</button>
+            <button type="button" role="menuitem" disabled={availability.disabled || retention.choosing} onClick={() => insertTrigger("slash")} className="rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">Commands /</button>
           </div>}
         </div>
         <ApprovalMenu approval={effectiveApproval} />
@@ -499,7 +544,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
           </div>}
         </div> : availability.showStop ? <button type="button" onClick={handleStop} disabled={stopping} aria-label="Stop" title="Stop"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface-2 text-text disabled:opacity-50"><Icon name="stop" size={13} /></button>
-        : <button type="button" onClick={doSend} disabled={!canSend} aria-label="Send" title="Send (Enter)"
+        : <button type="button" onClick={doSend} disabled={!canSend} aria-label="Send" aria-describedby={retention.returned ? otherDraftId : undefined} title={retention.returned ? "Swap in or discard the other draft first" : "Send (Enter)"}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent-fill)] text-[var(--on-accent)] hover:bg-[var(--accent-fill-hover)] disabled:opacity-40 disabled:cursor-default"><Icon name="send" size={14} /></button>}
         <ApprovalNotice approval={effectiveApproval} />
       </div>

@@ -1,16 +1,11 @@
 import * as vscode from "vscode";
-
+import { realpathSync } from "node:fs";
+import { ownerFor } from "./runtime/project-owner.js";
 import type { BackendClientFactory } from "./controller.js";
-import { PROVIDER_KEY_ENV } from "./runtime/vscode-runtime.js";
 import type { RuntimeManager } from "./runtime/vscode-runtime.js";
-import type { SettingsDeps } from "./settings-data.js";
-import { buildClaudeDeps } from "./claude-deps.js";
-import { buildChatGPTDeps } from "./chatgpt-deps.js";
-import { buildModelOptions } from "./composer-models.js";
+import { createHostSettingsDeps } from "./host-settings-deps.js";
 import { loadInstructions, saveInstructions } from "./instructions-file.js";
-import { PROVIDERS } from "./setup-data.js";
 import { readThemeConfig } from "./settings.js";
-
 const ENV_FLAG_KEYS = [
   "crucible.policy.shell",
   "crucible.policy.scope",
@@ -29,60 +24,13 @@ export interface SettingsDepsOptions {
   resolveBackendUrl: () => string;
 }
 
-/**
- * Builds the vscode-wired {@link SettingsDeps} consumed by `createSettingsHandler`.
- * Extracted from SettingsPanel so the chat webview's floating settings overlay can
- * share the exact same host wiring (provider hot-swap, MCP admin, skills/policy
- * flags, runtime restart) — one settings backend, two mount points.
- */
-export function buildSettingsDeps(opts: SettingsDepsOptions): SettingsDeps {
+export function buildSettingsDeps(opts: SettingsDepsOptions) {
   const { runtimeManager, workspacePath } = opts;
-  const client = () => {
-    const url = opts.resolveBackendUrl().trim();
-    if (!url) {
-      throw new Error(
-        'Backend not started yet — run "Crucible: Run Setup" or restart the backend.',
-      );
-    }
-    return opts.clientFactory(url);
-  };
-
-  return {
-    client: {
-      getConfig: () => client().getConfig(),
-      listMcpServers: () => client().listMcpServers(),
-      listSkills: (workspace) => client().listSkills(workspace),
-      validateProvider: (req) => client().validateProvider(req),
-      setProvider: async (req) => {
-        const result = await client().setProvider(req);
-        // Persist the choice for the next managed restart/relaunch — the hot-swap
-        // route only changes the in-process engine. The secret itself is stored
-        // separately via storeSecret (SecretStorage), so no apiKey here.
-        await runtimeManager.saveProvider(result.backend, result.model);
-        return result;
-      },
-      upsertMcpServer: (name, entry, disabled) => client().upsertMcpServer(name, entry, disabled),
-      deleteMcpServer: (name, disabled) => client().deleteMcpServer(name, disabled),
-      reconnectMcpServer: (name, disabled) => client().reconnectMcpServer(name, disabled),
-      setMcpServerTools: (name, enabledTools, disabledTools, disabled) =>
-        client().setMcpServerTools(name, enabledTools, disabledTools, disabled),
-      testContextWindow: (req) => client().testContextWindow(req),
-      listAgentDefinitions: () => client().listAgentDefinitions(),
-      saveAgentDefinition: (name, input) => client().saveAgentDefinition(name, input),
-      deleteAgentDefinition: (name) => client().deleteAgentDefinition(name),
-      trustAgentDefinition: (path, sha256) => client().trustAgentDefinition(path, sha256),
-    },
-    workspace: workspacePath,
-    readRuntimeJson: () => runtimeManager.installedRuntime(),
-    mcpDisabled: () => runtimeManager.mcpDisabled(),
-    setMcpDisabled: (names) => runtimeManager.setMcpDisabled(names),
-    skillsDisabled: () => runtimeManager.skillsDisabled(),
-    setSkillsDisabled: (names) => runtimeManager.setSkillsDisabled(names),
-    storeSecret: (backend, key) => runtimeManager.storeProviderKey(backend, key),
-    deleteSecret: (backend) => runtimeManager.deleteProviderKey(backend),
-    storeExtraCredentials: (backend, extraCredentials) =>
-      runtimeManager.storeProviderExtraCredentials(backend, extraCredentials),
-    keyEnvVar: (backend) => PROVIDER_KEY_ENV[backend],
+  return createHostSettingsDeps({ ...opts, openExternal: async url => {
+    await vscode.env.openExternal(vscode.Uri.parse(url));
+  }, openClaudeExternal: async url => {
+    if (!await vscode.env.openExternal(vscode.Uri.parse(url))) throw new Error("The browser could not be opened. Try connecting Claude again.");
+  }, native: {
     readEnvFlags: () => {
       const cfg = vscode.workspace.getConfiguration();
       const out: Record<string, string> = {};
@@ -109,25 +57,11 @@ export function buildSettingsDeps(opts: SettingsDepsOptions): SettingsDeps {
       await cfg.update("accent", accent, vscode.ConfigurationTarget.Global);
     },
     readInstructions: () => loadInstructions(workspacePath),
-    writeInstructions: (content) => saveInstructions(workspacePath, content),
-    restartBackend: () => runtimeManager.restart(workspacePath),
-    chatgpt: buildChatGPTDeps(runtimeManager, client),
-    claude: buildClaudeDeps(runtimeManager, client),
-    saveContextWindow: (tokens) => runtimeManager.saveContextWindow(tokens),
-    // Absolute paths: ~/.claude/agents files live outside the workspace (spec §10.2).
-    openFile: async (path) => {
-      await vscode.window.showTextDocument(vscode.Uri.file(path));
+    writeInstructions: async (content) => {
+      const owner = ownerFor(opts.resolveBackendUrl());
+      if (!owner || owner.workspace !== realpathSync(workspacePath)) throw new Error("Read only. Save project instructions in the controlling client.");
+      return saveInstructions(workspacePath, content);
     },
-    // The same option list as the composer's model menu (spec §10.2): providers with a
-    // stored key, plus the active one.
-    listModels: async () => {
-      const config = await client().getConfig();
-      const keyed: string[] = [];
-      for (const p of PROVIDERS) {
-        if (p.keyEnvVar && (await runtimeManager.getProviderKey(p.id)) !== undefined) keyed.push(p.id);
-      }
-      const options = buildModelOptions(config.provider ?? null, keyed, PROVIDERS);
-      return [...new Set(options.map((o) => o.model).filter((m) => m))];
-    },
-  };
+    openFile: async path => { await vscode.window.showTextDocument(vscode.Uri.file(path)); },
+  } });
 }

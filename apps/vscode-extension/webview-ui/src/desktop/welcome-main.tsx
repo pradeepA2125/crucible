@@ -1,0 +1,10 @@
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { acquireVsCodeApiSingleton } from "../sharedVscodeApi";
+import { installThemeSync } from "../theme";
+import { DesktopWelcome } from "./DesktopWelcome";
+import "../index.css";
+import "./desktop.css";
+const api=acquireVsCodeApiSingleton();
+installThemeSync(document,window,message=>api.postMessage(message));
+ReactDOM.createRoot(document.getElementById("root")!).render(<React.StrictMode><DesktopWelcome/></React.StrictMode>);

@@ -94,7 +94,7 @@ describe("team plan gate and implementation fields", () => {
   });
 
   it("posts a plan decision", async () => {
-    const fetchFn = respond({ team_id: "team-1", phase: "DELIBERATING" });
+    const fetchFn = vi.fn(async () => new Response(JSON.stringify({ team_id: "team-1", phase: "DELIBERATING" })));
     const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn });
     expect(await c.decideTeamPlan("t", "g1", "feedback", "use redis")).toEqual(
       { teamId: "team-1", phase: "DELIBERATING" });

@@ -2,10 +2,8 @@ import * as fs from "node:fs";
 import * as vscode from "vscode";
 
 import type { BackendClientFactory } from "./controller.js";
-import { PROVIDER_KEY_ENV } from "./runtime/vscode-runtime.js";
 import type { RuntimeManager } from "./runtime/vscode-runtime.js";
-import { buildClaudeDeps } from "./claude-deps.js";
-import { buildChatGPTDeps } from "./chatgpt-deps.js";
+import { createHostSetupDeps } from "./host-setup-deps.js";
 import { createSetupHandler, type SetupDeps, type SetupInMsg } from "./setup-data.js";
 import { injectThemeAttributes, themeHub, themeReadyReply } from "./theme-settings.js";
 
@@ -60,74 +58,13 @@ export class SetupPanel {
   }
 
   private buildDeps(): SetupDeps {
-    return {
-      localModels: () => this.runtimeManager.localModels(),
-      install: async (onProgress, localModels = true) => {
-        await this.runtimeManager.setLocalModels(localModels);
-        return this.runtimeManager.install(onProgress);
-      },
-      validate: async (req) => {
-        const url = this.runtimeManager.backendUrl(this.workspacePath);
-        if (!url) {
-          return { ok: false, error: "Backend not started yet — click Save & Start." };
-        }
-        const result = await this.clientFactory(url).validateProvider(req);
-        return {
-          ok: result.ok,
-          ...(result.model !== undefined ? { model: result.model } : {}),
-          ...(result.error !== undefined ? { error: result.error } : {}),
-          ...(result.jsonMode !== undefined ? { jsonMode: result.jsonMode } : {}),
-          ...(result.warning !== undefined ? { warning: result.warning } : {}),
-        };
-      },
-      saveAndStart: async (backend, model, apiKey, extraCredentials) => {
-        await this.runtimeManager.saveProvider(backend, model, apiKey, extraCredentials);
-        const { port } = await this.runtimeManager.startForWorkspace(this.workspacePath);
-        const url = this.runtimeManager.backendUrl(this.workspacePath) ?? `http://127.0.0.1:${port}`;
-        const result = await this.clientFactory(url).validateProvider({ backend, model });
-        if (!result.ok) {
-          throw new Error(result.error ?? "Provider validation failed after starting the backend.");
-        }
-        // The chat controller/settings provider must learn about this URL too — otherwise
-        // a manually-run setup (e.g. the wizard didn't auto-open, or a retry after a failed
-        // first attempt) leaves the controller pointed at the stale default backendBaseUrl
-        // and every chat call fails with "fetch failed" even though the backend is healthy.
-        this.setManagedBackendUrl(url);
-        return {
-          port,
-          ...(result.jsonMode !== undefined ? { jsonMode: result.jsonMode } : {}),
-          ...(result.warning !== undefined ? { warning: result.warning } : {}),
-        };
-      },
-      startForChatGPT: async () => {
-        // No model yet: the account's catalog is only reachable once signed in.
-        await this.runtimeManager.saveProvider("chatgpt", "");
-        const { port } = await this.runtimeManager.startForWorkspace(this.workspacePath);
-        const url = this.runtimeManager.backendUrl(this.workspacePath) ?? `http://127.0.0.1:${port}`;
-        this.setManagedBackendUrl(url);
-        return { port };
-      },
-      startForClaude: async () => {
-        await this.runtimeManager.saveProvider("claude_subscription", "claude-sonnet-5-5");
-        const { port } = await this.runtimeManager.startForWorkspace(this.workspacePath);
-        const url = this.runtimeManager.backendUrl(this.workspacePath) ?? `http://127.0.0.1:${port}`;
-        this.setManagedBackendUrl(url);
-        return { port };
-      },
-      claude: buildClaudeDeps(this.runtimeManager, () => {
-        const url = this.runtimeManager.backendUrl(this.workspacePath);
-        if (!url) throw new Error("Backend not started yet.");
-        return this.clientFactory(url);
-      }),
-      chatgpt: buildChatGPTDeps(this.runtimeManager, () => {
-        const url = this.runtimeManager.backendUrl(this.workspacePath);
-        if (!url) throw new Error("Backend not started yet.");
-        return this.clientFactory(url);
-      }),
-      openChat: () => this.openChatCommand(),
-      keyEnvVar: (backend) => PROVIDER_KEY_ENV[backend],
-      storedExtraEnvVars: (backend) => this.runtimeManager.storedExtraEnvVars(backend),
-    };
+    return createHostSetupDeps({ runtime: this.runtimeManager, workspace: this.workspacePath,
+      clientFactory: this.clientFactory, openChat: this.openChatCommand,
+      onBackendUrl: this.setManagedBackendUrl, openExternal: async url => {
+        await vscode.env.openExternal(vscode.Uri.parse(url));
+      }, openClaudeExternal: async url => {
+        if (!await vscode.env.openExternal(vscode.Uri.parse(url))) throw new Error("The browser could not be opened. Try connecting Claude again.");
+      } });
   }
 
   private buildHtml(): string {

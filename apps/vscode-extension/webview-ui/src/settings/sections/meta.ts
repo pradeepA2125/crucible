@@ -2,7 +2,7 @@ import type { IconName } from "../../components/Icon";
 import type { SettingsInMsg, SettingsState } from "../types";
 
 export type SectionId =
-  | "overview" | "appearance" | "provider" | "mcp" | "skills" | "agents" | "instructions" | "policies" | "runtime";
+  | "updates" | "desktop" | "drafts" | "overview" | "appearance" | "provider" | "mcp" | "skills" | "agents" | "instructions" | "policies" | "runtime";
 
 export interface SectionMeta {
   id: Exclude<SectionId, "overview">;
@@ -25,6 +25,16 @@ export const SECTIONS: SectionMeta[] = [
   { id: "policies", label: "Policies & Memory", icon: "shield", blurb: "Shell & scope approval policies, memory harness flags.", tint: "var(--color-red)" },
   { id: "runtime", label: "Runtime", icon: "chip", blurb: "Installed runtime components, versions, and backend restart.", tint: "var(--color-accent)" },
 ];
+
+/** Desktop-local preferences do not appear in the VS Code settings registry. */
+export function sectionsForHost(desktop = false): SectionMeta[] {
+  if (!desktop) return SECTIONS;
+  return [SECTIONS[0]!, { id: "desktop", label: "Desktop", icon: "chip", blurb: "Background work, notifications and sleep preferences.", tint: "var(--color-accent)" }, {
+    id: "drafts", label: "Drafts", icon: "book",
+    blurb: "Encrypted storage and recovery for unsent desktop messages.",
+    tint: "var(--color-accent)",
+  }, { id: "updates", label: "Updates", icon: "retry", blurb: "New desktop versions from the project’s GitHub releases.", tint: "var(--color-accent)" }, ...SECTIONS.slice(1)];
+}
 
 /** Icon tint for the Overview destination (not part of SECTIONS). */
 export const OVERVIEW_TINT = "var(--color-accent)";

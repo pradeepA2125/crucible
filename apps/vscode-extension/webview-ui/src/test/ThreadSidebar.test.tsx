@@ -1,0 +1,31 @@
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { expect, it, vi } from "vitest";
+import { ThreadSidebar, waitingLabel } from "../desktop/ThreadSidebar";
+import type { Metadata, ThreadMetadataPort } from "../desktop/threadMetadataClient";
+const thread = (id: string) => ({ threadId: id, title: `Thread ${id}`, workspacePath: "/p", createdAt: "2026-10-21", updatedAt: "2026-10-22" });
+it("groups actual attention and offers local pin/rename/archive/restore without changing backend history", async () => {
+  let metadata: Metadata = {};
+  const port: ThreadMetadataPort = { read: async () => metadata, change: vi.fn(async (id, action, value) => {
+    const m = { ...(metadata[id] ?? { pinned: false, archived: false }) };
+    if (action === "pin") m.pinned = value as boolean; if (action === "archive") m.archived = value as boolean;
+    if (action === "name") m.name = value as string;
+    metadata = { ...metadata, [id]: m }; return metadata;
+  }) };
+  const select = vi.fn();
+  render(<ThreadSidebar threads={[{ ...thread("a"), pendingGates: 1, gateKinds: ["command"] }, thread("b")]} active="" project="Project" query="" locked={false} now={new Date()} ready={false} port={port} onSelect={select} />);
+  expect(screen.getByText("Waiting for you")).toBeTruthy(); expect(screen.getByText("Command approval")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: /^Thread a/ })); expect(select).toHaveBeenCalledWith("a");
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "Conversation menu: Thread b" }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "Pin" })); await waitFor(() => expect(screen.getByText("Pinned")).toBeTruthy());
+  fireEvent.click(screen.getByRole("button", { name: "Conversation menu: Thread b" })); fireEvent.click(screen.getByRole("menuitem", { name: "Rename locally" }));
+  fireEvent.change(screen.getByRole("textbox", { name: "Local conversation name" }), { target: { value: "My local name" } }); fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Conversation menu: My local name" })).toBeTruthy());
+  fireEvent.click(screen.getByRole("button", { name: "Conversation menu: My local name" })); fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+  await waitFor(() => expect(screen.getByText("Archived")).toBeTruthy());
+  fireEvent.click(screen.getByText("Archived")); fireEvent.click(screen.getByRole("button", { name: "Conversation menu: My local name" })); fireEvent.click(screen.getByRole("menuitem", { name: "Restore conversation" }));
+  await waitFor(() => expect(screen.queryByText("Archived")).toBeNull());
+  expect(metadata.b).toMatchObject({ pinned: true, archived: false, name: "My local name" });
+  expect(within(screen.getByRole("list", { name: "Pinned conversations" })).getByText("My local name")).toBeTruthy();
+});
+it("uses truthful legacy attention and handles unknown gate kinds", () => { expect(waitingLabel()).toBe("Needs attention"); expect(waitingLabel(["new_kind"])).toBe("Decision needed"); });

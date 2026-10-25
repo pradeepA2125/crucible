@@ -15,6 +15,12 @@ import {
   RewindResultSchema,
   type RewindPreview,
   type RewindResult,
+  CheckpointSummarySchema,
+  BaselineEntrySchema,
+  BaselineFileSchema,
+  type CheckpointSummary,
+  type BaselineEntry,
+  type BaselineFile,
   ChatEventSchema,
   ChatMessageSchema,
   ThreadLiveStateSchema,
@@ -83,6 +89,12 @@ import {
   type ChatMessage,
   type SequencedStreamEvent,
   type SendChatOptions,
+  type ChatStreamOptions,
+  ProjectChatActivitySchema,
+  type ProjectChatActivity,
+  GateDecisionClaimSchema, GateDecisionIdentitySchema, GateDecisionReceiptWireSchema,
+  GateDecisionLookupWireSchema, gateDecisionIdentity,
+  type GateDecisionClaim, type GateDecisionIdentity, type GateDecisionReceipt, type GateDecisionLookup,
   type SendChatResult,
   type ThreadAttention,
   ChatGPTAccountSchema,
@@ -169,6 +181,14 @@ async function responseError(response: Response, message: string): Promise<Backe
   return new BackendRequestError(message, response.status, body?.detail);
 }
 
+/** The request may have launched work; transport failure is not a rejection. */
+export class ChatAdmissionUnknownError extends Error {
+  constructor(readonly cause: unknown) {
+    super("The backend's receipt of this request could not be confirmed.");
+    this.name = "ChatAdmissionUnknownError";
+  }
+}
+
 export class HttpBackendClient implements BackendTaskClient {
   private readonly fetchFn: FetchLike;
 
@@ -197,33 +217,47 @@ export class HttpBackendClient implements BackendTaskClient {
    * (streamChannel does this for `chat_done`/`done`; the turn-launching methods don't,
    * since their HTTP response body ending IS the natural close signal).
    */
-  private async *consumeChatEventStream(
-    response: Response, doneTypes: ReadonlySet<string> = new Set(),
+  private consumeChatEventStream(
+    response: Response, doneTypes: ReadonlySet<string> = new Set(), signal?: AbortSignal,
   ): AsyncIterable<StreamEvent> {
-    if (!response.body) return;
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    try {
-      while (true) {
-        const { done, value } = await readWithIdleTimeout(reader);
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data:")) continue;
-          try {
-            const event = ChatEventSchema.parse(JSON.parse(line.slice(5).trim())) as StreamEvent;
+    const reader = response.body?.getReader();
+    const cancel = () => { void reader?.cancel().catch(() => {}); };
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) cancel();
+    // Cancellation must work even before the generator's first next().
+    return (async function* () {
+      const decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        if (!reader || signal?.aborted) return;
+        while (true) {
+          const { done, value } = await readWithIdleTimeout(reader);
+          if (done || signal?.aborted) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (signal?.aborted) return;
+            if (!line.startsWith("data:")) continue;
+            let event: StreamEvent;
+            try { event = ChatEventSchema.parse(JSON.parse(line.slice(5).trim())) as StreamEvent; }
+            catch { continue; }
             yield event;
             if (doneTypes.has(event.type)) return;
-          } catch {
-            // skip malformed SSE line
           }
         }
+      } finally {
+        signal?.removeEventListener("abort", cancel);
+        cancel();
       }
-    } finally {
-      reader.cancel().catch(() => {});
+    })();
+  }
+
+  private async fetchChatAdmission(input: string, init: RequestInit): Promise<Response> {
+    try { return await this.fetchFn(input, init); }
+    catch (error) {
+      if (error instanceof BackendAuthError) throw error;
+      throw new ChatAdmissionUnknownError(error);
     }
   }
 
@@ -378,6 +412,24 @@ export class HttpBackendClient implements BackendTaskClient {
 
   // Controller per-edit review gate (Phase F3): a plain JSON ack — the loop's
   // continuation rides the already-open message SSE stream.
+  private async fetchGateAck(path: string, init: RequestInit): Promise<unknown> {
+    const abort = new AbortController(), timer = setTimeout(() => abort.abort(), 15_000);
+    try {
+      const response = await this.fetchChatAdmission(`${this.options.baseUrl}${path}`, { ...init, signal: abort.signal, headers: { "content-type": "application/json" } });
+      if (!response.ok) {
+        if (response.status >= 500) {
+          void response.body?.cancel().catch(() => {});
+          throw new ChatAdmissionUnknownError(new Error("Approval receipt is unknown"));
+        }
+        let detail: unknown = null;
+        try { const body = await this.readGateReply(response, abort.signal); detail = (body as Record<string, unknown>)?.detail ?? body; } catch { /* status still proves refusal */ }
+        throw new BackendRequestError(`Approval decision failed (${response.status})`, response.status, detail);
+      }
+      try { return await this.readGateReply(response, abort.signal); }
+      catch (error) { throw new ChatAdmissionUnknownError(error); }
+    } finally { clearTimeout(timer); abort.abort(); }
+  }
+
   async postEditDecision(
     threadId: string,
     decision: "accept" | "reject",
@@ -386,7 +438,7 @@ export class HttpBackendClient implements BackendTaskClient {
   ): Promise<void> {
     const body: Record<string, unknown> = { decision, reason: reason ?? "" };
     if (gateId !== undefined) body.gate_id = gateId;
-    await this.fetchJson(
+    await this.fetchGateAck(
       `/v1/chat/threads/${encodeURIComponent(threadId)}/edit-decision`,
       { method: "POST", body: JSON.stringify(body) }
     );
@@ -433,7 +485,7 @@ export class HttpBackendClient implements BackendTaskClient {
     };
     if (decision.ruleValue !== undefined) body.rule_value = decision.ruleValue;
     if (gateId !== undefined) body.gate_id = gateId;
-    await this.fetchJson(
+    await this.fetchGateAck(
       `/v1/chat/threads/${encodeURIComponent(threadId)}/command-decision`,
       { method: "POST", body: JSON.stringify(body) }
     );
@@ -450,7 +502,7 @@ export class HttpBackendClient implements BackendTaskClient {
       approve: decision.approve, remember: decision.remember,
     };
     if (gateId !== undefined) body.gate_id = gateId;
-    await this.fetchJson(
+    await this.fetchGateAck(
       `/v1/chat/threads/${encodeURIComponent(threadId)}/mcp-decision`,
       { method: "POST", body: JSON.stringify(body) }
     );
@@ -458,36 +510,137 @@ export class HttpBackendClient implements BackendTaskClient {
 
   // Controller mode gate (Phase F2): a STREAMED dispatch (edit/create_task produce
   // live events), consumed like sendChatMessage.
-  async *postModeDecision(threadId: string, mode: string, expectedProcessId?: string): AsyncIterable<StreamEvent> {
+  private async readGateReply(response: Response, signal?: AbortSignal): Promise<unknown> {
+    const reader = response.body?.getReader();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let abort = () => {};
+    const stop = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(new DOMException("Aborted", "AbortError"));
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+      timer = setTimeout(() => reject(new Error("Exact gate reply timed out")), 15_000);
+    });
+    try {
+      return await Promise.race([stop, (async () => {
+        if (!reader) throw new Error("Missing exact gate reply");
+        const decoder = new TextDecoder("utf-8", { fatal: true });
+        let text = "", bytes = 0;
+        while (true) {
+          const next = await reader.read();
+          if (next.done) break;
+          bytes += next.value.byteLength;
+          if (bytes > 64 * 1024) throw new Error("Exact gate reply is too large");
+          text += decoder.decode(next.value, { stream: true });
+        }
+        return JSON.parse(text + decoder.decode()) as unknown;
+      })()]);
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      void reader?.cancel().catch(() => {});
+    }
+  }
+
+  async claimChatGate(threadId: string, input: GateDecisionClaim, options?: ChatStreamOptions): Promise<GateDecisionReceipt> {
+    const claim = GateDecisionClaimSchema.parse(input);
+    const identity = await gateDecisionIdentity(threadId, claim);
+    const response = await this.fetchChatAdmission(
+      `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/gate-decision`,
+      { method: "POST", cache: "no-store", ...(options?.signal ? { signal: options.signal } : {}),
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ version: 1, request_id: claim.requestId, process_id: claim.processId,
+          workspace_path: claim.workspacePath, gate_id: claim.gateId, kind: claim.kind, value: claim.value }) },
+    );
+    if (!response.ok) {
+      if (response.status >= 500) {
+        void response.body?.cancel().catch(() => {});
+        throw new ChatAdmissionUnknownError(new Error(`Backend returned ${response.status}`));
+      }
+      void response.body?.cancel().catch(() => {});
+      throw new BackendRequestError(`Exact gate claim failed (${response.status})`, response.status, null);
+    }
+    try {
+      const receipt = GateDecisionReceiptWireSchema.parse(await this.readGateReply(response, options?.signal));
+      this.assertGateReceipt(identity, receipt);
+      options?.onAdmitted?.();
+      return receipt;
+    } catch (error) { throw new ChatAdmissionUnknownError(error); }
+  }
+
+  private assertGateReceipt(identity: GateDecisionIdentity, receipt: GateDecisionReceipt): void {
+    if ((Object.keys(identity) as (keyof GateDecisionIdentity)[]).some(key => identity[key] !== receipt[key])) {
+      throw new Error("Exact gate receipt identity mismatch");
+    }
+  }
+
+  async getGateDecisionReceipt(input: GateDecisionIdentity, signal?: AbortSignal): Promise<GateDecisionLookup> {
+    const identity = GateDecisionIdentitySchema.parse(input);
+    const nonce = crypto.randomUUID();
+    const query = new URLSearchParams({ request_id: identity.requestId, process_id: identity.processId,
+      workspace_path: identity.workspacePath, gate_id: identity.gateId, kind: identity.kind,
+      payload_sha256: identity.payloadSha256, nonce });
     const response = await this.fetchFn(
+      `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(identity.threadId)}/gate-decision?${query}`,
+      { cache: "no-store", ...(signal ? { signal } : {}) },
+    );
+    if (!response.ok) {
+      void response.body?.cancel().catch(() => {});
+      throw new BackendRequestError(`Exact gate receipt lookup failed (${response.status})`, response.status, null);
+    }
+    const result = GateDecisionLookupWireSchema.parse(await this.readGateReply(response, signal));
+    if (result.nonce !== nonce) throw new Error("Stale exact gate receipt lookup");
+    if (result.found) this.assertGateReceipt(identity, result.receipt);
+    return result;
+  }
+
+  async *postModeDecision(threadId: string, mode: string, expectedProcessId?: string, options?: ChatStreamOptions): AsyncIterable<StreamEvent> {
+    const response = await this.fetchChatAdmission(
       `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/mode-decision`,
       {
         method: "POST",
+        ...(options?.signal ? { signal: options.signal } : {}),
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ mode, ...(expectedProcessId ? { expected_process_id: expectedProcessId } : {}) }),
       }
     );
     if (!response.ok) {
+      if (response.status >= 500) {
+        // Headers already establish uncertainty. Diagnostics must not hold the
+        // reservation forever on a stalled/chunked error body.
+        void response.body?.cancel().catch(() => {});
+        throw new ChatAdmissionUnknownError(new Error(`Backend returned ${response.status}`));
+      }
       throw await responseError(response, `Mode decision failed (${response.status}) for thread ${threadId}`);
     }
-    yield* this.consumeChatEventStream(response);
+    const events = this.consumeChatEventStream(response, new Set(), options?.signal);
+    options?.onAdmitted?.();
+    yield* events;
   }
 
   // Controller clarify gate: a STREAMED dispatch (the answer re-enters the loop),
   // consumed like sendChatMessage — mirror of postModeDecision.
-  async *postClarifyDecision(threadId: string, answer: string, expectedProcessId?: string): AsyncIterable<StreamEvent> {
-    const response = await this.fetchFn(
+  async *postClarifyDecision(threadId: string, answer: string, expectedProcessId?: string, options?: ChatStreamOptions): AsyncIterable<StreamEvent> {
+    const response = await this.fetchChatAdmission(
       `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/clarify-decision`,
       {
         method: "POST",
+        ...(options?.signal ? { signal: options.signal } : {}),
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ answer, ...(expectedProcessId ? { expected_process_id: expectedProcessId } : {}) }),
       }
     );
     if (!response.ok) {
+      if (response.status >= 500) {
+        // Headers already establish uncertainty. Diagnostics must not hold the
+        // reservation forever on a stalled/chunked error body.
+        void response.body?.cancel().catch(() => {});
+        throw new ChatAdmissionUnknownError(new Error(`Backend returned ${response.status}`));
+      }
       throw await responseError(response, `Clarify decision failed (${response.status}) for thread ${threadId}`);
     }
-    yield* this.consumeChatEventStream(response);
+    const events = this.consumeChatEventStream(response, new Set(), options?.signal);
+    options?.onAdmitted?.();
+    yield* events;
   }
 
   async stopChatTurn(threadId: string): Promise<{ ok: boolean }> {
@@ -576,7 +729,7 @@ export class HttpBackendClient implements BackendTaskClient {
     const body: Record<string, unknown> = { gate_id: gateId, decision };
     if (expectedProcessId) body.expected_process_id = expectedProcessId;
     if (feedback !== undefined) body.feedback = feedback;
-    const raw = await this.fetchJson(
+    const raw = await this.fetchGateAck(
       `/v1/chat/threads/${encodeURIComponent(threadId)}/team-plan-decision`,
       { method: "POST", body: JSON.stringify(body) }
     ) as Record<string, unknown>;
@@ -596,7 +749,7 @@ export class HttpBackendClient implements BackendTaskClient {
     if (!response.ok) {
       throw new Error(`Channel stream failed (${response.status}) for ${channelId}`);
     }
-    yield* this.consumeChatEventStream(response, new Set(["chat_done", "done"]));
+    yield* this.consumeChatEventStream(response, new Set(["chat_done", "done"]), signal);
   }
 
   async resumeTask(taskId: string, options?: ResumeTaskRequest): Promise<ResumeTaskResponse> {
@@ -692,6 +845,24 @@ export class HttpBackendClient implements BackendTaskClient {
     }
   }
 
+  async getChatActivity(workspacePath: string, signal?: AbortSignal): Promise<ProjectChatActivity> {
+    const requestId = crypto.randomUUID();
+    let raw: unknown;
+    try {
+      raw = await this.fetchJson(`/v1/chat/activity?workspace=${encodeURIComponent(workspacePath)}&request_id=${encodeURIComponent(requestId)}`,
+        { cache: "no-store", ...(signal ? { signal } : {}) });
+    } catch (error) {
+      if (error instanceof BackendRequestError && error.status === 404) return {
+        version: 1, supported: false, requestId, requestedWorkspace: workspacePath, reason: "legacy_backend",
+      };
+      throw error;
+    }
+    const result = ProjectChatActivitySchema.parse(raw);
+    if (result.requestId !== requestId || result.requestedWorkspace !== workspacePath)
+      throw new Error("Activity reply does not match this project request.");
+    return result;
+  }
+
   async listChatThreads(workspacePath: string): Promise<ChatThreadSummary[]> {
     const raw = await this.fetchJson(
       `/v1/chat/threads?workspace=${encodeURIComponent(workspacePath)}`
@@ -705,6 +876,9 @@ export class HttpBackendClient implements BackendTaskClient {
         createdAt: t["created_at"],
         updatedAt: t["updated_at"] ?? undefined,
         messageCount: t["message_count"] ?? undefined,
+        turnActive: t["turn_active"] ?? undefined,
+        pendingGates: t["pending_gates"] ?? undefined,
+        gateKinds: t["gate_kinds"] ?? undefined,
         status: t["status"] ?? null,
         agentsRunning: t["agents_running"] ?? 0,
       })
@@ -724,9 +898,9 @@ export class HttpBackendClient implements BackendTaskClient {
     });
   }
 
-  async getChatThread(threadId: string): Promise<ChatThread> {
+  async getChatThread(threadId: string, signal?: AbortSignal): Promise<ChatThread> {
     const raw = await this.fetchJson(
-      `/v1/chat/threads/${encodeURIComponent(threadId)}`
+      `/v1/chat/threads/${encodeURIComponent(threadId)}`, signal ? { signal } : undefined
     ) as Record<string, unknown>;
     const messages = Array.isArray(raw["messages"]) ? raw["messages"] : [];
     const thread = ChatThreadSchema.parse({
@@ -738,51 +912,73 @@ export class HttpBackendClient implements BackendTaskClient {
     });
     // Ephemeral display metadata only: never write preview bytes back to the backend.
     for (const message of thread.messages) {
+      signal?.throwIfAborted();
       const refs = message.metadata["image_attachments"];
       if (!Array.isArray(refs)) continue;
       message.metadata["image_previews"] = await Promise.all(refs.slice(0, 8).map(async (ref: Record<string, unknown>) => {
         const name = typeof ref?.["name"] === "string" ? ref["name"] : "Image";
         try {
-          const dataUrl = await this.getChatImagePreview(threadId, String(ref?.["asset_id"] ?? ""));
+          const dataUrl = await this.getChatImagePreview(threadId, String(ref?.["asset_id"] ?? ""), signal);
           return { name, asset_id: ref["asset_id"], dataUrl };
         } catch {
           return { name, asset_id: ref?.["asset_id"], unavailable: true };
         }
       }));
+      signal?.throwIfAborted();
     }
+    signal?.throwIfAborted();
     return thread;
   }
 
-  async getChatImagePreview(threadId: string, assetId: string): Promise<string> {
+  async getChatImagePreview(threadId: string, assetId: string, signal?: AbortSignal): Promise<string> {
     if (!/^[a-f0-9]{64}$/.test(assetId)) throw new Error("Invalid image asset identity");
-    const response = await this.fetchFn(`${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/images/${assetId}`);
-    const limit = 8 * 1024 * 1024;
-    if (!response.ok || response.headers.get("content-type")?.split(";")[0] !== "image/png") {
-      throw new Error("Image preview unavailable");
-    }
-    if (Number(response.headers.get("content-length")) > limit) {
-      await response.body?.cancel();
-      throw new Error("Image preview exceeds 8 MiB");
-    }
-    if (!response.body) throw new Error("Empty image preview");
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
+    const abort = new AbortController();
+    const cancel = () => abort.abort();
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) cancel();
+    const timer = setTimeout(cancel, 15_000);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let bodyCancellation: Promise<void> | undefined;
+    const cancelBody = () => { if (reader && !bodyCancellation) bodyCancellation = reader.cancel().catch(() => {}); };
     try {
+      abort.signal.throwIfAborted();
+      const response = await this.fetchFn(`${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/images/${assetId}`,
+        { signal: abort.signal });
+      const limit = 8 * 1024 * 1024;
+      if (!response.ok || response.headers.get("content-type")?.split(";")[0] !== "image/png") {
+        await response.body?.cancel().catch(() => {});
+        throw new Error("Image preview unavailable");
+      }
+      if (Number(response.headers.get("content-length")) > limit) {
+        await response.body?.cancel().catch(() => {});
+        throw new Error("Image preview exceeds 8 MiB");
+      }
+      if (!response.body) throw new Error("Empty image preview");
+      reader = response.body.getReader();
+      abort.signal.addEventListener("abort", cancelBody, { once: true });
+      if (abort.signal.aborted) cancelBody();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
       while (true) {
         const { value, done } = await reader.read();
+        abort.signal.throwIfAborted();
         if (done) break;
         size += value.byteLength;
-        if (size > limit) { await reader.cancel(); throw new Error("Image preview exceeds 8 MiB"); }
+        if (size > limit) throw new Error("Image preview exceeds 8 MiB");
         chunks.push(value);
       }
-    } finally { reader.releaseLock(); }
-    if (!size) throw new Error("Empty image preview");
-    let binary = "";
-    for (const chunk of chunks) {
-      for (let i = 0; i < chunk.length; i += 8192) binary += String.fromCharCode(...chunk.subarray(i, i + 8192));
+      if (!size) throw new Error("Empty image preview");
+      let binary = "";
+      for (const chunk of chunks) {
+        for (let i = 0; i < chunk.length; i += 8192) binary += String.fromCharCode(...chunk.subarray(i, i + 8192));
+      }
+      abort.signal.throwIfAborted();
+      return `data:image/png;base64,${btoa(binary)}`;
+    } finally {
+      clearTimeout(timer); signal?.removeEventListener("abort", cancel);
+      abort.signal.removeEventListener("abort", cancelBody);
+      if (reader) { cancelBody(); await bodyCancellation; reader.releaseLock(); }
     }
-    return `data:image/png;base64,${btoa(binary)}`;
   }
 
   static toChatMessage(m: Record<string, unknown>): Record<string, unknown> {
@@ -903,9 +1099,9 @@ export class HttpBackendClient implements BackendTaskClient {
     };
   }
 
-  async getThreadLiveState(threadId: string): Promise<ThreadLiveState> {
+  async getThreadLiveState(threadId: string, signal?: AbortSignal): Promise<ThreadLiveState> {
     const raw = await this.fetchJson(
-      `/v1/chat/threads/${encodeURIComponent(threadId)}/live`
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/live`, signal ? { signal } : undefined
     ) as Record<string, unknown>;
     // Gates keep their payload keys (snake_case) — same passthrough as before; only the
     // envelope fields are mapped. agent keys (id/label/name) are already camel-safe.
@@ -921,6 +1117,7 @@ export class HttpBackendClient implements BackendTaskClient {
       : [];
     return ThreadLiveStateSchema.parse({
       approval: approvalFromWire(raw["approval"]),
+      gateClaimVersion: raw["gate_claim_version"] ?? null,
       processId: typeof raw["process_id"] === "string" && raw["process_id"].length > 0 ? raw["process_id"] : null,
       contextUsage: parseContextUsage(raw["context_usage"]),
       activeTaskId: raw["active_task_id"] ?? null,
@@ -1034,6 +1231,65 @@ export class HttpBackendClient implements BackendTaskClient {
       prefillText: raw["prefill_text"] ?? "",
       retiredMemories: raw["retired_memories"] ?? 0,
     });
+  }
+
+  // Baseline responses are validated whole: a malformed or incompatible reply throws, so
+  // the UI says "unavailable" and never mistakes it for "no checkpoints" or "no changes".
+  async listCheckpoints(threadId: string, signal?: AbortSignal): Promise<CheckpointSummary[]> {
+    const raw = CheckpointListWireSchema.parse(await this.fetchBaselineJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/checkpoints`, signal ? { signal } : {}, 4 * 1024 * 1024
+    ));
+    return raw.checkpoints.map(cp => CheckpointSummarySchema.parse({
+      seq: cp.seq, anchorMessageId: cp.anchor_message_id, turnId: cp.turn_id,
+      createdAt: cp.created_at, files: cp.files,
+    }));
+  }
+
+  async getCheckpointBaseline(threadId: string, seq: number, signal?: AbortSignal): Promise<BaselineEntry[]> {
+    const raw = BaselineWireSchema.parse(await this.fetchBaselineJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/checkpoints/${seq}/baseline`, signal ? { signal } : {}, 4 * 1024 * 1024
+    ));
+    if (raw.seq !== seq) throw new Error(`Baseline response is for checkpoint ${raw.seq}, not ${seq}.`);
+    return raw.files.map(entry => {
+      // The fold only draws from the chosen checkpoint and later ones.
+      if (entry.from_seq < seq) throw new Error(`Baseline entry ${entry.path} comes from an earlier checkpoint.`);
+      return BaselineEntrySchema.parse({ path: entry.path, existed: entry.existed, oversize: entry.oversize, fromSeq: entry.from_seq });
+    });
+  }
+
+  async getCheckpointBaselineFile(threadId: string, seq: number, path: string, signal?: AbortSignal): Promise<BaselineFile> {
+    const raw = BaselineFileWireSchema.parse(await this.fetchBaselineJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/checkpoints/${seq}/baseline/file`
+      + `?path=${encodeURIComponent(path)}`, signal ? { signal } : {}, 2 * 1024 * 1024
+    ));
+    if (raw.path !== path || raw.from_seq < seq) throw new Error(`Baseline file response does not match ${path} at checkpoint ${seq}.`);
+    if (raw.state === "captured" && raw.size !== null && (raw.size > 1024 * 1024 || (raw.content_base64?.length ?? 0) > 4 * Math.ceil(1024 * 1024 / 3))) throw new Error("Retained file is too large to compare here (1 MiB limit).");
+    const { content_base64: encoded, from_seq: fromSeq, ...rest } = raw;
+    return BaselineFileSchema.parse({ ...rest, fromSeq, ...(encoded !== undefined ? { content: decodeBase64(encoded) } : {}) });
+  }
+
+  /** Baseline-only wire bound, before JSON parsing or base64 decoding. */
+  private async fetchBaselineJson(path: string, init: RequestInit, limit: number): Promise<unknown> {
+    const response = await this.fetchFn(`${this.options.baseUrl}${path}`, { ...init, headers: { "content-type": "application/json" } });
+    // Do not parse unbounded error bodies either, or infer the cause of a backend 404.
+    if (!response.ok) { await response.body?.cancel(); throw new Error(`Retained checkpoint request unavailable (${response.status}).`); }
+    const tooLarge = () => new Error("Retained checkpoint response is too large to inspect.");
+    if (Number(response.headers.get("content-length")) > limit) { await response.body?.cancel(); throw tooLarge(); }
+    if (!response.body) throw new Error("Retained checkpoint response is unavailable.");
+    const reader = response.body.getReader(), bytes = new Uint8Array(limit); let size = 0, complete = false;
+    try {
+      while (true) {
+        init.signal?.throwIfAborted();
+        const {value, done} = await reader.read();
+        if (done) { complete = true; break; }
+        if (size + value.byteLength > limit) throw tooLarge();
+        bytes.set(value, size); size += value.byteLength;
+      }
+    } finally {
+      try { if (!complete) await reader.cancel(); } finally { reader.releaseLock(); }
+    }
+    init.signal?.throwIfAborted();
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, size))) as unknown;
   }
 
   /** Like fetchJson, but a failure carries the backend's `detail` as its message: the
@@ -1431,7 +1687,7 @@ export class HttpBackendClient implements BackendTaskClient {
   }
 
   async sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: SendChatOptions): Promise<SendChatResult> {
-    const response = await this.fetchFn(
+    const response = await this.fetchChatAdmission(
       `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/message`,
       {
         method: "POST",
@@ -1465,15 +1721,24 @@ export class HttpBackendClient implements BackendTaskClient {
       }
     );
     if (response.status === 202) {
+      options?.onAdmitted?.();
       // Spec §5.3: a notice turn is running; the backend queued the message.
       const body = z.object({ queued: z.literal(true), message_id: z.string() })
         .parse(await response.json());
       return { kind: "queued", messageId: body.message_id };
     }
     if (!response.ok) {
+      if (response.status >= 500) {
+        // Headers already establish uncertainty. Diagnostics must not hold the
+        // reservation forever on a stalled/chunked error body.
+        void response.body?.cancel().catch(() => {});
+        throw new ChatAdmissionUnknownError(new Error(`Backend returned ${response.status}`));
+      }
       throw await responseError(response, `Chat message failed (${response.status}) for thread ${threadId}`);
     }
-    return { kind: "stream", events: this.consumeChatEventStream(response) };
+    const events = this.consumeChatEventStream(response, new Set(), signal);
+    options?.onAdmitted?.();
+    return { kind: "stream", events };
   }
 
   async getAttention(workspacePath: string): Promise<ThreadAttention[]> {
@@ -1705,6 +1970,27 @@ export class HttpBackendClient implements BackendTaskClient {
     }
     return String(value);
   }
+}
+
+const CheckpointListWireSchema = z.object({
+  checkpoints: z.array(z.object({
+    seq: z.number().int().nonnegative(), anchor_message_id: z.string(), turn_id: z.string(), created_at: z.string(),
+    files: z.array(z.object({ path: z.string().min(1), existed: z.boolean(), oversize: z.boolean() })),
+  })),
+});
+const BaselineWireSchema = z.object({
+  seq: z.number().int().nonnegative(),
+  files: z.array(z.object({ path: z.string().min(1), existed: z.boolean(), oversize: z.boolean(), from_seq: z.number().int().nonnegative() })),
+});
+const BaselineFileWireSchema = z.object({
+  path: z.string(), from_seq: z.number().int().nonnegative(), state: z.string(), size: z.number().nullable(),
+  content_base64: z.string().regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/).optional(),
+});
+
+function decodeBase64(encoded: string): Uint8Array {
+  const binary = atob(encoded), bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }
 
 function mapMemoryView(m: Record<string, unknown>): Record<string, unknown> {

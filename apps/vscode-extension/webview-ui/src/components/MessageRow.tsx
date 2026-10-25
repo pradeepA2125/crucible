@@ -16,6 +16,7 @@ import { vscode } from "../vscodeApi";
 interface Props {
   msg: ChatMsg;
   planVersion?: number;
+  readOnly?: boolean;
   /** A turn in flight blocks rewind (the backend 409s), so the affordance hides. */
   turnActive?: boolean;
   queued?: boolean;
@@ -117,7 +118,7 @@ function LegacyGateSummary({ msg }: { msg: ChatMsg }) {
 // cost grew with thread length. Its props are stable references between deltas.
 export const MessageRow = memo(MessageRowImpl);
 
-function MessageRowImpl({ msg, planVersion, turnActive, onRewindRequest, queued = false }: Props) {
+function MessageRowImpl({ msg, planVersion, readOnly = false, turnActive, onRewindRequest, queued = false }: Props) {
   switch (msg.type) {
     case "plan_card":
       return (
@@ -132,6 +133,7 @@ function MessageRowImpl({ msg, planVersion, turnActive, onRewindRequest, queued 
     case "diff_card":
       return (
         <DiffCard
+          readOnly={readOnly}
           taskId={msg.taskId ?? (msg.metadata?.taskId as string) ?? ""}
           diffEntries={(msg.metadata?.diff_entries as DiffEntry[]) ?? []}
           resolved={
@@ -189,7 +191,7 @@ function MessageRowImpl({ msg, planVersion, turnActive, onRewindRequest, queued 
             images={(msg.metadata?.image_previews ?? msg.metadata?.image_attachments) as { name: string; dataUrl?: string }[] | undefined}
             queued={queued}
             onRewind={
-              messageId && !turnActive && onRewindRequest
+              messageId && !turnActive && !readOnly && onRewindRequest
                 ? () => {
                     onRewindRequest(messageId);
                     vscode.postMessage({ type: "rewindPreview", messageId });

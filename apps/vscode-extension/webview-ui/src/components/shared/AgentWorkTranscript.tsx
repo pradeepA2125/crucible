@@ -1,5 +1,6 @@
 import { useMemo, useRef } from "react";
 import type { TokenProgressView, ToolEventView } from "../../types";
+import { ChangesRoute } from "../activity/changesRoute";
 import { TransientActivity } from "../activity/TransientActivity";
 import { TranscriptItems, type TranscriptItemsProps } from "./TranscriptItems";
 
@@ -19,8 +20,8 @@ export function AgentWorkTranscript({ messages, live = NO_TOOLS, running = false
   const finished = useMemo(() => running ? live.filter(event => event.done) : live, [live, running]);
   const bubble = useMemo(() => ({ text: "", thinkingEntries: [], activeThinkingChunk: "", toolEvents: live }), [live]);
   const start = startedAt ? Date.parse(startedAt) : mountedAt.current;
-  return <TranscriptItems messages={messages} turnActive={running} streamingToolEvents={finished}
+  return <ChangesRoute.Provider value={undefined}><TranscriptItems messages={messages} turnActive={running} streamingToolEvents={finished}
     renderMessage={renderMessage} showChanges={showChanges}
     renderWorkTail={running ? () => <TransientActivity bubble={bubble} waiting={waiting} tokenProgress={tokenProgress}
-      startedAt={Number.isFinite(start) ? start : mountedAt.current} /> : undefined} />;
+      startedAt={Number.isFinite(start) ? start : mountedAt.current} /> : undefined} /></ChangesRoute.Provider>;
 }

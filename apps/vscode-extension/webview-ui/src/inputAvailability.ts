@@ -34,6 +34,7 @@ const TASK_ACTIVE_STATUSES = new Set([
 
 export interface InputAvailability {
   disabled: boolean;
+  sendDisabled?: boolean;
   placeholder: string;
   // A local streaming chat turn can be stopped (posts stopTurn / SSE disconnect).
   showStop: boolean;
@@ -47,9 +48,9 @@ export interface InputAvailability {
 // between steps and ToolLoop iterations. (Planning/PROMOTING have no control → /abort 409s.)
 const ABORTABLE_STATUSES = new Set(["EXECUTING", "VALIDATING", "REPAIRING"]);
 
-export function inputAvailability(
+function legacyInputAvailability(
   state: Pick<AppState, "inputEnabled" | "liveStatus" | "workbar" | "liveGates" | "turnActive">
-    & Partial<Pick<AppState, "turnKind">>,
+    & Partial<Pick<AppState, "turnKind" | "chatAdmission" | "activeThreadId" | "historyState">>,
 ): InputAvailability {
   const { inputEnabled, liveStatus, workbar, liveGates, turnActive } = state;
   const turnKind = state.turnKind ?? null;
@@ -59,6 +60,19 @@ export function inputAvailability(
   const backgroundGates = liveGates.length - mainGates.length;
   const hasGate = (kind: LiveGateView["kind"]) => mainGates.some((g) => g.kind === kind);
   const taskStop = liveStatus !== null && ABORTABLE_STATUSES.has(liveStatus);
+
+  // Receipt uncertainty is independent of turn liveness; even a notice turn
+  // must not invite a second submission while the origin is unresolved.
+  if (state.chatAdmission) return {
+    disabled: true,
+    placeholder: state.chatAdmission.state === "unknown" ? "Check receipt before sending again…" : "Finishing submission…",
+    showStop: turnActive && state.activeThreadId === state.chatAdmission.threadId,
+    taskStop,
+  };
+
+  if (state.historyState && state.historyState.phase !== "current") return {
+    disabled: true, placeholder: "Reconnecting saved history…", showStop: turnActive, taskStop: false,
+  };
 
   // ── Controller precedence (spec §5), first match wins, ahead of task rows ──
   // Row 1: per-edit gate — only the EditGate card is interactive.
@@ -191,4 +205,11 @@ export function inputAvailability(
     showStop: false,
     taskStop,
   };
+}
+
+export function inputAvailability(state: Parameters<typeof legacyInputAvailability>[0]): InputAvailability {
+  const original = legacyInputAvailability(state);
+  if (!state.historyState?.navigationSafe) return original;
+  return { ...original, disabled: false, sendDisabled: original.disabled || !!state.historyState.workBlocked,
+    placeholder: state.historyState.workBlocked || original.placeholder };
 }

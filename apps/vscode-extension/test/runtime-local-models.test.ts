@@ -50,7 +50,7 @@ describe("workspace experimental memory settings", () => {
     const prototype = RuntimeManager.prototype as unknown as {
       extraEnvFromSettings(this: object): Record<string, string>;
     };
-    return prototype.extraEnvFromSettings.call({});
+    return prototype.extraEnvFromSettings.call({ host: { configuration: () => vscode.workspace.getConfiguration() } });
   };
 
   it("passes explicit workspace flags and an isolated durable store into the managed spawn", () => {

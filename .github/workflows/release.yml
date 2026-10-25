@@ -1,7 +1,9 @@
 name: release
 on:
   push:
-    tags: ["v*"]
+    # v0.9.0 is the standalone desktop-only laptop-test prerelease.
+    # Do not rebuild/publish a VSIX or old runtime assets for that reserved tag.
+    tags: ["v*", "!v0.9.0"]
 
 jobs:
   test:

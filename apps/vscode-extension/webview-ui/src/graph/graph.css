@@ -1,13 +1,13 @@
 /* AXON HUD chrome — glass + motion treatment from the approved motion study.
-   All colors come from the --ax-* variables GraphApp sets from the active palette. */
+   HUD surfaces/text use shared React tokens; the canvas keeps its graph palette. */
 
 .ax-glass {
   background: var(--ax-panel);
   border: 1px solid var(--ax-border);
-  border-radius: 14px;
+  border-radius: var(--r-card);
   backdrop-filter: blur(16px) saturate(1.3);
   -webkit-backdrop-filter: blur(16px) saturate(1.3);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-popover);
 }
 
 .ax-vignette {
@@ -21,11 +21,7 @@
   transition: background 0.18s ease, transform 0.18s ease;
 }
 .ax-nav-btn:not(:disabled):hover {
-  background: linear-gradient(
-    120deg,
-    color-mix(in srgb, var(--ax-accent) 26%, transparent),
-    color-mix(in srgb, var(--ax-out) 13%, transparent)
-  );
+  background: var(--accent-bg);
   transform: translateX(-2px);
 }
 

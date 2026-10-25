@@ -1,0 +1,61 @@
+name: desktop-release-candidate
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Three-part desktop version (for example 0.9.0)'
+        required: true
+        default: '0.9.0'
+      vendor_release:
+        description: 'Existing pinned vendor release'
+        required: true
+        default: 'v0.8.1'
+permissions:
+  contents: read
+jobs:
+  apple-silicon:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      DESKTOP_VERSION: ${{ inputs.version }}
+      VENDOR_RELEASE: ${{ inputs.vendor_release }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - name: Validate explicit version and native architecture
+        run: |
+          node -e 'if(process.platform!=="darwin"||process.arch!=="arm64"||!/^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$/.test(process.env.DESKTOP_VERSION)||!/^v\d+\.\d+\.\d+$/.test(process.env.VENDOR_RELEASE))throw Error("Invalid release inputs or native runner")'
+          test -f apps/desktop/resources/update-public.pem
+      - run: npm ci
+      - run: npm --prefix apps/vscode-extension/webview-ui ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run -w @crucible/desktop test
+      - run: node --test scripts/release/desktop-release.test.mjs scripts/release/desktop-gates.test.mjs
+      - name: Build current-source runtime
+        run: |
+          python -m pip install build pytest
+          python -m pytest scripts/release/test_desktop_runtime_release.py
+          python -m build services/agentd-py --wheel --outdir "$RUNNER_TEMP/wheel"
+          cargo build --manifest-path services/indexer-rs/Cargo.toml --release --locked
+      - name: Download and verify pinned published vendor assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$VENDOR_RELEASE" --repo pradeepA2125/crucible --dir "$RUNNER_TEMP/vendor" --pattern manifest.json --pattern uv-darwin-arm64 --pattern rg-darwin-arm64 --pattern rust-analyzer-darwin-arm64 --pattern gopls-darwin-arm64 --pattern jre-darwin-arm64.tar.gz --pattern jdtls.tar.gz
+          python scripts/release/desktop-runtime-release.py --vendor-manifest "$RUNNER_TEMP/vendor/manifest.json" --vendor-assets "$RUNNER_TEMP/vendor" --wheel "$RUNNER_TEMP"/wheel/*.whl --indexer services/indexer-rs/target/release/crucible-indexer --version "$DESKTOP_VERSION" --out "$RUNNER_TEMP/runtime"
+      - name: Prepare freely sealed candidate without release credentials
+        run: |
+          npm run -w @crucible/desktop package -- --version "$DESKTOP_VERSION" --manifest "$RUNNER_TEMP/runtime/runtime-manifest.json" --artifacts "$RUNNER_TEMP/runtime" --out "$RUNNER_TEMP/package"
+          node scripts/release/desktop-release-bundle.mjs --package "$RUNNER_TEMP/package" --public-key apps/desktop/resources/update-public.pem --out "$RUNNER_TEMP/release"
+          git rev-parse HEAD > "$RUNNER_TEMP/release/SOURCE_COMMIT.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crucible-desktop-darwin-arm64-candidate
+          path: ${{ runner.temp }}/release
+          retention-days: 14
+# No contents:write, release publishing, Apple identity or private update key.
+# Maintainer verifies the exact artifact and signs its metadata offline before upload.

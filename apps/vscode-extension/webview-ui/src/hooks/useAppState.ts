@@ -63,6 +63,7 @@ const INITIAL: AppState = {
 // ── Action types ─────────────────────────────────────────────────────────────
 
 type Action =
+  | { type: "RETURN_TO_HISTORY"; attachmentGeneration: number; identity: unknown }
   | { type: "EXT"; msg: ExtensionMessage; at: string }
   | { type: "SET_VIEW"; view: "history" | "thread" };
 
@@ -121,9 +122,19 @@ function sealStreaming(state: AppState, at: string): AppState {
 
 // ── Reducer ──────────────────────────────────────────────────────────────────
 
-function reducer(state: AppState, action: Action): AppState {
+function reducer(state: AppState, action: Action, historyIdentity?: unknown): AppState {
+  if (action.type === "RETURN_TO_HISTORY") {
+    // Apply after prior queued host actions, including a batched A→B→A. A render
+    // ref cannot provide that ordering while a draft flush is resolving.
+    const generation = state.attachmentGeneration ?? 0;
+    if (action.identity !== historyIdentity || action.attachmentGeneration !== generation
+      || state.view !== "thread" || (state.historyState?.navigationSafe !== true && (!state.inputEnabled || state.turnActive)) || state.chatAdmission) {
+      return { ...state, historyNavigationBlocked: true };
+    }
+    return { ...state, view: "history", attachmentGeneration: generation + 1, historyNavigationBlocked: false };
+  }
   if (action.type === "SET_VIEW") {
-    return { ...state, view: action.view };
+    return { ...state, view: action.view, historyNavigationBlocked: false, attachmentGeneration: (state.attachmentGeneration ?? 0) + (state.view === action.view ? 0 : 1) };
   }
 
   // EXT actions — switch on the extension message type
@@ -131,15 +142,19 @@ function reducer(state: AppState, action: Action): AppState {
 
   switch (msg.type) {
     case "renderThreadList":
-      return { ...state, threads: msg.threads, activeThreadId: msg.activeThreadId };
+      return { ...state, threads: msg.threads, activeThreadId: msg.activeThreadId, attachmentGeneration: (state.attachmentGeneration ?? 0) + (state.activeThreadId === msg.activeThreadId ? 0 : 1) };
 
     case "clearThread":
       return {
         ...state,
+        attachmentGeneration: (state.attachmentGeneration ?? 0) + 1,
         // Transcript hydration also selects its thread. Routine clears that do
         // not navigate retain the existing identity.
         activeThreadId: msg.threadId ?? state.activeThreadId,
         messages: [],
+        historyState: undefined,
+        liveGates: [], livePlan: null, liveReview: null, liveError: null, liveTodos: null, liveSessions: null, providerAccess: null,
+        liveStatus: null, turnActive: false, turnKind: null,
         contextUsage: null,
         contextUsageStale: false,
         streaming: null,
@@ -154,8 +169,15 @@ function reducer(state: AppState, action: Action): AppState {
         teamViews: {},
       };
 
+    case "historyState":
+      return msg.history.threadId === state.activeThreadId ? { ...state, historyState: msg.history } : state;
+
+    case "chatAdmission":
+      return { ...state, chatAdmission: msg.admission,
+        inputEnabled: msg.admission ? false : state.inputEnabled };
+
     case "setInputEnabled":
-      return { ...state, inputEnabled: msg.enabled };
+      return { ...state, inputEnabled: state.chatAdmission ? false : msg.enabled };
 
     case "showThinking":
     case "updateThinking":
@@ -438,7 +460,7 @@ function reducer(state: AppState, action: Action): AppState {
       // touches input during TASK execution — a task keeps turnActive=false throughout
       // and its composer disable is governed by liveStatus precedence, not here.
       const controllerTurnEnded =
-        !turnActive && msg.status == null && (state.streaming != null || !state.inputEnabled);
+        !state.chatAdmission && !turnActive && msg.status == null && (state.streaming != null || !state.inputEnabled);
       if (controllerTurnEnded) {
         const sealed = state.streaming ? sealStreaming(state, at) : state;
         // tokenProgress deliberately SURVIVES turn end: the closing tick is the only
@@ -540,8 +562,8 @@ function reducer(state: AppState, action: Action): AppState {
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
-export function useAppState() {
-  const [state, dispatch] = useReducer(reducer, INITIAL);
+export function useAppState(historyIdentity?: unknown) {
+  const [state, dispatch] = useReducer((current: AppState, action: Action) => reducer(current, action, historyIdentity), INITIAL);
 
   useEffect(() => {
     const handler = (event: MessageEvent<ExtensionMessage>) => {
@@ -563,5 +585,9 @@ export function useAppState() {
     [],
   );
 
-  return { state, setView };
+  const returnToHistory = useCallback(
+    (attachmentGeneration: number) => dispatch({ type: "RETURN_TO_HISTORY", attachmentGeneration, identity: historyIdentity }),
+    [historyIdentity],
+  );
+  return { state, setView, returnToHistory };
 }

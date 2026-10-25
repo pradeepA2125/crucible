@@ -73,8 +73,9 @@ export function installThemeSync(
   observer.observe(doc.body, { attributes: true, attributeFilter: ["class"] });
 
   const onMessage = (event: MessageEvent) => {
-    const m = event.data as { type?: unknown; appearance?: unknown; accent?: unknown } | null;
+    const m = event.data as { type?: unknown; appearance?: unknown; accent?: unknown; host?: unknown } | null;
     if (!m || m.type !== "themeChanged" || !isAppearance(m.appearance) || !isAccent(m.accent)) return;
+    if (m.host === "desktop") root.dataset.host = "desktop";
     current = { appearance: m.appearance, accent: m.accent };
     root.dataset.appearance = m.appearance;
     apply();

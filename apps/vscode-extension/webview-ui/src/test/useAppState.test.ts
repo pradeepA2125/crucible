@@ -660,3 +660,20 @@ describe("useAppState — background agents (spec §6)", () => {
     expect(result.current.state.queuedIds).toEqual([]);
   });
 });
+
+
+it("clearThread retires all actionable projections, and late history status cannot label another thread", () => {
+  const { result } = renderHook(() => useAppState());
+  act(() => {
+    fireMessage({ type: "renderThreadList", threads: [], activeThreadId: "a" });
+    fireMessage({ type: "renderLiveGates", gates: [{ gateId: "g", taskId: "a", kind: "mode", payload: {} }] });
+    fireMessage({ type: "historyState", history: { threadId: "a", phase: "current", cached: true } });
+    fireMessage({ type: "clearThread", threadId: "b" });
+    fireMessage({ type: "historyState", history: { threadId: "a", phase: "current", cached: true } });
+  });
+  expect(result.current.state.activeThreadId).toBe("b");
+  expect(result.current.state.liveGates).toEqual([]); expect(result.current.state.livePlan).toBeNull();
+  expect(result.current.state.historyState).toBeUndefined();
+  act(() => fireMessage({ type: "historyState", history: { threadId: "b", phase: "loading", cached: false } }));
+  expect(result.current.state.historyState?.phase).toBe("loading");
+});

@@ -1,8 +1,10 @@
 // vscode-free. One instance per workspace folder; owns agentd + watcher children.
 import {
-  closeSync, constants, existsSync, fstatSync, openSync, readFileSync, unlinkSync,
+  closeSync, constants, existsSync, fstatSync, openSync, readFileSync, readSync, unlinkSync, lstatSync,
 } from "node:fs";
 import { join } from "node:path";
+import { realpathSync } from "node:fs";
+import { newOwner,registerOwner,forgetOwner,ownerFor,type OwnerCapability } from "./project-owner.js";
 import {
   buildJdtlsCommand,
   configDirForPlatform,
@@ -23,6 +25,7 @@ export interface BackendSettings {
   contextWindow?: number; // → CRUCIBLE_MEMORY_WINDOW_TOKENS
   reasoningEffort?: string; // → CRUCIBLE_REASONING_EFFORT
   localModels?: boolean;
+  clientName?: string;
 }
 export interface ChildHandle {
   pid: number;
@@ -120,6 +123,7 @@ export function finalSpawnEnv(
   }
   // Spec §3.6: a managed spawn never runs with the token check off, whoever set it.
   delete merged.CRUCIBLE_AUTH_DISABLED;
+  delete merged.CRUCIBLE_INDEX_KEY;delete merged.CRUCIBLE_OWNER_KEY; delete merged.CRUCIBLE_OWNER_CLIENT; delete merged.CRUCIBLE_OWNER_NAME;
   return merged;
 }
 const INDEX_WARM_ATTEMPTS = 120;
@@ -205,9 +209,10 @@ function unlinkLock(workspace: string): void {
 export function readOwnedLock(workspace: string, uid: number | undefined): LockInfo | null {
   let fd: number;
   try {
-    fd = openSync(lockPath(workspace), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    fd = openSync(lockPath(workspace), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   } catch {
-    return null; // missing — or a planted symlink, which the spawn's rename replaces
+    try { lstatSync(lockPath(workspace)); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; }
+    throw new Error(`Project ${workspace}: backend lock is unreadable. Close its client and inspect ownership before retrying.`);
   }
   let raw: string;
   try {
@@ -215,22 +220,21 @@ export function readOwnedLock(workspace: string, uid: number | undefined): LockI
     // A lock planted by another user in a shared workspace (or a hard link to
     // someone else's file) is ignored and removed: no wait, no signal (spec §3.7).
     if (!st.isFile() || st.nlink !== 1 || (uid !== undefined && st.uid !== uid)) {
-      unlinkLock(workspace);
-      return null;
+      throw new Error(`Project ${workspace}: backend lock ownership is uncertain; no process was stopped.`);
     }
-    raw = readFileSync(fd, "utf8");
+    if (st.size>4096) throw new Error("Backend lock exceeds its size limit.");
+    const bytes=Buffer.alloc(4097),count=readSync(fd,bytes,0,bytes.length,null);if(count>4096)throw new Error("Backend lock grew beyond its limit.");raw=bytes.subarray(0,count).toString("utf8");
   } finally {
     closeSync(fd);
   }
   try {
     const lock = JSON.parse(raw) as Partial<LockInfo>;
-    if (typeof lock.pid === "number" && typeof lock.port === "number"
-        && typeof lock.started_at === "number") {
+    if (Number.isSafeInteger(lock.pid) && lock.pid!>0 && Number.isSafeInteger(lock.port) && lock.port!>0 && lock.port!<=65535
+        && Number.isFinite(lock.started_at)) {
       return lock as LockInfo;
     }
   } catch { /* fall through */ }
-  unlinkLock(workspace);
-  return null;
+  throw new Error(`Project ${workspace}: backend lock is malformed. No process was stopped; inspect ownership before retrying.`);
 }
 
 export function isOurBackend(
@@ -252,6 +256,7 @@ export class BackendProcess {
   private watcher: ChildHandle | undefined;
   private _port: number | undefined;
   private lastChildPid: number | undefined;
+  private owner: OwnerCapability | undefined;
 
   constructor(private readonly deps: ProcessDeps) {
     this.platform = deps.platform ?? platformKey();
@@ -265,9 +270,21 @@ export class BackendProcess {
     return this.backend;
   }
 
-  async start(
-    workspace: string, settings: BackendSettings,
+  private lifecycleGeneration = 0;
+  private stopping: Promise<void> | undefined;
+  private starting: Promise<{ port: number; reused: boolean }> | undefined;
+  start(workspace: string, settings: BackendSettings): Promise<{ port: number; reused: boolean }> {
+    if (this.starting) return this.starting;
+    if(this.stopping)return Promise.reject(new Error("Runtime is stopping. Retry after cleanup finishes."));
+    const running = this.startOnce(workspace, settings, this.lifecycleGeneration);
+    this.starting = running;
+    void running.finally(() => { if (this.starting === running) this.starting = undefined; }).catch(() => {});
+    return running;
+  }
+  private async startOnce(
+    workspace: string, settings: BackendSettings, generation: number,
   ): Promise<{ port: number; reused: boolean }> {
+    workspace=realpathSync(workspace);
     // 1. Reuse only the backend the lock names, serving this workspace (spec §3.7).
     const lock = readOwnedLock(workspace, this.deps.uid);
     if (lock) {
@@ -283,6 +300,7 @@ export class BackendProcess {
         }
       }
       if (result === "authed") {
+        if(generation!==this.lifecycleGeneration)throw new Error("Runtime start was cancelled by cleanup.");
         this._port = lock.port;
         this.deps.log(`[runtime] reusing live backend pid=${lock.pid} port=${lock.port}`);
         return { port: lock.port, reused: true };
@@ -291,12 +309,15 @@ export class BackendProcess {
     }
 
     await this.preSpawnChecks();
+    if(generation!==this.lifecycleGeneration)throw new Error("Runtime start was cancelled by cleanup.");
 
     // 2. Spawn agentd.serve on any free port; it binds first, then reports the port.
     const env = finalSpawnEnv(
       process.env as Record<string, string | undefined>,
       buildBackendEnv(workspace, settings, this.deps.runtimeDir, this.platform),
     );
+    const owner=newOwner(settings.clientName ?? "VS Code",workspace);this.owner=owner;
+    Object.assign(env,{CRUCIBLE_OWNER_KEY:owner.key,CRUCIBLE_INDEX_KEY:owner.indexKey,CRUCIBLE_OWNER_CLIENT:owner.clientId,CRUCIBLE_OWNER_NAME:owner.name,CRUCIBLE_SHELL_POLICY:"ask",CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT:"false"});
     const child = this.deps.spawn(
       venvPython(this.deps.runtimeDir, this.platform),
       ["-m", "agentd.serve", "--port", "0", "--workspace-lock", workspace],
@@ -307,12 +328,15 @@ export class BackendProcess {
     let handshake: { pid: number; port: number };
     try {
       handshake = await this.waitForHandshake(child);
+      if(generation!==this.lifecycleGeneration)throw new Error("Runtime start was cancelled by cleanup.");
+      if (handshake.pid !== child.pid) throw new Error("Backend handshake does not identify the spawned child.");
     } catch (err) {
       await this.stop();
       throw err;
     }
     const port = handshake.port;
-    this._port = port;
+    this._port = port;owner.pid=handshake.pid;registerOwner(port,owner);
+    child.onExit(()=>forgetOwner(port,owner));
 
     // 3. Health: the proof must name this child's pid and this workspace.
     let up = false;
@@ -347,6 +371,7 @@ export class BackendProcess {
     }
 
     // 5. Watcher (incremental re-index; LSP only when the LSP install landed).
+    if(generation!==this.lifecycleGeneration)throw new Error("Runtime start was cancelled by cleanup.");
     this.spawnWatcher(workspace, port);
     return { port, reused: false };
   }
@@ -401,6 +426,7 @@ export class BackendProcess {
           }
         : {}),
     });
+    if(this.owner) env.CRUCIBLE_INDEX_KEY=this.owner.indexKey;
     this.watcher = this.deps.spawn(indexer, [
       "index",
       "--workspace", workspace,
@@ -432,36 +458,46 @@ export class BackendProcess {
 
   private async preSpawnChecks(): Promise<void> {
     const py = venvPython(this.deps.runtimeDir, this.platform);
-    const serve = await this.deps.exec(py, ["-c", "import agentd.serve"], PRESPAWN_TIMEOUT_MS);
+    const serve = await this.deps.exec(py, ["-c", "import agentd.serve; from agentd.project_ownership import PROTOCOL; assert PROTOCOL == 1"], PRESPAWN_TIMEOUT_MS);
     if (serve.code !== 0) {
       throw new RuntimeUpdateRequiredError("agentd", serve.timedOut
-        ? "`import agentd.serve` timed out" : "this runtime predates agentd.serve");
+        ? "`import agentd.serve` timed out" : "this runtime predates project ownership");
     }
     const indexer = binPath(this.deps.runtimeDir, "crucible-indexer", this.platform);
     if (!existsSync(indexer)) return; // the watcher is skipped, as before
     // An old indexer has no --version arm and starts a full watching indexer instead:
     // the timeout (which kills it) is what makes this check safe.
     const version = await this.deps.exec(indexer, ["--version"], PRESPAWN_TIMEOUT_MS);
-    if (version.code !== 0 || version.timedOut || !/\bauth=1\b/.test(version.stdout)) {
-      throw new RuntimeUpdateRequiredError("indexer", "the indexer predates backend authentication");
+    if (version.code !== 0 || version.timedOut || (!/\bauth=1\b/.test(version.stdout) || !/\bowner=1\b/.test(version.stdout))) {
+      throw new RuntimeUpdateRequiredError("indexer", "the indexer predates project ownership authentication");
     }
   }
 
-  async stop(): Promise<void> {
-    const watcher = this.watcher;
-    const backend = this.backend;
-    this.watcher = undefined;
-    this.backend = undefined;
-    this._port = undefined;
-    // Watcher first so it doesn't observe the backend vanishing mid-write.
-    try { watcher?.kill("SIGTERM"); } catch { /* already dead */ }
-    if (!backend) return;
-    try { backend.kill("SIGTERM"); } catch { /* already dead */ }
-    // agentd.serve's 5 s graceful shutdown finishes lifespan teardown inside this wait,
-    // so restart() never reads the lock of a backend that is still draining.
-    if (await this.exitsWithin(backend, STOP_WAIT_MS)) return;
-    try { backend.kill("SIGKILL"); } catch { /* already dead */ }
-    await this.exitsWithin(backend, STOP_WAIT_MS);
+  stop(): Promise<void> {
+    if(this.stopping)return this.stopping;
+    this.lifecycleGeneration++;
+    const actual=this.stopOnce();this.stopping=actual;
+    void actual.finally(()=>{if(this.stopping===actual)this.stopping=undefined;}).catch(()=>{});
+    return actual;
+  }
+  private async stopOnce():Promise<void>{
+    const watcher=this.watcher,backend=this.backend;
+    const stopChild=async(child:ChildHandle|undefined)=>{
+      if(!child)return;
+      try{child.kill("SIGTERM");}catch{/* Exit may already have raced the signal. */}
+      if(await this.exitsWithin(child,STOP_WAIT_MS))return;
+      try{child.kill("SIGKILL");}catch{/* Verify actual exit below. */}
+      if(!await this.exitsWithin(child,STOP_WAIT_MS))throw new Error(`Owned process ${child.pid} did not exit. Its handle is retained for retry.`);
+    };
+    const results=await Promise.allSettled([
+      stopChild(watcher).then(()=>{if(this.watcher===watcher)this.watcher=undefined;}),
+      stopChild(backend).then(()=>{if(this.backend===backend){this.backend=undefined;
+        if(this._port!==undefined&&this.owner)forgetOwner(this._port,this.owner);this.owner=undefined;this._port=undefined;}}),
+    ]);
+    const errors=results.flatMap(r=>r.status==="rejected"?[r.reason]:[]);
+    if(errors.length)throw new AggregateError(errors,"Owned runtime cleanup is incomplete. Retry quitting.");
+    // Observer ports have no owned child and can be detached without signalling it.
+    if(!backend){this.owner=undefined;this._port=undefined;}
   }
 
   private async exitsWithin(child: ChildHandle, ms: number): Promise<boolean> {
@@ -475,16 +511,11 @@ export class BackendProcess {
 
 
   private async reap(lock: LockInfo, workspace: string): Promise<void> {
-    unlinkLock(workspace);
-    this.deps.log(`[runtime] reaped stale lock (pid=${lock.pid})`);
-    if (this.platform === "win32-x64" || lock.pid <= 1) return;
-    const info = await this.deps.processInfo(lock.pid);
-    if (!info || !isOurBackend(info, lock, workspace, this.deps.uid)) return;
-    this.deps.signal(lock.pid, "SIGTERM");
-    for (let waited = 0; waited < REAP_GRACE_MS && this.deps.isPidAlive(lock.pid); waited += 1000) {
-      await this.deps.sleep(1000);
-    }
-    if (this.deps.isPidAlive(lock.pid)) this.deps.signal(lock.pid, "SIGKILL");
+    // A backend not launched by this instance is never ours to kill. Dead lock
+    // files are left intact; the backend's atomic reservation handles safe retry.
+    if(this.deps.isPidAlive(lock.pid))throw new Error(`Project ${workspace} is controlled or starting in PID ${lock.pid}. Close that client, then retry. No process was stopped.`);
+    const result=await probeHealth(lock.port,this.probeDeps(),{pid:lock.pid,workspace});
+    if(result!=="down")throw new Error(`Project ${workspace}: previous backend port is still in use or unverifiable. Retry after its client exits.`);
   }
 
   private probeDeps(): ProbeDeps {

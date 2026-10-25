@@ -115,6 +115,7 @@ impl BackendNotifier {
         let result = self
             .client
             .post(format!("{base}/v1/index/build"))
+            .header("x-crucible-indexer", std::env::var("CRUCIBLE_INDEX_KEY").unwrap_or_default())
             .bearer_auth(&token)
             .json(&serde_json::json!({ "workspace_path": workspace }))
             .send()

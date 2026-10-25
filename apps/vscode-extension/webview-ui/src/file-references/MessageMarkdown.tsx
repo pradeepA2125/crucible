@@ -31,10 +31,10 @@ const components: Components = {
 /** Shared message-only Markdown renderer with live, exact file-reference links.
  *  Memoized on content: re-parsing is the expensive part of a render, and the streaming
  *  bubble re-renders on every reasoning delta while its answer text is unchanged. */
-export const MessageMarkdown = memo(function MessageMarkdown({ content }: { content: string }) {
+export const MessageMarkdown = memo(function MessageMarkdown({ content, overrides, disableFileReferences }: { content: string; overrides?: Components; disableFileReferences?: boolean }) {
   const index = useFileReferenceIndex();
   const plugins = useMemo(() => [...MARKDOWN_PLUGINS, [remarkFileReferences, { index }]] as Options["remarkPlugins"], [index]);
-  return <ReactMarkdown remarkPlugins={plugins} components={components}>
+  return <ReactMarkdown remarkPlugins={disableFileReferences ? MARKDOWN_PLUGINS : plugins} components={overrides ? { ...components, ...overrides } : components}>
     {content}
   </ReactMarkdown>;
 });

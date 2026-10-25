@@ -1,3 +1,4 @@
+import { BtnGhost, BtnPrimary } from "../../components/shared/buttons";
 import type { EdgeKind, FileDetail, StarRecord, SymbolDetail } from "../types";
 
 const KIND_VAR: Record<EdgeKind, string> = {
@@ -146,20 +147,18 @@ export function InfoCard({ star, detail, symbolDetail, onOpen, onDive, onGoEdge 
         </div>
       )}
       <div className="flex gap-2">
-        <button
-          type="button"
+        <BtnPrimary
           onClick={onOpen}
-          className="flex-1 py-2 rounded-lg text-[11px] font-semibold bg-[var(--ax-accent)] text-[var(--ax-accent-text)]"
+          flex
         >
           Open in editor
-        </button>
-        <button
-          type="button"
+        </BtnPrimary>
+        <BtnGhost
           onClick={onDive}
-          className="flex-1 py-2 rounded-lg text-[11px] font-semibold border border-[var(--ax-border)] text-[var(--ax-ink)]"
+          className="flex-1"
         >
           Dive inside
-        </button>
+        </BtnGhost>
       </div>
     </div>
   );

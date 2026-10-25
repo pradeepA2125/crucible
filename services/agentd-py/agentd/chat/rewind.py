@@ -16,8 +16,10 @@ import json
 import logging
 import os
 import shutil
+import stat
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -62,6 +64,41 @@ class RewindOutcome(BaseModel):
     target_created_at: datetime | None = None
     target_seq: int | None = None
     target_memory_mseq: int = Field(default=0, exclude=True)
+
+
+class BaselineEntry(BaseModel):
+    """One path as it was before a checkpoint's turn, for the review panel. Read-only.
+
+    `from_seq` is the checkpoint whose capture supplied it: the oldest in the span, the
+    same entry a rewind to that checkpoint would restore."""
+    path: str
+    existed: bool
+    oversize: bool = False
+    from_seq: int
+
+
+class BaselineFile(BaseModel):
+    """One baseline file's bytes, or why there are none.
+
+    captured: bytes follow · absent: the span's turns created it · oversize: never
+    snapshotted · too_large: snapshotted but over the read cap · missing: the stored
+    copy is gone or is not a plain file · unavailable: this platform cannot read it
+    without following links."""
+    path: str
+    from_seq: int
+    state: Literal["captured", "absent", "oversize", "too_large", "missing", "unavailable"]
+    size: int | None = None
+    content: bytes | None = Field(default=None, exclude=True)
+
+
+class _NoSecureOpen(Exception):
+    """Descriptor-relative no-follow opens are unavailable (e.g. Windows)."""
+
+
+class _SnapshotTooLarge(Exception):
+    def __init__(self, size: int) -> None:
+        super().__init__(f"snapshot is {size} bytes")
+        self.size = size
 
 
 def resolve_rewind_anchor(store: ChatThreadStore, thread_id: str, message_id: str) -> str:
@@ -173,6 +210,102 @@ class RewindStore:
         if target is None:
             return []
         return [c for c in self._store.list_checkpoints(thread_id) if c.seq >= target.seq]
+
+    def _span_from(self, thread_id: str, seq: int) -> list[Checkpoint]:
+        checkpoints = self._store.list_checkpoints(thread_id)
+        if not any(c.seq == seq for c in checkpoints):
+            return []
+        return [c for c in checkpoints if c.seq >= seq]
+
+    def checkpoints(self, thread_id: str) -> list[Checkpoint]:
+        return self._store.list_checkpoints(thread_id)
+
+    def baseline(self, thread_id: str, seq: int) -> list[BaselineEntry] | None:
+        """What a rewind to checkpoint `seq` would restore, per path: the same fold as
+        restore(), so "since this checkpoint" and the rewind can never disagree."""
+        span = self._span_from(thread_id, seq)
+        if not span:
+            return None
+        return [BaselineEntry(path=path, existed=entry.existed, oversize=entry.oversize,
+                              from_seq=from_seq)
+                for path, (from_seq, entry) in sorted(self._fold(span).items())]
+
+    def baseline_file(
+        self, thread_id: str, seq: int, path: str, *, max_bytes: int
+    ) -> BaselineFile | None:
+        """One baseline path's stored bytes. None when `path` is not in the baseline: the
+        checkpoint's own list is the only allowlist, never a path the caller names."""
+        span = self._span_from(thread_id, seq)
+        found = self._fold(span).get(path) if span else None
+        if found is None:
+            return None
+        from_seq, entry = found
+        if entry.oversize:
+            return BaselineFile(path=path, from_seq=from_seq, state="oversize")
+        if not entry.existed:
+            return BaselineFile(path=path, from_seq=from_seq, state="absent")
+        try:
+            data = self._read_snapshot(thread_id, from_seq, path, max_bytes)
+        except _SnapshotTooLarge as exc:
+            return BaselineFile(path=path, from_seq=from_seq, state="too_large", size=exc.size)
+        except _NoSecureOpen:
+            return BaselineFile(path=path, from_seq=from_seq, state="unavailable")
+        except OSError:
+            logger.warning("[rewind] stored copy of %s (checkpoint %s) is unreadable",
+                           path, from_seq, exc_info=True)
+            return BaselineFile(path=path, from_seq=from_seq, state="missing")
+        return BaselineFile(path=path, from_seq=from_seq, state="captured",
+                            size=len(data), content=data)
+
+    def _read_snapshot(self, thread_id: str, seq: int, rel: str, max_bytes: int) -> bytes:
+        """Bounded read of one stored pre-state that refuses links on the way.
+
+        The rewind store lives inside the project (`.crucible/state`), which is untrusted:
+        a link planted there must not turn a review read into a read of another file. So
+        every component below the workspace root is opened with O_NOFOLLOW."""
+        rel_parts = PurePosixPath(rel).parts
+        if (PurePosixPath(rel).is_absolute() or not rel_parts
+                or any(part in {"", ".", ".."} or "\\" in part for part in rel_parts)
+                or "/" in thread_id or "\\" in thread_id):
+            raise OSError(f"invalid snapshot path {rel!r}")
+        parts = [".crucible", "state", "rewind", thread_id, str(seq), "files", *rel_parts]
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        if not nofollow or os.open not in os.supports_dir_fd:
+            # Fail closed (e.g. Windows): a check-then-open fallback can be raced by a link
+            # swap. A later platform slice can add handle-based no-reparse reads.
+            raise _NoSecureOpen()
+        directory = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        # The root itself was chosen by the user and may legitimately be a link.
+        fd = os.open(self._root, directory)
+        try:
+            for part in parts[:-1]:
+                child = os.open(part, directory | nofollow, dir_fd=fd)
+                os.close(fd)
+                fd = child
+            file_fd = os.open(parts[-1], os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0),
+                              dir_fd=fd)
+        finally:
+            os.close(fd)
+        try:
+            info = os.fstat(file_fd)
+            if not stat.S_ISREG(info.st_mode):
+                raise OSError(f"{rel} is not a regular file")
+            if info.st_size > max_bytes:
+                raise _SnapshotTooLarge(info.st_size)
+            chunks: list[bytes] = []
+            remaining = max_bytes + 1
+            while remaining > 0:
+                chunk = os.read(file_fd, min(65536, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            data = b"".join(chunks)
+            if len(data) > max_bytes:
+                raise _SnapshotTooLarge(len(data))
+            return data
+        finally:
+            os.close(file_fd)
 
     @staticmethod
     def _fold(span: list[Checkpoint]) -> dict[str, tuple[int, CapturedFile]]:

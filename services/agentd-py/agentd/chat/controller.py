@@ -42,6 +42,7 @@ from agentd.chat.controller_loop import (
 )
 from agentd.chat.controller_phase import ControllerPhaseSM
 from agentd.chat.edit_session import TurnEditSession
+from agentd.chat.gate_claims import GateClaim
 from agentd.chat.models import (
     AgentRecord,
     ChatMessage,
@@ -557,6 +558,34 @@ class ChatController:
         # can resolve them across threads.
         self._pending_edit_gates: dict[str, tuple[str, PendingGate]] = {}
 
+    def project_activity(self, requested_workspace: str) -> dict[str, object]:
+        from agentd.chat.activity import activity_snapshot
+        from agentd.exec_sessions.manager import SessionManager
+
+        sessions = self._exec_sessions
+        if sessions is not None and not isinstance(sessions, SessionManager):
+            return {"supported": False, "reason": "unknown_session_manager"}
+        legacy = getattr(self._orchestrator, "_running_tasks", None)
+        return activity_snapshot(
+            self._store, self._workspace_path, requested_workspace, self.context_process_id(),
+            self._active_turns.keys(), sessions,
+            task_mode=self._task_subsystem_enabled,
+            legacy_work=(self._orchestrator is not None and (legacy is None or bool(legacy))),
+        )
+
+    def project_lifecycle(self, requested_workspace: str) -> dict[str, object]:
+        from agentd.chat.lifecycle import lifecycle_snapshot
+        from agentd.exec_sessions.manager import SessionManager
+        sessions = self._exec_sessions
+        if sessions is not None and not isinstance(sessions, SessionManager):
+            return {"supported": False, "reason": "unknown_session_manager"}
+        legacy = getattr(self._orchestrator, "_running_tasks", None)
+        return lifecycle_snapshot(
+            self._store, self._workspace_path, requested_workspace, self.context_process_id(),
+            self._active_turns.keys(), sessions, task_mode=self._task_subsystem_enabled,
+            legacy_work=(self._orchestrator is not None and (legacy is None or bool(legacy))),
+        )
+
     def launch_turn(
         self, thread_id: str, coro, *, channel_id: str | None = None,
     ) -> asyncio.Task:
@@ -723,12 +752,13 @@ class ChatController:
         image_attachments: list[dict[str, object]] | None = None,
         plan_mode: bool | None = None,
         message_id: str | None = None,
+        _claimed_feedback: PendingGate | None = None,
     ) -> None:
         thread = self._store.get_thread(thread_id)
         if thread is None:
             raise ValueError(f"Thread {thread_id!r} not found")
         image_attachments = self._image_refs(image_attachments)
-        self._user_spoke(thread_id, plan_mode)
+        self._user_spoke(thread_id, plan_mode, preserve_gates=_claimed_feedback is not None)
         if step_review is not None and not self._approval_owned:
             # Sets the value for future edits; never resolves gates (spec §5.4) — a
             # message in one thread must not accept edits waiting in another.
@@ -757,7 +787,9 @@ class ChatController:
             channel_id, step_review=step_review, plan_mode=plan_mode,
             forced_skills=forced_skills, image_attachments=image_attachments)
 
-    def _user_spoke(self, thread_id: str, plan_mode: bool | None) -> None:
+    def _user_spoke(
+        self, thread_id: str, plan_mode: bool | None, *, preserve_gates: bool = False,
+    ) -> None:
         """A user message takes any batch of wake notices and resets the wake loop
         (spec §5.3), and supersedes only the MAIN agent's cards (spec §3.8): a late decision
         on a superseded card hits `gate is None` and no-ops. A sub-agent's or a team's gate
@@ -769,7 +801,8 @@ class ChatController:
         self._turn_kinds[thread_id] = "user"
         if plan_mode is not None:
             self._plan_mode = plan_mode
-        self._store.clear_main_gates(thread_id)
+        if not preserve_gates:
+            self._store.clear_main_gates(thread_id)
         for coordinator in self._coordinators.values():
             if coordinator.thread_id == thread_id:
                 coordinator.user_spoke()
@@ -1522,7 +1555,7 @@ class ChatController:
 
     def set_approval_mode(self, *, auto_accept: bool, shell_policy: ShellPolicy,
                           resolve_waiting: bool, expected_process_id: str,
-                          expected_version: int) -> ApprovalModeResult:
+                          expected_version: int, force_version: bool = False) -> ApprovalModeResult:
         before = self.approval_state()
         if before.process_id != expected_process_id or before.version != expected_version:
             raise ApprovalConflict(before)
@@ -1531,7 +1564,7 @@ class ChatController:
         self._approval_owned = True
         self._review_control.auto_accept_edits = auto_accept
         self._shell_policy = shell_policy
-        if changed or not before.owned:
+        if changed or not before.owned or force_version:
             self._approval_version += 1
         result = (self._resolve_waiting_edits() if resolve_waiting and not before.auto_accept
                   and auto_accept else ReviewPrefResult(auto_resolved=0, background=0))
@@ -4448,8 +4481,74 @@ class ChatController:
         self._store.append_message(thread_id, ChatMessage(
             role="agent", content=note, type="text", metadata={"progress": True}))
 
+    def claim_gate_decision(self, thread_id: str, claim: GateClaim) -> dict[str, object]:
+        """Validate and consume synchronously before acknowledging a detached worker.
+
+        No await between the durable CAS and launch registration. This protects an
+        exact main mode/question card, not a cross-client project execution lock.
+        """
+        from agentd.chat.gate_claims import GateClaimError, matches
+
+        root = str(Path(self._workspace_path).resolve()) if self._workspace_path else ""
+        if (not root or claim.workspace_path != root
+                or claim.process_id != self.context_process_id()
+                or not self._approval_owned or self._task_subsystem_enabled):
+            raise GateClaimError("authority_changed")
+        identity = claim.identity(thread_id)
+        prior = self._store.gate_receipt(thread_id, claim.request_id)
+        if prior is not None:
+            if not matches(prior, identity):
+                raise GateClaimError("request_conflict")
+            return prior  # before busy/gate checks: never dispatch a duplicate
+        thread = self._store.get_thread(thread_id)
+        if (thread is None or not thread.workspace_path
+                or str(Path(thread.workspace_path).resolve()) != root):
+            raise GateClaimError("thread_project_changed")
+        if thread_id in self._active_turns:
+            raise GateClaimError("thread_active")
+        gates = [g for g in thread.pending_controller_gates if g.gate_id == claim.gate_id]
+        expected_kind = "mode" if claim.kind == "feedback" else claim.kind
+        if len(gates) != 1 or gates[0].kind != expected_kind or not gates[0].is_main():
+            raise GateClaimError("gate_changed")
+        gate = gates[0]
+        if not claim.value.strip():
+            raise GateClaimError("empty_decision")
+        if claim.kind == "mode":
+            offered = gate.payload.get("options") or []
+            if (not isinstance(offered, list)
+                    or claim.value != "implement" or self._orchestrator is None
+                    or not any(isinstance(o, dict) and o.get("mode") == claim.value
+                               for o in offered)):
+                raise GateClaimError("decision_not_offered")
+        receipt, created = self._store.claim_controller_gate(thread_id, gate, identity)
+        if not created:
+            return receipt
+        channel_id = f"chat:{thread_id}"
+        goal = next((m.content for m in reversed(thread.messages) if m.role == "user"), "")
+        if claim.kind == "mode":
+            # Accepted authority, not the card's independent setPlanMode message.
+            self._plan_mode = False
+            coro = self.resolve_mode(thread_id, claim.value, channel_id=channel_id,
+                                     goal=goal, _claimed_gate=gate)
+        elif claim.kind == "clarify":
+            coro = self.resolve_clarify(thread_id, claim.value, channel_id=channel_id,
+                                        goal=goal, _claimed_gate=gate)
+        else:
+            coro = self.handle_message(thread_id, claim.value, channel_id=channel_id,
+                                       _claimed_feedback=gate)
+        try:
+            self._broadcaster.clear_replay(channel_id)
+            self.launch_turn(thread_id, coro, channel_id=channel_id)
+        except Exception:
+            coro.close()
+            self._store.mark_gate_launch_failed(thread_id, claim.request_id)
+            logger.exception("[controller] claimed decision launch failed (thread=%s)", thread_id)
+            receipt = {**receipt, "status": "launch_failed"}
+        return receipt
+
     async def resolve_mode(
         self, thread_id: str, mode: str, *, channel_id: str, goal: str,
+        _claimed_gate: PendingGate | None = None,
     ) -> None:
         """Resolve the mode gate (POST /mode-decision). Clears the gate in place
         (Class-A), writes a breadcrumb, then dispatches: "implement" exits Plan Mode
@@ -4459,7 +4558,7 @@ class ChatController:
         # The read→clear pair has no `await` between it (sqlite is sync), so two
         # concurrent /mode-decision posts can't both dispatch (which would double-
         # create a task). The second finds the gate already cleared and no-ops.
-        gate = self._select_gate(thread_id, "mode", None)
+        gate = _claimed_gate or self._select_gate(thread_id, "mode", None)
         if gate is None:
             logger.info("[controller] resolve_mode no-op: no pending mode gate (thread=%s)",
                         thread_id)
@@ -4494,7 +4593,8 @@ class ChatController:
         # this") the route forwards. Falls back to the raw goal if the model omitted it.
         sketch = str(gate.payload.get("plan_sketch") or "").strip()
         effective_goal = sketch or goal
-        self._store.remove_controller_gate(thread_id, gate.gate_id)
+        if _claimed_gate is None:
+            self._store.remove_controller_gate(thread_id, gate.gate_id)
         # PERSIST + broadcast (mirror engine.write_chat_breadcrumb): a bare broadcast
         # dies on reload, leaving no record of what the user chose.
         self._write_breadcrumb(thread_id, channel_id, f"▸ You chose: {label}")
@@ -4556,6 +4656,7 @@ class ChatController:
 
     async def resolve_clarify(
         self, thread_id: str, answer: str, *, channel_id: str, goal: str,
+        _claimed_gate: PendingGate | None = None,
     ) -> None:
         """Resolve the clarify gate (POST /clarify-decision). Clears the gate in place
         (Class-A), writes ONE combined `❓ q → a` breadcrumb, then re-enters the loop with
@@ -4566,7 +4667,7 @@ class ChatController:
         is sync), so two concurrent posts can't both re-enter; a blank answer no-ops (the
         card shouldn't submit blank, but defend)."""
         answer = (answer or "").strip()
-        gate = self._select_gate(thread_id, "clarify", None)
+        gate = _claimed_gate or self._select_gate(thread_id, "clarify", None)
         if gate is None:
             logger.info("[controller] resolve_clarify no-op: no pending clarify gate (thread=%s)",
                         thread_id)
@@ -4577,7 +4678,8 @@ class ChatController:
         question = str(gate.payload.get("question") or "")
         resume_phase = gate.payload.get("resume_phase")
         resume_phase = resume_phase if resume_phase in ("PLAN", "ACTIVE") else None
-        self._store.remove_controller_gate(thread_id, gate.gate_id)
+        if _claimed_gate is None:
+            self._store.remove_controller_gate(thread_id, gate.gate_id)
         # PERSIST + broadcast (mirror write_chat_breadcrumb): a bare broadcast dies on
         # reload, leaving no record of the Q the agent asked or the A the user gave.
         self._write_breadcrumb(thread_id, channel_id, f"❓ {question} → {answer}")

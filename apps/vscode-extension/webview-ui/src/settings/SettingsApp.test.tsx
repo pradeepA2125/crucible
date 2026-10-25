@@ -126,3 +126,50 @@ describe("SettingsApp shows a failed appearance save while offline", () => {
     expect(screen.getByText(/EACCES: settings.json is read-only/)).toBeTruthy();
   });
 });
+
+
+describe("desktop draft settings placement", () => {
+  beforeEach(() => vi.clearAllMocks());
+  it("keeps Overview first and opens Drafts from its card and navigation", () => {
+    render(<SettingsApp />);
+    deliver({ type: "themeChanged", host: "desktop", appearance: "dark", accent: "blue" });
+    deliver({ type: "settings/state", state: { ...state, restartRequired: false } });
+    expect(screen.getAllByRole("heading")[0]).toHaveTextContent("Settings");
+    expect(screen.queryByRole("checkbox", { name: /Save encrypted drafts/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Drafts Encrypted storage/ }));
+    expect(screen.getByRole("heading", { name: "Drafts" })).toBeTruthy();
+    deliver({ type: "desktop/persistence", enabled: true, available: true, legacy: false, recovery: false });
+    expect(screen.getByRole("checkbox", { name: /Save encrypted drafts/ })).toBeChecked();
+    navClick(/Overview/);
+    expect(screen.queryByRole("checkbox", { name: /Save encrypted drafts/ })).toBeNull();
+    navClick(/^Drafts$/);
+    expect(screen.getByRole("checkbox", { name: /Save encrypted drafts/ })).toBeChecked();
+  });
+
+  it("allows local Drafts offline and leaves VS Code unchanged", () => {
+    render(<SettingsApp />);
+    deliver({ type: "settings/localState", appearance: "dark", accent: "blue" });
+    expect(screen.queryByRole("button", { name: /^Drafts$/ })).toBeNull();
+    expect(vscode.postMessage).not.toHaveBeenCalledWith({ type: "desktop/persistenceRead" });
+    deliver({ type: "themeChanged", host: "desktop", appearance: "dark", accent: "blue" });
+    deliver({ type: "settings/error", message: "Backend offline" });
+    navClick(/^Drafts$/);
+    expect(screen.getByRole("heading", { name: "Drafts" })).toBeTruthy();
+    expect(screen.queryByText(/this section can’t load/)).toBeNull();
+    deliver({ type: "desktop/persistence", enabled: false, available: true, legacy: false, recovery: false });
+    expect(screen.getByRole("checkbox", { name: /Save encrypted drafts/ })).not.toBeDisabled();
+  });
+});
+
+
+it("desktop update progress never acknowledges an unrelated pending Settings mutation", () => {
+  render(<SettingsApp />);
+  deliver({ type: "settings/state", state });
+  const restart=screen.getByRole("button",{name:"Restart backend"});
+  fireEvent.click(restart);
+  expect(restart).toBeDisabled();
+  deliver({type:"desktop/updateStatus",state:{phase:"downloading",message:"Downloading…",received:50,total:100}});
+  expect(restart).toBeDisabled();
+  deliver({type:"settings/state",state});
+  expect(restart).not.toBeDisabled();
+});

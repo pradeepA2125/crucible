@@ -152,12 +152,9 @@ def test_lock_write_does_not_follow_a_symlink(tmp_path: Path) -> None:
     target.write_text("untouched")
     os.symlink(target, state / "agentd.lock")
     proc, _home, _ws = _start(tmp_path, "--port", "0", "--workspace-lock", str(ws))
-    try:
-        _handshake(proc)
-        assert target.read_text() == "untouched"
-        assert not (state / "agentd.lock").is_symlink()
-    finally:
-        _stop(proc)
+    assert proc.wait(30)==3
+    assert target.read_text()=="untouched"
+    assert (state/"agentd.lock").is_symlink()
 
 
 def test_legacy_dirs_migrated_before_lock(tmp_path: Path) -> None:
@@ -173,22 +170,12 @@ def test_legacy_dirs_migrated_before_lock(tmp_path: Path) -> None:
         _stop(proc)
 
 
-def test_reload_keeps_token_and_pid(tmp_path: Path) -> None:
+def test_reload_refuses_before_reservation_or_token(tmp_path: Path) -> None:
     proc, home, ws = _start(tmp_path, "--port", "0", "--reload",
                             "--workspace-lock", str(tmp_path / "ws"))
-    try:
-        port = _handshake(proc)["port"]
-        token_file = home / ".crucible/run" / f"agentd-{port}.token"
-        token = token_file.read_text()
-        assert _get(port, f"/health?nonce={NONCE}")[1]["pid"] == proc.pid
-        (tmp_path / "cwd" / "touch_me.py").write_text("x = 1\n")  # trigger a reload
-        time.sleep(4)
-        status, body = _get(port, f"/health?nonce={NONCE}")
-        assert status == 200 and body["pid"] == proc.pid
-        assert token_file.read_text() == token
-        assert _get(port, "/v1/config", token)[0] == 200
-    finally:
-        _stop(proc)
+    assert proc.wait(30)==3
+    assert "--reload is unavailable" in proc.stderr.read()
+    assert not (ws/".crucible/state/agentd.lock").exists()
 
 
 def test_stop_with_open_sse_stream_finishes_quickly(tmp_path: Path) -> None:

@@ -1,3 +1,4 @@
+import type { DraftPort } from "../drafts/types";
 import { sig } from "../hooks/useAppState";
 import type {
   GateAgentView, GateTeamView, LiveGateView, LivePlanView, LiveReviewView, LiveErrorView, LiveTodosView,
@@ -23,6 +24,8 @@ import { AgentChip } from "./agents/AgentChip";
 // ── GateDispatch ──────────────────────────────────────────────────────────────
 
 interface GateDispatchProps {
+  threadId?: string;
+  draftStore?: DraftPort;
   gateId: string;
   taskId: string;
   kind: LiveGateView["kind"];
@@ -52,7 +55,7 @@ function GateDispatch({ agent, team, ...card }: GateDispatchProps) {
   );
 }
 
-function GateCard({ gateId, taskId, kind, payload }: Omit<GateDispatchProps, "agent" | "team">) {
+function GateCard({ gateId, taskId, threadId, draftStore, kind, payload }: Omit<GateDispatchProps, "agent" | "team">) {
   switch (kind) {
     case "command":
       return <CommandGate gateId={gateId} taskId={taskId} payload={payload} />;
@@ -63,9 +66,9 @@ function GateCard({ gateId, taskId, kind, payload }: Omit<GateDispatchProps, "ag
     case "step":
       return <StepGate taskId={taskId} payload={payload} />;
     case "mode":
-      return <ModeGate taskId={taskId} payload={payload} />;
+      return <ModeGate taskId={taskId} threadId={threadId} gateId={threadId ? gateId : undefined} draftStore={draftStore} payload={payload} />;
     case "clarify":
-      return <ClarifyGate taskId={taskId} payload={payload} />;
+      return <ClarifyGate taskId={taskId} threadId={threadId} gateId={threadId ? gateId : undefined} draftStore={draftStore} payload={payload} />;
     case "edit":
       return <EditGate gateId={gateId} taskId={taskId} payload={payload} />;
     case "mcp_tool":
@@ -85,6 +88,8 @@ function gateKey(gate: LiveGateView): string {
 // ── LiveSlot ──────────────────────────────────────────────────────────────────
 
 interface Props {
+  threadId?: string;
+  draftStore?: DraftPort;
   liveGates: LiveGateView[];
   livePlan: LivePlanView | null;
   liveReview: LiveReviewView | null;
@@ -109,7 +114,7 @@ interface Props {
  * Returns null when all four slots are empty.
  */
 export function LiveSlot({
-  liveGates, livePlan, liveReview, liveError, liveTodos, providerAccess,
+  threadId, draftStore, liveGates, livePlan, liveReview, liveError, liveTodos, providerAccess,
   liveSessions, sessionTranscripts, onExpandSession, onDismissError,
 }: Props) {
   const hasTodos = liveTodos != null && liveTodos.items.length > 0;
@@ -136,7 +141,9 @@ export function LiveSlot({
         // Key stability relies on consistent key insertion order: both SSE and /live
         // payloads pass through JSON.parse, so V8 preserves the backend serializer's order.
         <GateDispatch
-          key={gateKey(gate)}
+          key={`${threadId ?? "inspect"}:${gateKey(gate)}`}
+          threadId={!gate.agent && !gate.team ? threadId : undefined}
+          draftStore={draftStore}
           gateId={gate.gateId}
           taskId={gate.taskId}
           kind={gate.kind}

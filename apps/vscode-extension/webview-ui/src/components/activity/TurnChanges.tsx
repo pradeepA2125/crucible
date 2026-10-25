@@ -1,8 +1,9 @@
-import { memo, useState } from "react";
+import { memo, useContext, useState } from "react";
 import { vscode } from "../../vscodeApi";
 import type { FileChange } from "../../transcript/groupTranscript";
 import { Icon } from "../Icon";
 import { DiffPanes } from "../shared/DiffPanes";
+import { ChangesRoute } from "./changesRoute";
 
 const VISIBLE = 3;
 
@@ -13,11 +14,12 @@ function splitPath(path: string): { dir: string; base: string } {
 
 function Row({ file }: { file: FileChange }) {
   const [open, setOpen] = useState(false);
+  const route = useContext(ChangesRoute), routed = route && file.applied ? () => file.editSource ? route(file.path, file.editSource) : route(file.path) : undefined;
   const { dir, base } = splitPath(file.path);
   return (
     <div className="grid min-w-0 gap-1">
       <div className="flex min-w-0 items-center gap-2 text-body">
-        <button type="button" onClick={() => vscode.postMessage({ type: "openFile", path: file.path })}
+        <button type="button" onClick={routed ?? (() => vscode.postMessage({ type: "openFile", path: file.path }))}
           className="min-w-0 truncate text-left hover:underline" title={file.path} aria-label={file.path}>
           {dir && <span className="text-text-3">{dir}</span>}<span className="text-text">{base}</span>
         </button>
@@ -28,19 +30,23 @@ function Row({ file }: { file: FileChange }) {
             <span style={{ color: "var(--diff-del)" }}>−{file.deletions}</span>
           </span>
         ) : <span className="shrink-0 text-meta text-text-3">not applied</span>}
-        {file.diff && (
+        {routed ? (
+          <button type="button" aria-label={`Show diff for ${file.path} in Changes`} onClick={routed}
+            className="px-1.5 py-0.5 text-text-3 hover:text-text">›</button>
+        ) : file.diff && (
           <button type="button" aria-label={`Show diff for ${file.path}`} aria-expanded={open} onClick={() => setOpen(!open)}
             className="px-1.5 py-0.5 text-text-3 hover:text-text">{open ? "▾" : "›"}</button>
         )}
       </div>
-      {open && file.diff && <DiffPanes entries={[{ path: file.path, additions: file.additions, deletions: file.deletions, unified_diff: file.diff }]} />}
+      {!routed && open && file.diff && <DiffPanes entries={[{ path: file.path, additions: file.additions, deletions: file.deletions, unified_diff: file.diff }]} />}
     </div>
   );
 }
 
 function sameFiles(a: FileChange[], b: FileChange[]): boolean {
   return a.length === b.length && a.every((f, i) => f.path === b[i].path && f.additions === b[i].additions
-    && f.deletions === b[i].deletions && f.applied === b[i].applied && f.diff === b[i].diff);
+    && f.deletions === b[i].deletions && f.applied === b[i].applied && f.diff === b[i].diff
+    && f.editSource?.message === b[i].editSource?.message && f.editSource?.position === b[i].editSource?.position);
 }
 
 export const TurnChanges = memo(function TurnChanges({ files }: { files: FileChange[] }) {

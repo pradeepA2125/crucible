@@ -1,0 +1,9 @@
+import { describe,it,expect,vi } from "vitest";
+import {restoredWindow,rememberWindow} from "../src/window-state.js";
+describe("native window restore",()=>{
+ const primary={x:0,y:24,width:1440,height:876};
+ it("recovers removed-monitor bounds entirely onto the primary workarea",()=>{expect(restoredWindow({version:1,bounds:{x:6000,y:-900,width:1800,height:1200},maximized:true},[primary])).toEqual({bounds:primary,maximized:true});});
+ it("retains an attached negative-coordinate display and clamps to its work area",()=>{const left={x:-1600,y:0,width:1600,height:900};expect(restoredWindow({version:1,bounds:{x:-1500,y:80,width:900,height:700},maximized:false},[primary,left]).bounds).toEqual({x:-1500,y:80,width:900,height:700});});
+ it("rejects corrupt numbers and fits even workareas below default minimum",()=>{expect(restoredWindow({version:1,bounds:{x:NaN,y:0,width:Infinity,height:900}},[{x:0,y:0,width:640,height:480}]).bounds).toEqual({x:0,y:0,width:640,height:480});});
+ it("debounces movement, persists normal bounds and flushes last change on quit",async()=>{vi.useFakeTimers();try{const handlers:Record<string,()=>void>={};const save=vi.fn(async(_state: import("../src/window-state.js").WindowState)=>{});let x=100;const w={getNormalBounds:()=>({x,y:20,width:800,height:600}),isMaximized:()=>true,isMinimized:()=>false,isFullScreen:()=>false,on:(e:string,f:()=>void)=>handlers[e]=f};const memory=rememberWindow(w,save,()=>{});handlers.move!();x=120;handlers.resize!();await vi.advanceTimersByTimeAsync(249);expect(save).not.toHaveBeenCalled();await memory.flush();expect(save).toHaveBeenCalledOnce();expect(save.mock.calls[0]![0]).toMatchObject({bounds:{x:120},maximized:true});await vi.advanceTimersByTimeAsync(1000);expect(save).toHaveBeenCalledOnce();}finally{vi.useRealTimers();}});
+});

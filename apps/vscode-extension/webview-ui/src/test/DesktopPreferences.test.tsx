@@ -1,0 +1,9 @@
+import{act,cleanup,fireEvent,render,screen}from"@testing-library/react";import{afterEach,expect,it,vi}from"vitest";import{DesktopPreferences}from"../settings/DesktopPreferences";import{vscode}from"../settings/vscodeApi";vi.mock("../settings/vscodeApi",()=>({vscode:{postMessage:vi.fn()}}));
+afterEach(()=>{cleanup();vi.clearAllMocks();});const post=(data:unknown)=>act(()=>window.dispatchEvent(new MessageEvent("message",{data})));
+it("does not expose desktop settings or send desktop commands in VS Code",()=>{render(<DesktopPreferences/>);expect(screen.queryByRole("combobox")).toBeNull();expect(vscode.postMessage).not.toHaveBeenCalled();});
+it("defaults both preferences off, requires explicit test, and surfaces native failure honestly",()=>{
+ render(<DesktopPreferences hostDesktop/>);expect(vscode.postMessage).toHaveBeenCalledWith({type:"desktop/lifecycleRead"});post({type:"desktop/lifecycleStatus",preferences:{notifications:"off",keepAwake:false},supported:true,awake:false,delivery:"Off"});
+ expect(screen.getByRole("checkbox")).not.toBeChecked();expect(screen.getByRole("combobox")).toHaveValue("off");expect(screen.getByRole("button",{name:"Send test notification"})).toBeDisabled();
+ fireEvent.change(screen.getByRole("combobox"),{target:{value:"attention"}});expect(vscode.postMessage).toHaveBeenCalledWith({type:"desktop/lifecycleSet",preferences:{notifications:"attention",keepAwake:false}});
+ post({type:"desktop/lifecycleStatus",preferences:{notifications:"attention",keepAwake:false},supported:true,awake:false,delivery:"System notification failed. Signed build required."});expect(screen.getByText(/Signed build required/)).toBeInTheDocument();fireEvent.click(screen.getByRole("button",{name:"Send test notification"}));expect(vscode.postMessage).toHaveBeenCalledWith({type:"desktop/lifecycleTest"});
+});

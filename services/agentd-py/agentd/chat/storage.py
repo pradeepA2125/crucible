@@ -80,6 +80,8 @@ class ChatThreadStore:
         # Controller-turn gate (mode/edit), added after the table shipped.
         if "controller_gate_json" not in existing:
             self._conn.execute("ALTER TABLE chat_threads ADD COLUMN controller_gate_json TEXT")
+        if "gate_receipts_json" not in existing:
+            self._conn.execute("ALTER TABLE chat_threads ADD COLUMN gate_receipts_json TEXT")
         # Durable controller conversation history (seed_history substrate), added later.
         if "controller_history_json" not in existing:
             self._conn.execute("ALTER TABLE chat_threads ADD COLUMN controller_history_json TEXT")
@@ -282,6 +284,46 @@ class ChatThreadStore:
             created_at=datetime.fromisoformat(created_at),
         )
 
+    def activity_threads(self) -> list[dict[str, object]] | None:
+        """Bounded metadata only; do not parse transcripts or mutate gate/session state."""
+        orphan = self._conn.execute(
+            "SELECT 1 FROM chat_agents a LEFT JOIN chat_threads t ON t.thread_id=a.thread_id "
+            "WHERE t.thread_id IS NULL AND a.status NOT IN "
+            "('completed','awaiting_peer','partial','failed','failed_transient','stopped') LIMIT 1",
+        ).fetchone()
+        if orphan is not None:
+            raise ValueError("Unbound live agent activity")
+        rows = self._conn.execute(
+            "SELECT t.thread_id, t.workspace_path, "
+            "(SELECT COUNT(*) FROM chat_agents a WHERE a.thread_id=t.thread_id "
+            "AND a.status IN ('queued','running','waiting')) AS agents_running, "
+            "(SELECT COUNT(*) FROM chat_agents a WHERE a.thread_id=t.thread_id "
+            "AND a.status NOT IN ('queued','running','waiting','completed','awaiting_peer',"
+            "'partial','failed','failed_transient','stopped')) AS agents_unknown "
+            "FROM chat_threads t ORDER BY t.thread_id LIMIT 1001",
+        ).fetchall()
+        return [dict(row) for row in rows] if len(rows) <= 1000 else None
+
+    def lifecycle_metadata(self) -> tuple[list[dict], list[dict], list[dict]]:
+        """Bounded metadata only, without loading any conversation or model history."""
+        threads = self._conn.execute(
+            "SELECT thread_id, workspace_path, substr(title,1,200) AS title, "
+            "CASE WHEN length(controller_gate_json)>65536 THEN 'invalid' "
+            "ELSE controller_gate_json END AS controller_gate_json "
+            "FROM chat_threads ORDER BY thread_id LIMIT 1001"
+        ).fetchall()
+        agents = self._conn.execute(
+            "SELECT agent_id, thread_id, substr(label,1,200) AS label, status FROM chat_agents "
+            "WHERE status NOT IN ('completed','awaiting_peer','partial','failed','failed_transient','stopped') "
+            "ORDER BY agent_id LIMIT 1025"
+        ).fetchall()
+        teams = self._conn.execute(
+            "SELECT team_id,thread_id,substr(name,1,200) AS name,phase,pending_lead_request_seq "
+            "FROM teams WHERE phase NOT IN ('DONE','DISBANDED','FAILED') "
+            "OR pending_lead_request_seq IS NOT NULL ORDER BY team_id LIMIT 1025"
+        ).fetchall()
+        return ([dict(row) for row in threads], [dict(row) for row in agents], [dict(row) for row in teams])
+
     def list_threads(self, workspace_path: str) -> list[ChatThread]:
         rows = self._conn.execute(
             "SELECT * FROM chat_threads WHERE workspace_path = ? ORDER BY created_at DESC",
@@ -397,6 +439,74 @@ class ChatThreadStore:
             return False
         self._write_gates(thread_id, kept)
         return True
+
+    def gate_receipt(self, thread_id: str, request_id: str) -> dict[str, object] | None:
+        """SELECT only. Absence (including eviction) is not proof of rejection."""
+        row = self._conn.execute(
+            "SELECT gate_receipts_json FROM chat_threads WHERE thread_id = ?", (thread_id,),
+        ).fetchone()
+        records = json.loads(row["gate_receipts_json"] or "[]") if row is not None else []
+        return next((r for r in records if r["request_id"] == request_id), None)
+
+    def claim_controller_gate(
+        self, thread_id: str, gate: PendingGate, identity: dict[str, object],
+    ) -> tuple[dict[str, object], bool]:
+        """CAS the exact observed gate bytes and bounded receipts in one SQL write.
+
+        The WHERE comparison detects replacement by another SQLite connection. It
+        does not claim to serialize unrelated project work or legacy gate writers.
+        """
+        from agentd.chat.gate_claims import GateClaimError, matches
+
+        row = self._conn.execute(
+            "SELECT controller_gate_json, gate_receipts_json FROM chat_threads WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+        if row is None:
+            raise GateClaimError("thread_missing")
+        records = json.loads(row["gate_receipts_json"] or "[]")
+        prior = next((r for r in records if r["request_id"] == identity["request_id"]), None)
+        if prior is not None:
+            if matches(prior, identity):
+                return prior, False
+            raise GateClaimError("request_conflict")
+        gates = self._gates_from_row(row)
+        if sum(g.gate_id == gate.gate_id for g in gates) != 1 or not any(
+            g.model_dump() == gate.model_dump() for g in gates
+        ):
+            raise GateClaimError("gate_changed")
+        kept = [g.model_dump(mode="json") for g in gates if g.gate_id != gate.gate_id]
+        receipt = {**identity, "status": "accepted"}
+        # Private column is absent from ChatThread and normal thread/list JSON.
+        with self._conn:
+            changed = self._conn.execute(
+                "UPDATE chat_threads SET controller_gate_json = ?, gate_receipts_json = ? "
+                "WHERE thread_id = ? AND controller_gate_json IS ? AND gate_receipts_json IS ?",
+                (json.dumps(kept) if kept else None, json.dumps([*records, receipt][-64:]),
+                 thread_id, row["controller_gate_json"], row["gate_receipts_json"]),
+            ).rowcount
+            if changed != 1:
+                raise GateClaimError("gate_changed")
+        return receipt, True
+
+    def mark_gate_launch_failed(self, thread_id: str, request_id: str) -> None:
+        # Lock this receipt update before reading, so a concurrent receipt append
+        # cannot silently defeat launch-failure accounting. No project-work lock.
+        with self._conn:
+            self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute(
+                "SELECT gate_receipts_json FROM chat_threads WHERE thread_id = ?", (thread_id,),
+            ).fetchone()
+            if row is None:
+                return
+            records = json.loads(row["gate_receipts_json"] or "[]")
+            for record in records:
+                if record["request_id"] == request_id:
+                    record["status"] = "launch_failed"
+            self._conn.execute(
+                "UPDATE chat_threads SET gate_receipts_json = ? WHERE thread_id = ?",
+                (json.dumps(records), thread_id),
+            )
 
     def clear_controller_gates(self, thread_id: str, *, agent_id: str | None = None) -> None:
         """Clear every gate, or only the gates one sub-agent raised."""

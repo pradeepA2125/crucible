@@ -135,3 +135,10 @@ describe("GraphApp shell", () => {
     expect(scene.setFocus).toHaveBeenLastCalledWith({ level: 1, pkg: "apps/web" });
   });
 });
+
+it("renders received inspector failures with refresh recovery before and after a model arrives",()=>{
+ render(<GraphApp createScene={()=>fakeScene()}/>);hostPost({type:"error",message:"Index refused while project is busy"});
+ expect(screen.getByRole("alert")).toHaveTextContent("Index refused while project is busy");expect(screen.queryByText(/mapping the space/)).toBeNull();
+ fireEvent.click(screen.getByRole("button",{name:"Refresh inspector"}));expect(postMessage).toHaveBeenCalledWith({type:"refresh"});
+ hostPost({type:"space",model:modelWithOneStar,staleAgeSec:null});expect(screen.queryByRole("alert")).toBeNull();hostPost({type:"error",message:"Read still settling"});expect(screen.getByRole("alert")).toHaveTextContent("Read still settling");
+});

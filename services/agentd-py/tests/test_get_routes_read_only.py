@@ -11,10 +11,18 @@ ROOT = Path(__file__).resolve().parents[1] / "agentd"
 REVIEWED_READ_ONLY_GET_ROUTES = frozenset({
     ("api/routes.py", "/channels/{channel_id}/stream"),  # creates an empty replay entry
     ("api/routes.py", "/chat/attention"),
+    # SELECT metadata + existing process/session state; no cursor/work mutation.
+    ("api/routes.py", "/chat/activity"),
+    ("api/routes.py", "/chat/lifecycle"),  # bounded metadata SELECT and existing registries only
+    ("api/routes.py", "/chat/threads/{thread_id}/gate-decision"),  # bounded SELECT only
     ("api/routes.py", "/chat/threads"),
     ("api/routes.py", "/chat/threads/{thread_id}"),
     ("api/routes.py", "/chat/threads/{thread_id}/agents"),
     ("api/routes.py", "/chat/threads/{thread_id}/agents/{agent_id}"),
+    ("api/routes.py", "/chat/threads/{thread_id}/checkpoints"),  # SELECT only, no controller blobs
+    ("api/routes.py", "/chat/threads/{thread_id}/checkpoints/{seq}/baseline"),
+    # Bounded no-follow read of a path the checkpoint itself recorded.
+    ("api/routes.py", "/chat/threads/{thread_id}/checkpoints/{seq}/baseline/file"),
     ("api/routes.py", "/chat/threads/{thread_id}/live"),
     ("api/routes.py", "/chat/threads/{thread_id}/rewind-preview"),
     ("api/routes.py", "/chat/threads/{thread_id}/sessions/{session_id}/transcript"),
@@ -49,6 +57,7 @@ REVIEWED_READ_ONLY_GET_ROUTES = frozenset({
     ("api/claude_auth_routes.py", "/attempts/{attempt_id}"),
     ("api/claude_auth_routes.py", "/registrations"),
     ("main.py", "/health"),
+    ("main.py", "/v1/project/session"),  # in-memory public identity only, never keys or writes
 })
 
 

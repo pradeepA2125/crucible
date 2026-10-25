@@ -5,7 +5,7 @@ describe("mode/edit decision clients", () => {
   it("posts edit-decision to the right endpoint with decision + reason", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+      .mockImplementation(async () => new Response(JSON.stringify({ ok: true })));
     const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: fetchMock });
     await c.postEditDecision("th1", "reject", "wrong var");
     expect(fetchMock).toHaveBeenCalledWith(
@@ -40,7 +40,7 @@ describe("mode/edit decision clients", () => {
   it("posts chat command-decision to the chat endpoint with snake_case body", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+      .mockImplementation(async () => new Response(JSON.stringify({ ok: true })));
     const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn: fetchMock });
     await c.postChatCommandDecision("th1", {
       approve: true, remember: true, scope: "binary", ruleValue: "pytest",
@@ -80,7 +80,7 @@ describe("global preference client", () => {
 });
 
 describe("gate-addressed decisions (multi-gate)", () => {
-  const ok = () => vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) });
+  const ok = () => vi.fn().mockImplementation(async () => new Response(JSON.stringify({ ok: true })));
 
   it("sends gate_id on an edit decision only when given", async () => {
     const fetchMock = ok();
@@ -102,5 +102,26 @@ describe("gate-addressed decisions (multi-gate)", () => {
       { approve: false, remember: false, scope: "exact", gate_id: "g-cmd" });
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual(
       { approve: true, remember: false, gate_id: "g-mcp" });
+  });
+});
+
+
+describe("bounded approval acknowledgments", () => {
+  it("bounds a successful body and treats truncation as uncertain without retrying POST", async () => {
+    const fetchFn = vi.fn(async () => new Response("x".repeat(65537)));
+    const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn });
+    await expect(c.postChatCommandDecision("t", { approve: true, remember: false, scope: "exact" }, "g")).rejects.toMatchObject({ name: "ChatAdmissionUnknownError" });
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
+  it("cancels a stalled acknowledgment at the deadline without repeating the decision", async () => {
+    vi.useFakeTimers();
+    try {
+      const cancel = vi.fn(), fetchFn = vi.fn(async () => new Response(new ReadableStream({ cancel })));
+      const c = new HttpBackendClient({ baseUrl: "http://x", fetchFn });
+      const pending = c.postEditDecision("t", "accept", "", "g");
+      const refusal = expect(pending).rejects.toMatchObject({ name: "ChatAdmissionUnknownError" });
+      await vi.advanceTimersByTimeAsync(15001); await refusal;
+      expect(fetchFn).toHaveBeenCalledOnce(); expect(cancel).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
   });
 });

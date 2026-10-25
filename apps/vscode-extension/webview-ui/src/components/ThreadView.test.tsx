@@ -250,3 +250,35 @@ describe("transcript column (spec §2)", () => {
     expect(column.className).toContain("w-full");
   });
 });
+
+
+it("shows saved-copy status and hides actionable cards while cached history reconnects", () => {
+  const state: AppState = { ...base, activeThreadId: "a", historyState: { threadId: "a", phase: "unavailable", cached: true },
+    liveGates: [{ gateId: "g", taskId: "a", kind: "mode", payload: { options: [{ mode: "implement", label: "Implement" }] } }] };
+  render(<ThreadView state={state} onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+  expect(screen.getByText("Showing saved history. Reconnecting…")).toBeTruthy();
+  expect(screen.queryByText("How should I proceed?")).toBeNull();
+  expect(screen.queryByText("Add error handling to the API routes")).toBeNull();
+});
+
+
+it("removes cached diff mutations on the same rendered row when history becomes unavailable", () => {
+  vi.mocked(vscode.postMessage).mockClear();
+  const state: AppState = { ...base, activeThreadId: "a", historyState: { threadId: "a", phase: "current", cached: false },
+    messages: [{ role: "agent", type: "diff_card", content: "", timestamp: "x", taskId: "saved", metadata: { diff_entries: [] } }] };
+  const props = { onBack: () => {}, dismissedErrorTaskId: null, onDismissError: () => {} };
+  const { rerender } = render(<ThreadView state={state} {...props} />);
+  expect(screen.getByRole("button", { name: /accept all/i })).toBeTruthy();
+  rerender(<ThreadView state={{ ...state, historyState: { threadId: "a", phase: "unavailable", cached: true } }} {...props} />);
+  expect(screen.queryByRole("button", { name: /accept all|reject/i })).toBeNull();
+  expect(vscode.postMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "applyInlineChange" }));
+});
+
+it("does not subscribe to an agent expanded from cached historical dispatch", () => {
+  vi.mocked(vscode.postMessage).mockClear();
+  render(<ThreadView state={{ ...base, activeThreadId: "a", historyState: { threadId: "a", phase: "unavailable", cached: true },
+    messages: [{ role: "agent", type: "agent_dispatch", content: "", timestamp: "x", metadata: { agent_ids: ["old-agent"] } }] }}
+    onBack={() => {}} dismissedErrorTaskId={null} onDismissError={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "Expand agent" }));
+  expect(vscode.postMessage).not.toHaveBeenCalledWith({ type: "setOpenAgents", agentIds: ["old-agent"] });
+});

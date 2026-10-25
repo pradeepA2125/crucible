@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -23,7 +24,7 @@ from agentd.chat.models import (
     GateNotFoundError,
     TeamPlanDecisionRequest,
 )
-from agentd.chat.rewind import resolve_rewind_anchor
+from agentd.chat.rewind import RewindStore, resolve_rewind_anchor
 from agentd.domain.models import (
     AbortRequest,
     CommandDecision,
@@ -264,7 +265,28 @@ def build_router(
     mcp_manager: object | None = None,
     local_models: object | None = None,
 ) -> APIRouter:
-    router = APIRouter(prefix="/v1", tags=["tasks"])
+    async def require_project_scope(request: Request) -> None:
+        from agentd.project_ownership import OWNER
+        if not OWNER.active or request.method in {"GET", "HEAD"}:
+            return
+        workspace = request.query_params.get("workspace")
+        if workspace and Path(workspace).resolve() != Path(OWNER.root):
+            raise HTTPException(409, "Mutation workspace differs from its owning project.")
+        thread_id = request.path_params.get("thread_id")
+        if thread_id and chat_agent is not None:
+            thread = chat_agent._store.get_thread(thread_id)
+            if thread is not None and Path(thread.workspace_path).resolve() != Path(OWNER.root):
+                raise HTTPException(409, "Conversation belongs to another project.")
+        task_id = request.path_params.get("task_id")
+        if task_id:
+            try:
+                task = await store.get(task_id)
+            except KeyError:
+                return  # existing route owns the not-found response
+            if Path(task.workspace_path).resolve() != Path(OWNER.root):
+                raise HTTPException(409, "Task belongs to another project.")
+
+    router = APIRouter(prefix="/v1", tags=["tasks"], dependencies=[Depends(require_project_scope)])
 
     def approval_report() -> dict[str, object]:
         read = getattr(chat_agent, "approval_state", None)
@@ -696,6 +718,11 @@ def build_router(
     @router.post("/tasks", response_model=TaskCreateResponse)
     async def create_task(request: TaskCreateRequest) -> TaskCreateResponse:
         import asyncio
+        from agentd.project_ownership import OWNER
+        if OWNER.active and Path(request.workspace_path).resolve()!=Path(OWNER.root):
+            raise HTTPException(409,"Task workspace differs from its owning project.")
+        if OWNER.active and not OWNER.trusted and str(request.shell_policy)=="allow_all":
+            raise HTTPException(409,"Full access requires project trust.")
         task_id = f"task-{uuid4()}"
         # Per-task override > CRUCIBLE_STEP_REVIEW_AUTO_ACCEPT env > default True.
         _env_step_review_default = os.environ.get(
@@ -1462,6 +1489,9 @@ def build_router(
             if isinstance(request, dict) else "")
         if not workspace_path:
             raise HTTPException(400, "workspace_path is required")
+        from agentd.project_ownership import OWNER
+        if OWNER.active and Path(workspace_path).resolve()!=Path(OWNER.root):
+            raise HTTPException(409,"Index workspace differs from its owning project.")
         if retrieval_client is None:
             raise HTTPException(503, "Code retrieval is not configured")
 
@@ -1478,6 +1508,8 @@ def build_router(
     async def promote_inline_change(inline_task_id: str) -> dict:
         try:
             await orchestrator.promote_inline_change(inline_task_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         if chat_agent is not None:
@@ -1486,7 +1518,10 @@ def build_router(
 
     @router.delete("/chat/inline-changes/{inline_task_id}")
     async def discard_inline_change(inline_task_id: str) -> dict:
-        await orchestrator.discard_inline_change(inline_task_id)
+        try:
+            await orchestrator.discard_inline_change(inline_task_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
         if chat_agent is not None:
             chat_agent._store.resolve_diff_card(inline_task_id, "discarded")  # type: ignore[union-attr]
         return {"status": "discarded", "inline_task_id": inline_task_id}
@@ -1501,6 +1536,40 @@ def build_router(
             status = 404 if isinstance(exc, GateNotFoundError) else 409
             return HTTPException(status_code=status, detail=str(exc))
         _chat_agent: _ChatAgent = chat_agent  # type: ignore[assignment]
+
+        @router.get("/chat/activity")
+        async def get_chat_activity(
+            workspace: str = Query(min_length=1, max_length=8192),
+            request_id: str = Query(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9-]+$"),
+        ) -> JSONResponse:
+            report = getattr(_chat_agent, "project_activity", None)
+            try:
+                activity = (report(workspace) if callable(report)
+                            else {"supported": False, "reason": "legacy_backend"})
+            except (OSError, ValueError):
+                activity = {"supported": False, "reason": "unavailable"}
+            return JSONResponse(
+                {"version": 1, "request_id": request_id,
+                 "requested_workspace": workspace, **activity},
+                headers={"Cache-Control": "no-store"},
+            )
+
+        @router.get("/chat/lifecycle")
+        async def get_chat_lifecycle(
+            workspace: str = Query(min_length=1, max_length=8192),
+            request_id: str = Query(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9-]+$"),
+        ) -> JSONResponse:
+            report = getattr(_chat_agent, "project_lifecycle", None)
+            try:
+                activity = (report(workspace) if callable(report)
+                            else {"supported": False, "reason": "legacy_backend"})
+            except (OSError, ValueError):
+                activity = {"supported": False, "reason": "unavailable"}
+            return JSONResponse(
+                {"version": 1, "request_id": request_id,
+                 "requested_workspace": workspace, **activity},
+                headers={"Cache-Control": "no-store"},
+            )
 
         @router.get("/chat/threads")
         async def list_chat_threads(workspace: str) -> dict:
@@ -1517,8 +1586,13 @@ def build_router(
                     except KeyError:
                         status = None  # task pruned — no chip
                 last_ts = t.messages[-1].timestamp if t.messages else t.created_at
-                summary = t.model_dump(exclude={"messages", *_THREAD_INTERNAL_FIELDS})
+                summary = t.model_dump(exclude={"messages", "pending_controller_gates", *_THREAD_INTERNAL_FIELDS})
                 summary["message_count"] = len(t.messages)
+                # Controller turns are process-local; task status alone cannot
+                # describe a reactive turn, including one parked at a gate.
+                summary["turn_active"] = t.thread_id in getattr(_chat_agent, "_active_turns", {})
+                summary["pending_gates"] = len(t.pending_controller_gates)
+                summary["gate_kinds"] = sorted({g.kind for g in t.pending_controller_gates})
                 # Keep the datetime object — FastAPI's encoder then renders it in
                 # the same format as created_at (pydantic UTC "Z"), so clients can
                 # compare the two strings.
@@ -1540,12 +1614,16 @@ def build_router(
                 running = chat_store.count_live_agents(t.thread_id)
                 if gates or running:
                     out.append({"thread_id": t.thread_id, "pending_gates": gates,
-                                "agents_running": running})
+                                "agents_running": running,
+                                "gate_kinds": sorted({g.kind for g in full.pending_controller_gates}) if full else []})
             return out
 
         @router.post("/chat/threads")
         async def create_chat_thread(request: dict) -> dict:
             workspace = request.get("workspace", "")
+            from agentd.project_ownership import OWNER
+            if OWNER.active and (not isinstance(workspace,str) or Path(workspace).resolve()!=Path(OWNER.root)):
+                raise HTTPException(409,"Conversation workspace differs from its owning project.")
             title = request.get("title", "New Chat")
             thread = _chat_agent._store.create_thread(workspace, title=title)
             return thread.model_dump(exclude={"messages", *_THREAD_INTERNAL_FIELDS})
@@ -1624,6 +1702,8 @@ def build_router(
             _approval = approval_report()
             live.approval = (ApprovalState.model_validate(_approval)
                              if _approval.get("supported") else _approval)
+            if callable(getattr(_chat_agent, "claim_gate_decision", None)):
+                live.gate_claim_version = 1
             live.message_count = len(thread.messages)
             _process_id = getattr(_chat_agent, "context_process_id", None)
             if _process_id is not None:
@@ -1821,6 +1901,47 @@ def build_router(
 
             return StreamingResponse(event_stream(), media_type="text/event-stream")
 
+        @router.post("/chat/threads/{thread_id}/gate-decision")
+        async def post_gate_decision(thread_id: str, request: dict):
+            from pydantic import ValidationError
+
+            from agentd.chat.gate_claims import GateClaim, GateClaimError
+
+            try:
+                claim = GateClaim.model_validate(request)
+            except ValidationError as exc:
+                raise HTTPException(status_code=422, detail="invalid exact gate claim") from exc
+            require_approval(claim.process_id)
+            handler = getattr(_chat_agent, "claim_gate_decision", None)
+            if not callable(handler):
+                raise HTTPException(status_code=409, detail="exact_gate_claims_unsupported")
+            try:
+                receipt = handler(thread_id, claim)
+            except GateClaimError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            return JSONResponse(content=receipt, headers={"Cache-Control": "no-store"})
+
+        @router.get("/chat/threads/{thread_id}/gate-decision")
+        async def get_gate_decision(thread_id: str, request: Request):
+            from pydantic import ValidationError
+
+            from agentd.chat.gate_claims import GateReceiptLookup, matches
+
+            try:
+                lookup = GateReceiptLookup.model_validate(dict(request.query_params))
+            except ValidationError as exc:
+                raise HTTPException(status_code=422, detail="invalid receipt identity") from exc
+            # Deliberately no current-process approval check: an old-process positive
+            # receipt proves original acceptance after restart, never current execution.
+            read = getattr(_chat_agent._store, "gate_receipt", None)
+            if not callable(read):
+                raise HTTPException(status_code=404, detail="exact_gate_claims_unsupported")
+            receipt = read(thread_id, lookup.request_id)
+            found = receipt is not None and matches(receipt, lookup.identity(thread_id))
+            return JSONResponse(content={"version": 1, "nonce": lookup.nonce, "found": found,
+                                         "receipt": receipt if found else None},
+                                headers={"Cache-Control": "no-store"})
+
         @router.post("/chat/threads/{thread_id}/mode-decision")
         async def post_mode_decision(thread_id: str, request: dict) -> StreamingResponse:
             require_approval(request.get("expected_process_id"))
@@ -1972,8 +2093,42 @@ def build_router(
                 raise _gate_http_error(exc) from exc
             return {"ok": ok}
 
+        @router.put("/project/trust")
+        async def put_project_trust(request: dict) -> dict:
+            from agentd.project_ownership import OWNER
+            if not OWNER.active or request.get("process_id")!=OWNER.process_id or type(request.get("trusted")) is not bool:
+                raise HTTPException(409,"Project session changed; reopen trust settings.")
+            activity=getattr(_chat_agent,"project_activity",lambda _:{"supported":False})(OWNER.root)
+            if not activity.get("supported") or any(t.get("turn_active") or t.get("agents_running") or t.get("sessions_running") or t.get("pending_gates") for t in activity.get("threads",[])):
+                raise HTTPException(409,"Wait for project work, agents, sessions and decisions to finish before changing trust.")
+            if any(t.pending_controller_gates for t in _chat_agent._store.list_threads(OWNER.root)):
+                raise HTTPException(409,"Resolve pending decisions before changing trust.")
+            setter=getattr(_chat_agent,"set_approval_mode",None)
+            state=getattr(_chat_agent,"approval_state",lambda:None)()
+            if setter is None or state is None: raise HTTPException(409,"Current controller required for project trust.")
+            # Every transition first clamps edits/commands and bumps policy version,
+            # fencing requests that captured an earlier Full access policy.
+            setter(auto_accept=False,shell_policy=ShellPolicy.ASK,resolve_waiting=False,expected_process_id=state.process_id,expected_version=state.version,force_version=True)
+            OWNER.trusted=request["trusted"]
+            return OWNER.status(True)
+
+        @router.put("/chat/threads/{thread_id}/title")
+        async def put_thread_title(thread_id: str, request: dict) -> dict:
+            from agentd.project_ownership import OWNER
+            thread=_chat_agent._store.get_thread(thread_id)
+            title=request.get("title")
+            if thread is None or (OWNER.active and Path(thread.workspace_path).resolve()!=Path(OWNER.root)):
+                raise HTTPException(404,"Conversation not in this project.")
+            if not isinstance(title,str) or not title.strip() or len(title)>200 or any(ord(c)<32 for c in title):
+                raise HTTPException(422,"Use a title of 1–200 printable characters.")
+            _chat_agent._store.update_title(thread_id,title.strip())
+            return {"thread_id":thread_id,"title":title.strip()}
+
         @router.put("/chat/approval-mode")
         async def put_approval_mode(request: ApprovalModeRequest) -> dict[str, object]:
+            from agentd.project_ownership import OWNER
+            if OWNER.active and not OWNER.trusted and request.shell_policy=="allow_all":
+                raise HTTPException(409,"Trust this project, then explicitly choose Full access.")
             setter = getattr(_chat_agent, "set_approval_mode", None)
             if setter is None:
                 raise HTTPException(status_code=409, detail="chat controller required")
@@ -2220,6 +2375,43 @@ def build_router(
                 sessions = [{"id": s.get("id"), "command": s.get("command", "")}
                             for s in (_exec_mgr.live_summaries(thread_id) or [])]
             return {**preview.model_dump(), "sessions": sessions}
+
+        from agentd.api.file_restore_routes import install_file_restore_routes
+        install_file_restore_routes(router, _chat_agent)
+
+        # Review baselines (desktop Changes, "since a checkpoint"). Read-only: metadata,
+        # the rewind fold, and bounded bytes of a path that fold names.
+        _BASELINE_MAX_BYTES = 1024 * 1024
+
+        @router.get("/chat/threads/{thread_id}/checkpoints")
+        async def get_checkpoints(thread_id: str) -> dict[str, object]:
+            rewind: RewindStore = _require_rewind(thread_id)[0]
+            return {"checkpoints": [
+                {"seq": cp.seq, "anchor_message_id": cp.anchor_message_id,
+                 "turn_id": cp.turn_id, "created_at": cp.created_at.isoformat(),
+                 "files": [f.model_dump() for f in cp.files]}
+                for cp in rewind.checkpoints(thread_id)]}
+
+        @router.get("/chat/threads/{thread_id}/checkpoints/{seq}/baseline")
+        async def get_checkpoint_baseline(thread_id: str, seq: int) -> dict[str, object]:
+            rewind: RewindStore = _require_rewind(thread_id)[0]
+            entries = rewind.baseline(thread_id, seq)
+            if entries is None:
+                raise HTTPException(status_code=404, detail="No checkpoint with that number")
+            return {"seq": seq, "files": [e.model_dump() for e in entries]}
+
+        @router.get("/chat/threads/{thread_id}/checkpoints/{seq}/baseline/file")
+        async def get_checkpoint_baseline_file(
+                thread_id: str, seq: int, path: str) -> dict[str, object]:
+            rewind: RewindStore = _require_rewind(thread_id)[0]
+            found = rewind.baseline_file(thread_id, seq, path, max_bytes=_BASELINE_MAX_BYTES)
+            if found is None:
+                raise HTTPException(status_code=404,
+                                    detail="That file is not in this checkpoint's baseline")
+            body: dict[str, object] = found.model_dump()
+            if found.content is not None:
+                body["content_base64"] = base64.b64encode(found.content).decode("ascii")
+            return body
 
         @router.post("/chat/threads/{thread_id}/rewind")
         async def post_rewind(thread_id: str, request: dict) -> dict:

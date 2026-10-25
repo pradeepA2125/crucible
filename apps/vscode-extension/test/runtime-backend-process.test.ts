@@ -1,4 +1,4 @@
-import { existsSync, linkSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { realpathSync, existsSync, linkSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -44,7 +44,7 @@ function deps(overrides: Partial<ProcessDeps> = {}, child = stubChild(4242, { pi
     readToken: () => TOKEN,
     processInfo: async () => null,
     signal: () => {},
-    exec: async () => ({ code: 0, stdout: "0.1.0 auth=1", stderr: "", timedOut: false }),
+    exec: async () => ({ code: 0, stdout: "0.1.0 auth=1 owner=1", stderr: "", timedOut: false }),
     now: () => Date.now(),
     sleep: async () => {},
     isPidAlive: () => false,
@@ -59,7 +59,7 @@ function deps(overrides: Partial<ProcessDeps> = {}, child = stubChild(4242, { pi
 
 let currentWs = "";
 function ws(): string {
-  currentWs = mkdtempSync(join(tmpdir(), "ws-"));
+  currentWs = realpathSync(mkdtempSync(join(tmpdir(), "ws-")));
   return currentWs;
 }
 
@@ -349,17 +349,16 @@ describe("reuse", () => {
           proof: healthProof(TOKEN, nonce), bound: healthBound(TOKEN, nonce, 4242, owner) }) };
       },
     });
-    const r = await new BackendProcess(d).start(w, SETTINGS);
-    expect(r.reused).toBe(false);
-    expect(d.spawned[0].args).toContain("agentd.serve");
+    await expect(new BackendProcess(d).start(w, SETTINGS)).rejects.toThrow("previous backend port");
+    expect(d.spawned).toHaveLength(0);
   });
 
-  it("ignores and unlinks a lock with nlink > 1", async () => {
+  it("refuses a hard-linked lock without unlinking it", async () => {
     const w = ws();
     const p = writeLock(w, { pid: 4242, port: 9001, started_at: Date.now() / 1000 });
     linkSync(p, join(w, "hardlink"));
-    expect(readOwnedLock(w, process.getuid?.())).toBeNull();
-    expect(existsSync(p)).toBe(false);
+    expect(()=>readOwnedLock(w, process.getuid?.())).toThrow("ownership is uncertain");
+    expect(existsSync(p)).toBe(true);
   });
 
   it("waits at most once for a young lock whose port is down", async () => {
@@ -375,7 +374,8 @@ describe("reuse", () => {
           proof: healthProof(TOKEN, nonce), bound: healthBound(TOKEN, nonce, 4242, currentWs) }) };
       },
     });
-    await new BackendProcess(d).start(w, SETTINGS);
+    await expect(new BackendProcess(d).start(w, SETTINGS)).rejects.toThrow("PID 777");
+    expect(d.spawned).toHaveLength(0);
     expect(probes9001).toBeLessThanOrEqual(3); // initial + ≤2 s of re-probes, then spawn
   });
 
@@ -390,7 +390,7 @@ describe("reuse", () => {
         proof: healthProof(TOKEN, nonce), bound: healthBound(TOKEN, nonce, 4242, currentWs) }) };
     } });
     await new BackendProcess(d).start(w, SETTINGS);
-    expect(probes9001).toBe(1);
+    expect(probes9001).toBe(2);
   });
 });
 
@@ -412,7 +412,7 @@ describe("reap", () => {
     expect(isOurBackend(ours("py -m uvicorn agentd.main:app --port 80001"), lock, "/a/proj", UID)).toBe(false);
   });
 
-  it("signals a verified stale backend, escalating to SIGKILL", async () => {
+  it("refuses a live stale-looking backend without signalling", async () => {
     const w = ws();
     writeLock(w, { pid: 777, port: 9001, started_at: Date.now() / 1000 - 600 });
     const signals: string[] = [];
@@ -428,16 +428,15 @@ describe("reap", () => {
           proof: healthProof(TOKEN, nonce), bound: healthBound(TOKEN, nonce, 4242, currentWs) }) };
       },
     });
-    await new BackendProcess(d).start(w, SETTINGS);
-    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
-    expect(d.spawned).not.toHaveLength(0);
+    await expect(new BackendProcess(d).start(w, SETTINGS)).rejects.toThrow("PID 777");
+    expect(signals).toEqual([]);expect(d.spawned).toHaveLength(0);
   });
 
   it.each([
     ["a recycled pid", { uid: UID, startedAtSec: Date.now() / 1000 + 100, command: "py -m agentd.serve --workspace-lock X" }],
     ["another user's process", { uid: 0, startedAtSec: 0, command: "py -m agentd.serve --workspace-lock X" }],
     ["an unrelated process", { uid: UID, startedAtSec: 0, command: "/usr/bin/vim" }],
-  ])("never signals %s, and still spawns", async (_name, info) => {
+  ])("never signals %s, without spawning", async (_name, info) => {
     const w = ws();
     writeLock(w, { pid: 777, port: 9001, started_at: Date.now() / 1000 - 600 });
     const signals: string[] = [];
@@ -448,9 +447,8 @@ describe("reap", () => {
         return { status: 200, body: JSON.stringify({ status: "ok", pid: 4242,
           proof: healthProof(TOKEN, nonce), bound: healthBound(TOKEN, nonce, 4242, currentWs) }) };
       } });
-    await new BackendProcess(d).start(w, SETTINGS);
-    expect(signals).toEqual([]);
-    expect(d.spawned).not.toHaveLength(0);
+    await expect(new BackendProcess(d).start(w, SETTINGS)).rejects.toThrow("unverifiable");
+    expect(signals).toEqual([]);expect(d.spawned).toHaveLength(0);
   });
 
   it("never signals pid 1", async () => {
@@ -460,16 +458,16 @@ describe("reap", () => {
     const d = deps({ signal: (_p, s) => { signals.push(s); },
       processInfo: async () => ({ uid: UID, startedAtSec: 0,
         command: `x agentd.serve --workspace-lock ${currentWs}` }) });
-    await new BackendProcess(d).start(w, SETTINGS);
+    await expect(new BackendProcess(d).start(w, SETTINGS)).rejects.toThrow("unverifiable");
     expect(signals).toEqual([]);
   });
 });
 
 describe("pre-spawn checks", () => {
   it("an old venv without agentd.serve needs a runtime update", async () => {
-    const d = deps({ exec: async (_cmd, args) => args.includes("import agentd.serve")
+    const d = deps({ exec: async (_cmd, args) => args.some(a=>a.includes("import agentd.serve"))
       ? { code: 1, stdout: "", stderr: "No module named agentd.serve", timedOut: false }
-      : { code: 0, stdout: "0.1.0 auth=1", stderr: "", timedOut: false } });
+      : { code: 0, stdout: "0.1.0 auth=1 owner=1", stderr: "", timedOut: false } });
     await expect(new BackendProcess(d).start(ws(), SETTINGS))
       .rejects.toMatchObject({ component: "agentd" });
     expect(d.spawned).toHaveLength(0);
@@ -490,7 +488,7 @@ describe("pre-spawn checks", () => {
   it("passes the 5 s timeout to every pre-spawn exec", async () => {
     const timeouts: number[] = [];
     const d = deps({ exec: async (_c, _a, ms) => { timeouts.push(ms);
-      return { code: 0, stdout: "x auth=1", stderr: "", timedOut: false }; } });
+      return { code: 0, stdout: "x auth=1 owner=1", stderr: "", timedOut: false }; } });
     mkdirSync(join(d.runtimeDir, "bin"), { recursive: true });
     writeFileSync(join(d.runtimeDir, "bin", "crucible-indexer"), "");
     await new BackendProcess(d).start(ws(), SETTINGS);
@@ -536,4 +534,23 @@ describe("native web search managed defaults", () => {
         .CRUCIBLE_WEB_SEARCH_ENABLED).toBe(value);
     }
   });
+});
+
+it("coalesces concurrent starts so one instance creates one backend/watcher pair",async()=>{
+ const root=ws(),d=deps(),process=new BackendProcess(d);
+ const a=process.start(root,SETTINGS),b=process.start(root,SETTINGS);
+ expect(a).toBe(b);await Promise.all([a,b]);
+ expect(d.spawned.filter(x=>x.args.includes("agentd.serve"))).toHaveLength(1);
+ await process.stop();
+});
+
+it("failed owned stop retains the handle and accepts a later explicit retry",async()=>{
+ let exit!:(code:number|null)=>void;let canExit=false;const child:ChildHandle={pid:4242,exited:new Promise(r=>exit=r),kill:()=>{if(canExit)exit(0);},onExit:()=>{},onStdoutLine:cb=>cb('CRUCIBLE_SERVE {"pid":4242,"port":8123}')};
+ const p=new BackendProcess(deps({},child as never));await p.start(ws(),SETTINGS);
+ await expect(p.stop()).rejects.toThrow("incomplete");expect(p.backendHandle).toBe(child);canExit=true;
+ await expect(p.stop()).resolves.toBeUndefined();expect(p.backendHandle).toBeUndefined();
+});
+it("cleanup cancels a start held before spawn so it cannot create a later orphan",async()=>{
+ let release!:()=>void;const held=new Promise<void>(r=>release=r);const d=deps({exec:async()=>{await held;return{code:0,stdout:"auth=1 owner=1",stderr:"",timedOut:false};}});const p=new BackendProcess(d),starting=p.start(ws(),SETTINGS);
+ await p.stop();release();await expect(starting).rejects.toThrow("cancelled");expect(d.spawned).toEqual([]);
 });

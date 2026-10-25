@@ -15,7 +15,7 @@ export type SetupInMsg =
   | SettingsInMsg;
 
 export type SetupOutMsg =
-  | { type: "setup/preferences"; localModels: boolean }
+  | { type: "setup/preferences"; localModels: boolean; runtimePath?: string }
   | { type: "setup/claudeReady" }
   | { type: "setup/progress"; component: string; status: string; detail?: string }
   | { type: "setup/installDone"; ok: boolean }

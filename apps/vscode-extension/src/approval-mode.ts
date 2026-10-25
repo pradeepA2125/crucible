@@ -128,7 +128,8 @@ export class ApprovalCoordinator {
           return;
         }
         const saved = this.deps.savedMode();
-        const preferred = state.owned ? ownedMode! : saved ?? migrateApproval(state.shellPolicy, this.deps.reviewOn());
+        const stored = saved ?? migrateApproval(state.shellPolicy, this.deps.reviewOn());
+        const preferred = state.owned ? ownedMode! : stored === "full_access" ? "ask" : stored;
         const mode = this.allowedMode(preferred);
         try {
           const applied = await client.setApprovalMode({ ...policyFor(mode), resolveWaiting: false,
@@ -247,12 +248,8 @@ export class ApprovalCoordinator {
       }
     });
   }
-  /** Trust granted mid-session: re-apply a saved Full access preference the trust check held back. */
-  trustGranted(): Promise<void> {
-    this.publish({});
-    if (this.deps.savedMode() !== "full_access" || this.view.mode === "full_access") return Promise.resolve();
-    return this.select("full_access", true);
-  }
+  /** Trust only enables an explicit future selection; it never promotes old policy. */
+  trustGranted(): Promise<void> { this.publish({});return this.connect(); }
   /** A user's own Full access choice in this workspace is its confirmation; no first-send dialog follows. */
   async acknowledgeUserSelection(): Promise<void> {
     if (this.view.mode !== "full_access") return;

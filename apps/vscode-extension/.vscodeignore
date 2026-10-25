@@ -17,3 +17,7 @@ webview-ui/memory.html
 .gitignore
 .eslintrc*
 **/tsconfig.tsbuildinfo
+
+webview-ui/desktop-app.html
+webview-ui/dist/desktop-app.html
+webview-ui/dist/assets/desktopApp.*

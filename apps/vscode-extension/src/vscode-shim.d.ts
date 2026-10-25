@@ -15,7 +15,10 @@ declare module "vscode" {
     delete(key: string): Thenable<void>;
   }
 
+  export enum ExtensionMode { Production = 1, Development = 2, Test = 3 }
+
   export interface ExtensionContext {
+    readonly extensionMode?: ExtensionMode;
     subscriptions: Disposable[];
     workspaceState: Memento;
     globalState: Memento;

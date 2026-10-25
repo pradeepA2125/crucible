@@ -1,3 +1,4 @@
+import { BtnGhost } from "../components/shared/buttons";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { aggregateToDirs, applyDiff, LOD_STAR_THRESHOLD } from "./lod";
 import { vscode } from "./vscodeApi";
@@ -58,6 +59,7 @@ function persistedPalette(): PaletteName {
 }
 
 export default function GraphApp({ createScene }: Props) {
+  const [hostError, setHostError] = useState("");
   const [conn, setConn] = useState<Conn>({ kind: "connecting" });
   const [model, setModel] = useState<SpaceModel | null>(null);
   const [staleAgeSec, setStaleAgeSec] = useState<number | null>(null);
@@ -93,6 +95,7 @@ export default function GraphApp({ createScene }: Props) {
     const onMsg = (ev: MessageEvent) => {
       const m = ev.data as GraphToWebview;
       if (m.type === "space") {
+        setHostError("");
         morphRef.current = { isDiff: false, removed: [] };
         setModel(m.model);
         setStaleAgeSec(m.staleAgeSec);
@@ -109,6 +112,7 @@ export default function GraphApp({ createScene }: Props) {
           dispatch({ type: "pickPackage", pkg: focus.pkg });
         }
       } else if (m.type === "noSnapshot") {
+        setHostError("");
         setConn({ kind: "empty", reason: m.reason, message: m.message, building: m.building });
       } else if (m.type === "fileDetail") {
         dispatch({ type: "hostFileDetail", detail: m.detail });
@@ -117,7 +121,7 @@ export default function GraphApp({ createScene }: Props) {
       } else if (m.type === "symbolHits") {
         dispatch({ type: "hostSymbolHits", hits: m.hits });
       } else if (m.type === "error") {
-        dispatch({ type: "hostError", message: m.message });
+        setHostError(m.message); dispatch({ type: "hostError", message: m.message });
       }
       // spaceDiff is wired in the live-refresh task
     };
@@ -227,6 +231,7 @@ export default function GraphApp({ createScene }: Props) {
       if (req !== layoutReqRef.current) return; // a newer model superseded this layout
       const morph = morphRef.current;
       if (morph.isDiff) {
+        setHostError("");
         morphRef.current = { isDiff: false, removed: [] };
         sceneRef.current?.morph(model, layout, morph.removed);
       } else {
@@ -322,13 +327,12 @@ export default function GraphApp({ createScene }: Props) {
 
   const pal = PALETTES[paletteName];
   const paletteVars = {
-    background: pal.bgBot,
-    "--ax-panel": pal.panel,
-    "--ax-border": pal.panelBorder,
-    "--ax-ink": pal.ink,
-    "--ax-ink-dim": pal.inkDim,
-    "--ax-accent": pal.accent,
-    "--ax-accent-text": pal.accentText,
+    background: conn.kind === "ready" && !glFailed ? pal.bgBot : "var(--surface-0)",
+    "--ax-panel": "var(--surface-1)",
+    "--ax-border": "var(--border)",
+    "--ax-ink": "var(--text-1)",
+    "--ax-ink-dim": "var(--text-3)",
+    "--ax-accent": "var(--accent)",
     "--ax-star": pal.star,
     "--ax-beacon": pal.beacon,
     "--ax-out": pal.out,
@@ -341,7 +345,9 @@ export default function GraphApp({ createScene }: Props) {
 
   return (
     <div className="w-screen h-screen overflow-hidden relative" style={paletteVars}>
-      {conn.kind === "connecting" && (
+      {hostError && <div role="alert" style={{position:"absolute",left:16,top:16,right:16,zIndex:30,padding:14,background:"var(--ax-panel)",color:"var(--ax-ink)",border:"1px solid var(--ax-accent)",borderRadius:"var(--r-card)"}}>{hostError} <BtnGhost onClick={()=>{setHostError("");vscode.postMessage({type:"refresh"});}}>Refresh inspector</BtnGhost></div>}
+      {conn.kind === "ready" && model?.stars.length === 0 && <p role="status" style={{position:"absolute",top:"35%",left:"20%",right:"20%",textAlign:"center",color:"var(--ax-ink-dim)",zIndex:2}}>No indexed source files in this snapshot.</p>}
+      {conn.kind === "connecting" && !hostError && (
         <div className="flex items-center justify-center h-full text-xs uppercase tracking-[0.3em] text-[var(--ax-ink-dim)]">
           mapping the space…
         </div>
