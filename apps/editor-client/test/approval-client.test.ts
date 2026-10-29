@@ -42,6 +42,16 @@ describe("approval client", () => {
     });
     expect(body).toMatchObject({ shell_policy: "auto" });
   });
+  it("maps the thread usage's auto_review line", async () => {
+    const z = { requests: 0, input: 0, output: 0, cached: 0 };
+    const review = { requests: 2, input: 900, output: 40, cached: 600 };
+    const usage = await client({ total: z, main: z, agents: {}, teams: {}, auto_review: review })
+      .getThreadUsage("t");
+    expect(usage.autoReview).toEqual(review);
+    const none = await client({ total: z, main: z, agents: {}, teams: {}, auto_review: null })
+      .getThreadUsage("t");
+    expect(none.autoReview).toBeNull();
+  });
   it("accepts unsupported effort descriptor options", () => {
     expect(EffortSupportSchema.parse({ supported: [], unsupported: {}, control: {
       options: [{ value: "max", label: "Max", description: "", state: "unsupported" }], source: "catalog", default: null, reason: null,

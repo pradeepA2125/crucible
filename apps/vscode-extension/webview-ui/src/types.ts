@@ -319,6 +319,8 @@ export interface ThreadUsageView {
   agents: Record<string, TokenUsageView>;
   // A member's usage includes its helpers'.
   teams: Record<string, { total: TokenUsageView; members: Record<string, TokenUsageView> }>;
+  /** The Auto approval judge's calls; absent on older backends. */
+  autoReview?: TokenUsageView | null;
 }
 
 export interface TeamWorkflowView {

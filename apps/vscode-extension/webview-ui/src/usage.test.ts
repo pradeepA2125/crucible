@@ -21,6 +21,15 @@ describe("usage", () => {
       ["Main agent", 2], ["Team tetris", 7], ["Other agents", 1]]);
   });
 
+  it("shows Auto review as its own row", () => {
+    const rows = threadBreakdown({
+      total: u(5, 5_000, 50), main: u(3, 3_000, 30), agents: {}, teams: {},
+      autoReview: u(2, 900, 40, 600),
+    }, {});
+    expect(rows.map((r) => [r.label, r.usage.requests])).toEqual([
+      ["Main agent", 3], ["Auto review", 2]]);
+  });
+
   it("leaves out rows with no requests", () => {
     const rows = threadBreakdown(
       { total: u(1, 10, 1), main: u(1, 10, 1), agents: {}, teams: {} }, {});

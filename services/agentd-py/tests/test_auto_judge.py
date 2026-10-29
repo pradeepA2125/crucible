@@ -96,7 +96,58 @@ async def test_judge_runs_when_user_asked():
     assert d.kind == "run" and d.note == "Auto: you asked to push"
     payload = fake.payloads[0]
     assert payload["pending_action"]["summary"] == "run_command: git push"
-    assert payload["authorizations"] == ["push this branch"]
+    context = json.loads(payload["conversation_history"][0]["content"])
+    assert context["authorizations"] == ["push this branch"]
+
+
+@pytest.mark.asyncio
+async def test_rejected_judge_model_is_remembered():
+    fake = FakeTransport([PlanUnsupportedCapability("model"), VERDICT_LOW, VERDICT_LOW])
+    j = make_judge(fake, judge_model="codex-auto-review", agent_model="gpt-5.6-luna")
+    assert (await j.judge(REQ, ACTION)).kind == "run"
+    assert (await j.judge(REQ, ACTION)).kind == "run"
+    assert fake.models == ["codex-auto-review", "gpt-5.6-luna", "gpt-5.6-luna"]
+
+
+@pytest.mark.asyncio
+async def test_judge_runs_at_low_effort_when_supported():
+    from agentd.providers.reasoning_effort import EFFORT_OVERRIDE, EffortSupport, ReasoningEffort
+
+    seen: list[object] = []
+
+    class EffortFake(FakeTransport):
+        async def reasoning_effort_support(self, model):
+            return EffortSupport(supported=frozenset({ReasoningEffort.LOW, ReasoningEffort.HIGH}))
+
+        async def generate_json(self, **kw):
+            seen.append(EFFORT_OVERRIDE.get())
+            return await super().generate_json(**kw)
+
+    await make_judge(EffortFake([VERDICT_LOW])).judge(REQ, ACTION)
+    assert seen == [ReasoningEffort.LOW] and EFFORT_OVERRIDE.get() is None
+
+
+@pytest.mark.asyncio
+async def test_usage_goes_to_the_sink_under_the_judge_owner():
+    fake = FakeTransport([VERDICT_LOW], uncached_per_call=1200)
+    sunk: list[tuple[str, int]] = []
+    j = AutoJudge(transport_source=lambda: (fake, "m"), context_source=_ctx,
+                  artifacts_dir=lambda _r: None, timeout_sec=5.0,
+                  usage_sink=lambda req, u: sunk.append((req.thread_id, u.prompt_tokens)))
+    await j.judge(REQ, ACTION)
+    assert sunk == [("t1", 1200)]
+    assert METER.peek("judge:t1:main").prompt_tokens == 0
+
+
+@pytest.mark.asyncio
+async def test_second_judgment_reuses_the_first_judgments_history():
+    fake = FakeTransport([VERDICT_LOW, VERDICT_LOW])
+    j = make_judge(fake)
+    await j.judge(REQ, ACTION)
+    await j.judge(REQ, PendingAction("command", "run_command: ls", ""))
+    first, second = fake.payloads
+    assert second["conversation_history"][: len(first["conversation_history"])] == \
+        first["conversation_history"]
 
 
 @pytest.mark.asyncio
@@ -252,7 +303,8 @@ async def test_controller_judge_sees_the_users_messages(tmp_path):
     ctrl, _store, tid = _wired_controller(tmp_path, fake)
     out = await ctrl._command_approval_cb(tid, f"chat:{tid}", "git", ["push"], "")
     assert out.approved and out.note == "Auto: you asked to push"
-    assert "please push my branch" in fake.payloads[0]["authorizations"]
+    context = json.loads(fake.payloads[0]["conversation_history"][0]["content"])
+    assert "please push my branch" in context["authorizations"]
 
 
 @pytest.mark.asyncio

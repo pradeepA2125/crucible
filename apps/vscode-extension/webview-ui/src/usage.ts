@@ -47,5 +47,6 @@ export function threadBreakdown(
   }
   const allAgents = Object.values(usage.agents).reduce(plus, ZERO);
   rows.push({ key: "agents", label: "Other agents", usage: minus(allAgents, inTeams) });
+  if (usage.autoReview) rows.push({ key: "auto_review", label: "Auto review", usage: usage.autoReview });
   return rows.filter((r) => r.usage.requests > 0);
 }

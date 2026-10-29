@@ -29,7 +29,11 @@ class JudgeContext:
     authorizations: tuple[str, ...]   # oldest → newest, newest kept under the cap
     agents_md: str
     action_log: tuple[str, ...]       # the agent's tool calls, no results
-    history_anchor: str               # f"{compaction_anchor_version}:{rewind_generation}"
+    history_anchor: str               # the thread's rewind generation
+    # Counts before capping: a judge session sends only what is new since its last
+    # judgment, and a count that shrinks (rewind, compaction) restarts it.
+    authorization_total: int = 0
+    action_total: int = 0
 
 
 def approx_tokens(text: str) -> int:
@@ -127,4 +131,6 @@ def build_judge_context(messages: Sequence[ChatMessage], history: Sequence[dict[
         agents_md=(agents_md or "")[:AGENTS_MD_MAX_CHARS],
         action_log=tuple(log[-ACTION_LOG_MAX_ENTRIES:]),
         history_anchor=history_anchor,
+        authorization_total=len(texts),
+        action_total=len(log),
     )

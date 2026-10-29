@@ -9,6 +9,7 @@ docs/superpowers/specs/2026-08-12-reasoning-effort-control-design.md.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -34,6 +35,12 @@ LADDER: tuple[ReasoningEffort, ...] = (
     ReasoningEffort.HIGH,
     ReasoningEffort.MAX,
 )
+
+# A per-call effort that wins over the transport's own setting for the calls made while
+# it is set (the Auto judge runs at low effort without changing the agent's effort). A
+# transport that sees the override rejected drops it for that call only.
+EFFORT_OVERRIDE: ContextVar[ReasoningEffort | None] = ContextVar(
+    "crucible_effort_override", default=None)
 
 
 def parse_effort(raw: str | None) -> ReasoningEffort | None:

@@ -23,10 +23,12 @@ from typing import Any
 from agentd.approvals.judge_checks import run_check
 from agentd.approvals.judge_context import JudgeContext
 from agentd.approvals.judge_policy import JUDGE_POLICY, JUDGE_SCHEMA, verdict_to_decision
+from agentd.approvals.judge_session import JudgeSessions, preferred_judge_model
 from agentd.approvals.types import AutoDecision, JudgeRequest, PendingAction
 from agentd.providers.context_overflow import ContextWindowExceeded
 from agentd.providers.plan_access import ProviderAccessStopped
-from agentd.providers.usage import METER, USAGE_OWNER
+from agentd.providers.reasoning_effort import EFFORT_OVERRIDE, ReasoningEffort
+from agentd.providers.usage import METER, USAGE_OWNER, Usage
 
 logger = logging.getLogger(__name__)
 
@@ -145,14 +147,32 @@ class AutoJudge:
                  artifacts_dir: Callable[[JudgeRequest], Path | None],
                  timeout_sec: float,
                  judge_model: Callable[[str], str] | None = None,
-                 turn_uncached_budget: int = DEFAULT_TURN_UNCACHED_TOKENS) -> None:
+                 turn_uncached_budget: int = DEFAULT_TURN_UNCACHED_TOKENS,
+                 usage_sink: Callable[[JudgeRequest, Usage], None] | None = None) -> None:
         self._transport_source = transport_source
         self._context_source = context_source
         self._artifacts_dir = artifacts_dir
         self._timeout_sec = timeout_sec
         self._judge_model = judge_model
+        self._usage_sink = usage_sink
         self.breaker = JudgeBreaker(turn_budget=turn_uncached_budget)
+        self.sessions = JudgeSessions()
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+        # (transport id, model) pairs the provider refused as a judge model: use the
+        # agent's model for them instead of paying for a failing call every judgment.
+        self._rejected_models: set[tuple[int, str]] = set()
+
+    def forget_thread(self, thread_id: str) -> None:
+        """A rewind: drop the thread's judge conversations so rewound messages stop
+        authorizing anything."""
+        self.sessions.forget_thread(thread_id)
+
+    def _model_for(self, transport: Any, agent_model: str) -> str:
+        preferred = (self._judge_model(agent_model) if self._judge_model
+                     else preferred_judge_model(transport, agent_model))
+        if (id(transport), preferred) in self._rejected_models:
+            return agent_model
+        return preferred
 
     async def judge(self, request: JudgeRequest, action: PendingAction) -> AutoDecision:
         key = (request.thread_id, request.agent_id)
@@ -166,10 +186,9 @@ class AutoJudge:
         suspended = self.breaker.allowed(request.thread_id, provider_key)
         if suspended is not None:
             return AutoDecision("ask", suspended, None)
-        model = self._judge_model(agent_model) if self._judge_model else agent_model
+        model = self._model_for(transport, agent_model)
         record: dict[str, object] = {"model": model, "action": asdict(action), "responses": []}
         owner = f"judge:{request.thread_id}:{request.agent_id}"
-        before = METER.peek(owner)
         try:
             decision = await self._attempt(transport, model, request, action, owner, record)
         except Exception as exc:  # noqa: BLE001 — every judge failure asks the user
@@ -177,10 +196,14 @@ class AutoJudge:
                                                  action, owner, record, provider_key)
         else:
             self.breaker.record_success(request.thread_id)
-        after = METER.peek(owner)
-        self.breaker.record_usage(request.thread_id,
-                                  (after.prompt_tokens - before.prompt_tokens)
-                                  - (after.cached_tokens - before.cached_tokens))
+        used = METER.take(owner)
+        self.breaker.record_usage(request.thread_id, used.prompt_tokens - used.cached_tokens)
+        record["usage"] = asdict(used)
+        if self._usage_sink is not None:
+            try:
+                self._usage_sink(request, used)
+            except Exception:  # noqa: BLE001 — usage accounting must never fail a judgment
+                logger.warning("[auto-judge] usage sink failed", exc_info=True)
         record["decision"] = asdict(decision)
         self._write_artifact(request, record)
         return decision
@@ -205,6 +228,7 @@ class AutoJudge:
                 logger.warning("[auto-judge] fallback model failed too: %s", retry_exc)
                 exc = retry_exc
             else:
+                self._rejected_models.add((id(transport), model))
                 self.breaker.record_success(request.thread_id)
                 return decision
         self.breaker.suspend_process(exc, provider_key)
@@ -216,20 +240,23 @@ class AutoJudge:
         # Malformed output propagates like any other failure, so a model that keeps
         # answering badly trips the breaker instead of costing a call per command.
         token = USAGE_OWNER.set(owner)
+        effort_token = EFFORT_OVERRIDE.set(await _low_effort(transport, model))
         try:
             return await asyncio.wait_for(
                 self._run(transport, model, request, action, record), self._timeout_sec)
         finally:
+            EFFORT_OVERRIDE.reset(effort_token)
             USAGE_OWNER.reset(token)
 
     async def _run(self, transport: Any, model: str, request: JudgeRequest,
                    action: PendingAction, record: dict[str, object]) -> AutoDecision:
         context = self._context_source(request)
+        session = self.sessions.get(request.thread_id, request.agent_id, context.history_anchor)
         checks: list[dict[str, str]] = []
         responses = record["responses"]
         assert isinstance(responses, list)
         for _ in range(MAX_CHECKS + 1):
-            payload = _payload(context, action, checks)
+            payload = session.payload(context, action, checks, _instruction(len(checks)))
             response = await transport.generate_json(
                 model=model, schema_name="auto_judge", schema=JUDGE_SCHEMA,
                 system_instructions=JUDGE_POLICY, user_payload=payload, on_retry=_abort_retry)
@@ -265,22 +292,24 @@ def _abort_retry(*_args: object) -> None:
     raise JudgeRetryAbort("transient provider error during an Auto judgment")
 
 
-def _payload(context: JudgeContext, action: PendingAction,
-             checks: list[dict[str, str]]) -> dict[str, object]:
-    payload: dict[str, object] = {
-        "agents_md": context.agents_md,
-        "authorizations": list(context.authorizations),
-        "action_log": list(context.action_log),
-        "pending_action": asdict(action),
-    }
-    if checks:
-        payload["checks"] = list(checks)
-    remaining = MAX_CHECKS - len(checks)
-    payload["instruction"] = (
-        "Judge the pending action. "
-        + (f"You may request up to {remaining} more check(s)." if remaining
-           else "No checks left: return a verdict."))
-    return payload
+def _instruction(checks_used: int) -> str:
+    remaining = MAX_CHECKS - checks_used
+    return "Judge the pending action. " + (
+        f"You may request up to {remaining} more check(s)." if remaining
+        else "No checks left: return a verdict.")
+
+
+async def _low_effort(transport: Any, model: str) -> ReasoningEffort | None:
+    """LOW when the model lists it as supported; otherwise leave the transport's own."""
+    support = getattr(transport, "reasoning_effort_support", None)
+    if not callable(support):
+        return None
+    try:
+        result = await support(model)
+    except Exception:  # noqa: BLE001 — capability lookup is best-effort
+        return None
+    supported: frozenset[ReasoningEffort] = getattr(result, "supported", frozenset())
+    return ReasoningEffort.LOW if ReasoningEffort.LOW in supported else None
 
 
 def _decision(response: dict[str, object]) -> AutoDecision:

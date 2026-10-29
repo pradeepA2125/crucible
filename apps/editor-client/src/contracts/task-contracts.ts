@@ -354,6 +354,9 @@ export const ThreadUsageSchema = z.object({
     total: TokenUsageSchema,
     members: z.record(z.string(), TokenUsageSchema),
   })),
+  // The Auto approval judge's calls in this thread (wire key auto_review); absent on
+  // backends without Auto, null when the judge has not run.
+  autoReview: TokenUsageSchema.nullable().optional(),
 });
 export type ThreadUsage = z.infer<typeof ThreadUsageSchema>;
 

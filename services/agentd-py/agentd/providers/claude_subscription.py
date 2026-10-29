@@ -21,7 +21,12 @@ from agentd.providers.contracts import normalize_image_attachments
 from agentd.providers.image_parts import image_content
 from agentd.providers.openai_native import SessionInputs, session_id_for, to_native_input
 from agentd.providers.plan_access import ProviderAccessStopped
-from agentd.providers.reasoning_effort import EffortControlBuilder, EffortSupport, ReasoningEffort
+from agentd.providers.reasoning_effort import (
+    EFFORT_OVERRIDE,
+    EffortControlBuilder,
+    EffortSupport,
+    ReasoningEffort,
+)
 from agentd.providers.usage import METER, USAGE_OWNER
 
 IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
@@ -166,8 +171,9 @@ class ClaudeSubscriptionTransport:
             ],
             "messages": messages,
         }
-        if self._effort is not None:
-            body["output_config"] = {"effort": self._effort.value}
+        effort = EFFORT_OVERRIDE.get() or self._effort
+        if effort is not None:
+            body["output_config"] = {"effort": effort.value}
         if schema is not None:
             body["tools"] = [
                 {

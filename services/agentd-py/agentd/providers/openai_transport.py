@@ -62,7 +62,7 @@ from agentd.providers.plan_access import (
     PlanUnsupportedCapability,
     classify_plan_error,
 )
-from agentd.providers.reasoning_effort import EffortSupport, ReasoningEffort
+from agentd.providers.reasoning_effort import EFFORT_OVERRIDE, EffortSupport, ReasoningEffort
 from agentd.providers.token_progress import ProgressTicker, int_or_none
 from agentd.providers.usage import METER, USAGE_OWNER
 from agentd.runtime.artifacts import provider_debug_root
@@ -230,12 +230,20 @@ class OpenAIJsonTransport(ModelJsonTransport):
     def _note_effort_rejection(self, exc: Exception, body: dict[str, Any]) -> bool:
         """A 400 naming `reasoning.effort` proves THIS rung is unsupported: mark it,
         drop the field for this process, and let the caller retry once without it."""
-        if self._effort is None or "effort" not in body.get("reasoning", {}):
+        override = EFFORT_OVERRIDE.get()
+        if (override is None and self._effort is None) or "effort" not in body.get("reasoning", {}):
             return False
         if getattr(exc, "status_code", None) != 400:
             return False
         if getattr(exc, "param", None) != "reasoning.effort":
             return False
+        if override is not None:
+            # Only this call asked for it: drop it here and keep the saved effort.
+            body["reasoning"].pop("effort", None)
+            if not body["reasoning"]:
+                body.pop("reasoning")
+            return True
+        assert self._effort is not None
         self._effort_rejected[self._effort] = f"this model rejected '{self._effort}'"
         logger.warning("[effort] OpenAI rejected reasoning effort %s; dropping it", self._effort)
         self._effort = None
@@ -387,8 +395,9 @@ class OpenAIJsonTransport(ModelJsonTransport):
             # the whole turn. Not asked for on the API-key route: summaries there can
             # require organization verification.
             reasoning["summary"] = "auto"
-        if self._effort is not None:
-            reasoning["effort"] = _EFFORT_WIRE[self._effort]
+        effort = EFFORT_OVERRIDE.get() or self._effort
+        if effort is not None:
+            reasoning["effort"] = _EFFORT_WIRE[effort]
         if reasoning:
             body["reasoning"] = reasoning
         return body

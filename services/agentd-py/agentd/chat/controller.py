@@ -454,6 +454,7 @@ class ChatController:
         # transport is known; until then it stays None, which makes Auto ask instead.
         self._auto_gate = AutoGate(Path(workspace_path), Path.home(), judge=None)
         self._auto_judge: AutoJudge | None = None
+        self._judge_rewinds: dict[str, int] = {}
         if getattr(reasoning_engine, "_transport", None) is not None:
             # Re-read per judgment: a provider hot-swap mutates the engine in place.
             self._attach_judge(lambda: (getattr(self._reasoning, "_transport"),
@@ -1967,6 +1968,8 @@ class ChatController:
         memory runs (best-effort), and the thread's write log — reset, because a stale
         log would refuse edits citing agents the rewind just erased; an empty one is
         always safe (§7.1)."""
+        # Rewound messages must stop authorizing anything the Auto judge decides.
+        self._forget_judge_history(thread_id)
         # By stamp (spec §8.10) — catches agents from continuation turns, which open no
         # checkpoint — plus by turn id for rows written before stamps existed.
         stamped = (self._store.delete_agents_from_checkpoint(thread_id, from_seq)
@@ -2156,8 +2159,18 @@ class ChatController:
         self._auto_judge = AutoJudge(
             transport_source=transport_source, context_source=self._judge_context,
             artifacts_dir=self._judge_artifacts_dir, timeout_sec=auto_judge_timeout_sec(),
-            turn_uncached_budget=auto_judge_turn_uncached_tokens())
+            turn_uncached_budget=auto_judge_turn_uncached_tokens(),
+            usage_sink=lambda request, used: self._store.add_judge_usage(
+                request.thread_id, used))
         self._auto_gate.judge = self._auto_judge
+
+    def _judge_anchor(self, thread_id: str) -> str:
+        return str(self._judge_rewinds.get(thread_id, 0))
+
+    def _forget_judge_history(self, thread_id: str) -> None:
+        self._judge_rewinds[thread_id] = self._judge_rewinds.get(thread_id, 0) + 1
+        if self._auto_judge is not None:
+            self._auto_judge.forget_thread(thread_id)
 
     def _judge_context(self, request: JudgeRequest) -> JudgeContext:
         thread = self._store.get_thread(request.thread_id)
@@ -2172,7 +2185,8 @@ class ChatController:
                 encoding="utf-8", errors="replace")
         except OSError:
             agents_md = None
-        return build_judge_context(messages, history, agents_md)
+        return build_judge_context(messages, history, agents_md,
+                                   history_anchor=self._judge_anchor(request.thread_id))
 
     def _judge_artifacts_dir(self, request: JudgeRequest) -> Path | None:
         turn_id = self._live_turns.get(request.thread_id)
@@ -2403,10 +2417,13 @@ class ChatController:
                 teams[team.team_id] = {
                     "total": _usage_view(_usage_sum(list(members.values()))),
                     "members": {label: _usage_view(u) for label, u in members.items()}}
-        return {"total": _usage_view(_usage_sum([main, *agents.values()])),
+        review = self._store.judge_usage(thread_id)
+        return {"total": _usage_view(_usage_sum([main, *agents.values(), review])),
                 "main": _usage_view(main),
                 "agents": {agent_id: _usage_view(u) for agent_id, u in agents.items()},
-                "teams": teams}
+                "teams": teams,
+                # The Auto judge's calls, persisted after each judgment (never on /live).
+                "auto_review": _usage_view(review) if review.requests else None}
 
     def provider_access(self, thread_id: str) -> dict[str, object] | None:
         """Why this thread's last turn stopped on provider access, for /live's cards."""

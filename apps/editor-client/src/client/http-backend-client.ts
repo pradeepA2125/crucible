@@ -534,8 +534,10 @@ export class HttpBackendClient implements BackendTaskClient {
     return { ok: raw["ok"] === true };
   }
   async getThreadUsage(threadId: string): Promise<ThreadUsage> {
-    return ThreadUsageSchema.parse(await this.fetchJson(
-      `/v1/chat/threads/${encodeURIComponent(threadId)}/usage`));
+    const raw = await this.fetchJson(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/usage`) as Record<string, unknown>;
+    const { auto_review: autoReview, ...rest } = raw;
+    return ThreadUsageSchema.parse(autoReview === undefined ? rest : { ...rest, autoReview });
   }
 
   async listTeams(threadId: string): Promise<TeamSummary[]> {

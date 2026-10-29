@@ -44,6 +44,8 @@ _AGENT_V2_COLUMNS: tuple[tuple[str, str], ...] = (
 )
 _USAGE_COLUMNS: tuple[str, ...] = (
     "requests", "prompt_tokens", "completion_tokens", "limiter_wait_ms", "cached_tokens")
+_JUDGE_USAGE_COLUMNS: tuple[str, ...] = (
+    "judge_requests", "judge_prompt_tokens", "judge_completion_tokens", "judge_cached_tokens")
 
 
 class ChatThreadStore:
@@ -92,6 +94,11 @@ class ChatThreadStore:
         # Thread-scoped active skill (survives every turn boundary), added later.
         # The main agent's usage per thread (spec §3.11).
         for column in _USAGE_COLUMNS:
+            if column not in existing:
+                self._conn.execute(  # noqa: S608 — fixed list
+                    f"ALTER TABLE chat_threads ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
+        # The Auto judge's usage per thread, kept apart from the main agent's.
+        for column in _JUDGE_USAGE_COLUMNS:
             if column not in existing:
                 self._conn.execute(  # noqa: S608 — fixed list
                     f"ALTER TABLE chat_threads ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
@@ -1146,6 +1153,26 @@ class ChatThreadStore:
             (usage.requests, usage.prompt_tokens, usage.completion_tokens, usage.wait_ms,
              usage.cached_tokens, thread_id))
         self._conn.commit()
+
+    def add_judge_usage(self, thread_id: str, usage: Usage) -> None:
+        self._conn.execute(
+            "UPDATE chat_threads SET judge_requests = judge_requests + ?, "
+            "judge_prompt_tokens = judge_prompt_tokens + ?, "
+            "judge_completion_tokens = judge_completion_tokens + ?, "
+            "judge_cached_tokens = judge_cached_tokens + ? WHERE thread_id = ?",
+            (usage.requests, usage.prompt_tokens, usage.completion_tokens, usage.cached_tokens,
+             thread_id))
+        self._conn.commit()
+
+    def judge_usage(self, thread_id: str) -> Usage:
+        row = self._conn.execute(
+            "SELECT judge_requests, judge_prompt_tokens, judge_completion_tokens, "
+            "judge_cached_tokens FROM chat_threads WHERE thread_id = ?", (thread_id,)).fetchone()
+        if row is None:
+            return Usage()
+        return Usage(requests=row["judge_requests"], prompt_tokens=row["judge_prompt_tokens"],
+                     completion_tokens=row["judge_completion_tokens"],
+                     cached_tokens=row["judge_cached_tokens"])
 
     def thread_usage(self, thread_id: str) -> Usage:
         row = self._conn.execute(
