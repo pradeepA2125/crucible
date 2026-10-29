@@ -283,6 +283,10 @@ class SessionManager:
         }
 
     # ── internals ────────────────────────────────────────────────────────────
+    def session_command(self, thread_id: str, session_id: str) -> str:
+        """The command line a session was started with (Auto judges input against it)."""
+        return self._get(thread_id, session_id).command_line
+
     def _get(self, thread_id: str, session_id: str) -> _Session:
         sess = self._sessions.get(session_id)
         if sess is None or sess.thread_id != thread_id:

@@ -6,6 +6,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from agentd.child_env import child_env
 from agentd.subagents.write_log import canonical_path
 
 _GIT_TIMEOUT_SEC = 5
@@ -32,6 +33,7 @@ def _git_remotes(workspace: Path) -> str:
             text=True,
             timeout=_GIT_TIMEOUT_SEC,
             check=False,
+            env=child_env(),
         ).stdout.strip()
         branch = subprocess.run(
             ["git", "-C", str(workspace), "branch", "--show-current"],
@@ -39,6 +41,7 @@ def _git_remotes(workspace: Path) -> str:
             text=True,
             timeout=_GIT_TIMEOUT_SEC,
             check=False,
+            env=child_env(),
         ).stdout.strip()
     except (OSError, subprocess.TimeoutExpired) as exc:
         return f"git unavailable: {exc.__class__.__name__}"

@@ -12,6 +12,8 @@ from agentd.domain.models import ApprovalOutcome
 
 CommandApprovalCallback = Callable[[str, list[str], str], Awaitable[ApprovalOutcome]]
 McpApprovalCallback = Callable[[str, str, dict[str, object]], Awaitable[ApprovalOutcome]]
+# (session_id, the session's command line, chars) — Auto mode judges terminal input.
+StdinApprovalCallback = Callable[[str, str, str], Awaitable[ApprovalOutcome]]
 
 _POLICY_TAIL = (
     " is not permitted for this agent (no remembered rule allows it); nobody was asked. "

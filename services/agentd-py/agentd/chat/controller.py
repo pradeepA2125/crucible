@@ -72,7 +72,7 @@ from agentd.approvals.judge import (
     auto_judge_turn_uncached_tokens,
 )
 from agentd.approvals.judge_context import JudgeContext, build_judge_context
-from agentd.approvals.types import JudgeRequest
+from agentd.approvals.types import JudgeRequest, PendingActionKind
 from agentd.domain.models import (
     ApprovalOutcome,
     CommandDecision,
@@ -394,6 +394,12 @@ def _with_mentioned_files(message: str, mentioned_files: list[dict[str, str]] | 
 
 # How often a turn may be held open for agent reports that are still arriving (spec §5.2).
 _MAX_ARRIVAL_REDIRECTS = 5
+# After this many approved Auto asks in a row, the next card offers Accept edits.
+_AUTO_ASK_STREAK_OFFER = 3
+
+
+def _tool_kind(native_web: bool, native_fetch: bool) -> PendingActionKind:
+    return "web_fetch" if native_fetch else "web_search" if native_web else "mcp"
 
 
 def _divider_text(activation_input: str) -> str:
@@ -455,6 +461,8 @@ class ChatController:
         self._auto_gate = AutoGate(Path(workspace_path), Path.home(), judge=None)
         self._auto_judge: AutoJudge | None = None
         self._judge_rewinds: dict[str, int] = {}
+        # Consecutive Auto asks the user approved, per thread (the switch offer).
+        self._auto_ask_streak: dict[str, int] = {}
         if getattr(reasoning_engine, "_transport", None) is not None:
             # Re-read per judgment: a provider hot-swap mutates the engine in place.
             self._attach_judge(lambda: (getattr(self._reasoning, "_transport"),
@@ -785,6 +793,7 @@ class ChatController:
         if self._auto_judge is not None:
             # A suspended Auto judge gets one fresh try, and a fresh budget, per message.
             self._auto_judge.breaker.reset_thread(thread_id)
+        self._auto_ask_streak.pop(thread_id, None)
         self._wakes_suppressed.discard(thread_id)
         self._wake_cap_noted.discard(thread_id)
         self._turn_kinds[thread_id] = "user"
@@ -980,7 +989,8 @@ class ChatController:
 
             assert isinstance(self._exec_sessions, SessionManager)
             exec_source = ExecSessionToolSource(
-                self._exec_sessions, thread_id, command_cb)
+                self._exec_sessions, thread_id, command_cb,
+                stdin_approval_callback=partial(self._stdin_approval_cb, thread_id, channel_id))
         # Shared active-skills map: SkillToolSource (in the registry) writes activated bodies
         # here, the loop re-injects them into the dynamic tail each iteration. Rehydrated
         # from the thread's persisted single active skill (survives every turn boundary —
@@ -1703,6 +1713,8 @@ class ChatController:
                 return await self._command_approval_cb(
                     thread_id, channel_id, command, args, cwd, child=child, reason=reason)
             if decision.kind == "run":
+                if decision.note:
+                    self._auto_ask_streak.pop(thread_id, None)
                 return ApprovalOutcome.allow(note=decision.note)
             if decision.kind == "deny":
                 cmdline = f"{command} {' '.join(args)}".strip()
@@ -1712,12 +1724,35 @@ class ChatController:
             auto_reason = decision.reason
         elif CommandRuleStore(self._workspace_path).matches(command, args):
             return ApprovalOutcome.allow()
+        return await self._ask_command(thread_id, channel_id, command, args, cwd, child=child,
+                                       auto_reason=auto_reason)
 
-        gate_payload: dict[str, object] = {
-            "command": command, "args": args, "cwd": cwd,
-            "mentions_protected": command_mentions_protected(command, args)}
+    def _auto_gate_payload(self, thread_id: str, payload: dict[str, object],
+                           auto_reason: str | None) -> dict[str, object]:
+        """Auto's reason on the card, and after three approved Auto asks in a row the
+        offer to switch to Accept edits (the judge is probably miscalibrated for this
+        work; spec §6.6)."""
         if auto_reason is not None:
-            gate_payload["auto_reason"] = auto_reason
+            payload["auto_reason"] = auto_reason
+            if self._auto_ask_streak.get(thread_id, 0) >= _AUTO_ASK_STREAK_OFFER:
+                payload["offer_switch"] = True
+        return payload
+
+    def _note_auto_ask(self, thread_id: str, auto_reason: str | None, approved: bool) -> None:
+        if auto_reason is None:
+            return
+        self._auto_ask_streak[thread_id] = (
+            self._auto_ask_streak.get(thread_id, 0) + 1 if approved else 0)
+
+    async def _ask_command(
+        self, thread_id: str, channel_id: str, command: str, args: list[str], cwd: str, *,
+        child: AgentHandle | None = None, auto_reason: str | None = None,
+        remember: bool = True,
+    ) -> ApprovalOutcome:
+        """Raise the durable command card and wait for the user's decision."""
+        gate_payload = self._auto_gate_payload(thread_id, {
+            "command": command, "args": args, "cwd": cwd,
+            "mentions_protected": command_mentions_protected(command, args)}, auto_reason)
         gate = self._store.add_controller_gate(thread_id, PendingGate.new(
             "command", gate_payload, agent=self._gate_agent(child)))
         loop = asyncio.get_event_loop()
@@ -1753,14 +1788,34 @@ class ChatController:
             self._store.remove_controller_gate(thread_id, gate.gate_id)
             self._refresh_child_gate_status(thread_id, child)
 
-        rule = rule_from_decision(decision, command, args)
+        rule = rule_from_decision(decision, command, args) if remember else None
         if rule is not None:
             CommandRuleStore(self._workspace_path).add(rule)
+        self._note_auto_ask(thread_id, auto_reason, decision.approve)
         self._gate_breadcrumb(
             thread_id, channel_id,
             f"✓ Command approved: {command}" if decision.approve
             else f"✗ Command rejected: {command}", child)
         return ApprovalOutcome.from_command(decision, denied_by=denied_by)
+
+    async def _stdin_approval_cb(
+        self, thread_id: str, channel_id: str, session_id: str, session_command: str,
+        chars: str,
+    ) -> ApprovalOutcome:
+        """Typing into a running terminal session. Ungated outside Auto (as before); in
+        Auto, short answers run and anything else is judged (spec §6.4)."""
+        if self._shell_policy != ShellPolicy.AUTO:
+            return ApprovalOutcome.allow()
+        decision = await self._auto_gate.decide_stdin(
+            session_command, chars, self._judge_request(thread_id, None))
+        if self._shell_policy != ShellPolicy.AUTO or decision.kind == "run":
+            if decision.note:
+                self._auto_ask_streak.pop(thread_id, None)
+            return ApprovalOutcome.allow(note=decision.note)
+        # Remembering a rule for typed input would not match anything useful later.
+        return await self._ask_command(
+            thread_id, channel_id, "write_stdin", [session_id, chars], "",
+            auto_reason=decision.reason, remember=False)
 
     async def resolve_command(
         self, thread_id: str, decision: CommandDecision, gate_id: str | None = None,
@@ -1815,6 +1870,17 @@ class ChatController:
                  else McpRuleStore(self._workspace_path))
         if rules.matches(server, tool):
             return ApprovalOutcome.allow()
+        auto_reason: str | None = None
+        if self._shell_policy == ShellPolicy.AUTO:
+            decision_auto = await self._auto_gate.decide_tool_call(
+                _tool_kind(native_web, native_fetch), server, tool, args,
+                self._judge_request(thread_id, child))
+            if self._shell_policy == ShellPolicy.AUTO:
+                if decision_auto.kind == "run":
+                    if decision_auto.note:
+                        self._auto_ask_streak.pop(thread_id, None)
+                    return ApprovalOutcome.allow(note=decision_auto.note)
+                auto_reason = decision_auto.reason
 
         payload: dict[str, object] = {"server": server, "tool": tool, "args": args}
         if native_web:
@@ -1822,7 +1888,7 @@ class ChatController:
         elif native_fetch:
             payload["native_fetch"] = True
         gate = self._store.add_controller_gate(thread_id, PendingGate.new(
-            "mcp_tool", payload,
+            "mcp_tool", self._auto_gate_payload(thread_id, payload, auto_reason),
             agent=self._gate_agent(child)))
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[McpToolDecision] = loop.create_future()
@@ -1850,6 +1916,7 @@ class ChatController:
 
         if decision.approve and decision.remember:
             rules.add(server, tool)
+        self._note_auto_ask(thread_id, auto_reason, decision.approve)
         subject = "Web fetch" if native_fetch else "Web search" if native_web else "MCP tool"
         self._gate_breadcrumb(
             thread_id, channel_id,
@@ -2233,9 +2300,21 @@ class ChatController:
         if McpRuleStore(self._workspace_path).matches(server, tool):
             return ApprovalOutcome.allow()
         if child.context.no_ask:
-            return ApprovalOutcome.deny("policy")
+            return await self._auto_no_ask(child, "mcp", server, tool, args)
         return await self._mcp_approval_cb(
             child.thread_id, f"chat:{child.thread_id}", server, tool, args, child=child)
+
+    async def _auto_no_ask(self, child: AgentHandle, kind: PendingActionKind, server: str,
+                           tool: str, args: dict[str, object]) -> ApprovalOutcome:
+        """A never-ask child: outside Auto nothing unremembered runs; in Auto the judge
+        may let it run, and what it would ask about is denied instead."""
+        if self._shell_policy != ShellPolicy.AUTO:
+            return ApprovalOutcome.deny("policy")
+        decision = await self._auto_gate.decide_tool_call(
+            kind, server, tool, args, self._judge_request(child.thread_id, child))
+        if decision.kind == "run":
+            return ApprovalOutcome.allow(note=decision.note)
+        return ApprovalOutcome.deny("policy", reason=decision.reason)
 
     async def _child_web_approval_cb(
         self, child: AgentHandle, server: str, tool: str, args: dict[str, object],
@@ -2249,7 +2328,7 @@ class ChatController:
         if WebSearchRuleStore(self._workspace_path).matches(server, tool):
             return ApprovalOutcome.allow()
         if child.context.no_ask:
-            return ApprovalOutcome.deny("policy")
+            return await self._auto_no_ask(child, "web_search", server, tool, args)
         return await self._mcp_approval_cb(
             child.thread_id, f"chat:{child.thread_id}", server, tool, args,
             child=child, native_web=True)
@@ -2264,7 +2343,7 @@ class ChatController:
         if WebFetchRuleStore(self._workspace_path).matches(server, tool):
             return ApprovalOutcome.allow()
         if child.context.no_ask:
-            return ApprovalOutcome.deny("policy")
+            return await self._auto_no_ask(child, "web_fetch", server, tool, args)
         return await self._mcp_approval_cb(
             child.thread_id, f"chat:{child.thread_id}", server, tool, args,
             child=child, native_fetch=True)

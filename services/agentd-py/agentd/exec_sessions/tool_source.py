@@ -16,7 +16,7 @@ from agentd.exec_sessions.manager import (
     SessionRead,
     SessionSpawnError,
 )
-from agentd.tools.approvals import CommandApprovalCallback, denial_text
+from agentd.tools.approvals import CommandApprovalCallback, StdinApprovalCallback, denial_text
 from agentd.tools.registry import ToolDefinition, ToolOutput
 
 _TOOLS = ("start_session", "write_stdin", "kill_session", "list_sessions")
@@ -29,10 +29,13 @@ class ExecSessionToolSource:
     name = "exec_sessions"
 
     def __init__(self, manager: SessionManager, thread_id: str,
-                 command_approval_callback: CommandApprovalCallback) -> None:
+                 command_approval_callback: CommandApprovalCallback,
+                 stdin_approval_callback: StdinApprovalCallback | None = None) -> None:
         self._manager = manager
         self._thread_id = thread_id
         self._approve = command_approval_callback
+        # (session_id, session command line, chars) → outcome; only Auto mode sets it.
+        self._approve_stdin = stdin_approval_callback
 
     def definitions(self) -> list[ToolDefinition]:
         yield_prop = {"type": "integer", "description":
@@ -115,9 +118,23 @@ class ExecSessionToolSource:
                                 f"{STDIN_MAX_CHARS}). stdin is for interactive "
                                 "input, not bulk data — write a file instead."),
                         is_error=True)
-                return self._render(await self._manager.write_stdin(
-                    self._thread_id, str(args.get("session_id", "")),
-                    chars, args.get("yield_time_ms")))
+                session_id = str(args.get("session_id", ""))
+                note: str | None = None
+                if self._approve_stdin is not None:
+                    command_line = self._manager.session_command(self._thread_id, session_id)
+                    outcome = await self._approve_stdin(session_id, command_line, chars)
+                    if not outcome.approved:
+                        return ToolOutput(
+                            output=denial_text(
+                                outcome, subject=f"input to session {session_id}",
+                                user_text=f"Input to session {session_id} rejected by user. "
+                                          "Do not retry the same input — adapt or ask."),
+                            is_error=True)
+                    note = outcome.note
+                output = self._render(await self._manager.write_stdin(
+                    self._thread_id, session_id, chars, args.get("yield_time_ms")))
+                output.approval_note = note
+                return output
             if tool == "kill_session":
                 return self._render(await self._manager.kill(
                     self._thread_id, str(args.get("session_id", ""))),

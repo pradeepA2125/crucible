@@ -549,6 +549,17 @@ describe("Auto reasons on approval cards", () => {
     render(<McpGate gateId="g1" taskId="th1" payload={{ server: "gh", tool: "create_issue", args: {}, auto_reason: "not requested" }} />);
     expect(screen.getByText("Auto: not requested")).toBeTruthy();
   });
+  it("offers Switch to Accept edits after repeated asks", () => {
+    render(<CommandGate gateId="g1" taskId="t1"
+      payload={{ ...CMD_PAYLOAD, auto_reason: "not asked", offer_switch: true }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Accept edits" }));
+    expect(postMessage).toHaveBeenCalledWith({ type: "setApprovalMode", mode: "accept_edits" });
+  });
+  it("offers the switch on an MCP card too", () => {
+    render(<McpGate gateId="g1" taskId="th1"
+      payload={{ server: "gh", tool: "x", args: {}, auto_reason: "r", offer_switch: true }} />);
+    expect(screen.getByRole("button", { name: "Switch to Accept edits" })).toBeTruthy();
+  });
   it("shows no reason line outside Auto", () => {
     render(<CommandGate gateId="g1" taskId="t1" payload={CMD_PAYLOAD} />);
     expect(screen.queryByText(/^Auto:/)).toBeNull();
