@@ -150,7 +150,9 @@ class ExecSessionToolSource:
         read = await self._manager.start(
             self._thread_id, command, cmd_args, cwd or None,
             args.get("yield_time_ms"))
-        return self._render(read)
+        output = self._render(read)
+        output.approval_note = outcome.note
+        return output
 
     def _render(self, read: SessionRead, killed: bool = False) -> ToolOutput:
         out = read.new_output[-result_max_chars():]

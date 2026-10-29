@@ -98,6 +98,7 @@ class ToolResult(BaseModel):
     output: str
     is_error: bool = False
     status: str | None = None
+    approval_note: str | None = None
 
 
 class AgentToolTrace(BaseModel):

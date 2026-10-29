@@ -1066,7 +1066,8 @@ class ControllerLoop:
                         from dataclasses import asdict
                         slots[outcome.call.id]["delivered_read"] = asdict(out.delivered_read)
                     result = ToolResult(call_id=identity, tool_name=outcome.call.tool,
-                        output=out.output, is_error=out.is_error, status=outcome.state)
+                        output=out.output, is_error=out.is_error, status=outcome.state,
+                        approval_note=getattr(out, "approval_note", None))
                     previous = next(
                         (i for i, r in enumerate(self._results) if r.call_id == identity), None
                     )
@@ -1076,7 +1077,8 @@ class ControllerLoop:
                         self._results[previous] = result
                     self._broadcaster.broadcast(self._channel_id, {"type": "tool_result",
                         "payload": {"call_index": indices[outcome.call.id], "output": out.output,
-                                    "is_error": out.is_error, "status": outcome.state}})
+                                    "is_error": out.is_error, "status": outcome.state,
+                                    "approval_note": result.approval_note}})
                     if not out.is_error:
                         self._note_delegation(outcome.call.tool, outcome.call.args, out.output)
                         if plan_context.get("notice_turn"):

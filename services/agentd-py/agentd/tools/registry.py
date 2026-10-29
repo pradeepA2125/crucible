@@ -34,6 +34,8 @@ class ToolOutput:
     # Never cut to the batch's result share: a capability bundle is a set of complete
     # JSON schemas, and a sliced one would be worse than none.
     whole: bool = False
+    # Why Auto mode let this call run (shown under the tool pill); None otherwise.
+    approval_note: str | None = None
 
 
 # Tagged (spec §4.6.3). Main renders today's text byte-for-byte; a child is told it runs in
@@ -491,8 +493,10 @@ class ToolRegistry:
             refusal = self._command_guard(line)
             if refusal is not None:
                 return ToolOutput(output=refusal, is_error=True)
+        note: str | None = None
         if self._command_approval_callback is not None:
             outcome = await self._command_approval_callback(command, cmd_args, cwd)
+            note = outcome.note
             if not outcome.approved:
                 cmdline = f"{command} {' '.join(cmd_args)}".strip()
                 return ToolOutput(
@@ -508,7 +512,7 @@ class ToolRegistry:
                 refusal = self._command_guard(line)
                 if refusal is not None:
                     return ToolOutput(output=refusal, is_error=True)
-            return await run_command(
+            output = await run_command(
                 command=command,
                 args=cmd_args,
                 shadow_root=self._shadow_root,
@@ -516,6 +520,8 @@ class ToolRegistry:
                 cwd=cwd or None,
                 binary_name_override=binary_name,
             )
+            output.approval_note = note
+            return output
         return run
 
     def _execute_query_graph(self, args: dict[str, object]) -> ToolOutput:

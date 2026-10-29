@@ -44,5 +44,7 @@ def trace_to_tool_events(
                 output = output[:max_output_chars] + "\n… truncated"
             event["output"] = output
             event["isError"] = result.is_error
+            if result.approval_note:
+                event["approvalNote"] = result.approval_note
         events.append(event)
     return events
