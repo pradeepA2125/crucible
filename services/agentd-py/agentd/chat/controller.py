@@ -64,6 +64,8 @@ from agentd.chat.rewind import RewindStore
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
 from agentd.chat.turn_control import ChatTurnControl
+from agentd.approvals.auto_gate import AutoGate
+from agentd.approvals.types import JudgeRequest
 from agentd.domain.models import (
     ApprovalOutcome,
     CommandDecision,
@@ -441,6 +443,9 @@ class ChatController:
         # controller_loop._decide_state_change_correction). Mirrors the task path's
         # CRUCIBLE_SHELL_POLICY / CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC.
         self._shell_policy = shell_policy
+        # Auto mode's decision order. The judge is attached once the reasoning engine's
+        # transport is known; until then it stays None, which makes Auto ask instead.
+        self._auto_gate = AutoGate(Path(workspace_path), Path.home(), judge=None)
         self._command_decision_timeout_sec = max(0.0, command_decision_timeout_sec)
         # Per-thread controller conversation history — the cache prefix replayed as
         # seed_history on the next turn (clarify/discuss resume, spec §12).
@@ -1657,6 +1662,7 @@ class ChatController:
     async def _command_approval_cb(
         self, thread_id: str, channel_id: str,
         command: str, args: list[str], cwd: str, *, child: AgentHandle | None = None,
+        reason: str = "",
     ) -> ApprovalOutcome:
         """Gate a run_command in a chat EDIT turn (mirror engine._build_command_approval_
         callback on the controller's thread-gate machinery instead of task status).
@@ -1668,13 +1674,32 @@ class ChatController:
         persisted via the shared rule_from_decision derivation."""
         if self._shell_policy == ShellPolicy.ALLOW_ALL:
             return ApprovalOutcome.allow()
-        if CommandRuleStore(self._workspace_path).matches(command, args):
+        auto_reason: str | None = None
+        if self._shell_policy == ShellPolicy.AUTO:
+            decision = await self._auto_gate.decide_command(
+                command, args, self._judge_request(thread_id, child), agent_reason=reason)
+            if self._shell_policy != ShellPolicy.AUTO:
+                # The user switched modes while the judge was deciding: the new mode rules.
+                return await self._command_approval_cb(
+                    thread_id, channel_id, command, args, cwd, child=child, reason=reason)
+            if decision.kind == "run":
+                return ApprovalOutcome.allow(note=decision.note)
+            if decision.kind == "deny":
+                cmdline = f"{command} {' '.join(args)}".strip()
+                self._gate_breadcrumb(thread_id, channel_id,
+                                      f"✗ Auto blocked: {cmdline} — {decision.reason}", child)
+                return ApprovalOutcome.deny("policy", reason=decision.reason)
+            auto_reason = decision.reason
+        elif CommandRuleStore(self._workspace_path).matches(command, args):
             return ApprovalOutcome.allow()
 
+        gate_payload: dict[str, object] = {
+            "command": command, "args": args, "cwd": cwd,
+            "mentions_protected": command_mentions_protected(command, args)}
+        if auto_reason is not None:
+            gate_payload["auto_reason"] = auto_reason
         gate = self._store.add_controller_gate(thread_id, PendingGate.new(
-            "command", {"command": command, "args": args, "cwd": cwd,
-                        "mentions_protected": command_mentions_protected(command, args)},
-            agent=self._gate_agent(child)))
+            "command", gate_payload, agent=self._gate_agent(child)))
         loop = asyncio.get_event_loop()
         fut: asyncio.Future[CommandDecision] = loop.create_future()
         self._pending_command[gate.gate_id] = fut
@@ -2105,13 +2130,27 @@ class ChatController:
             child.transcript.append(ChatMessage(
                 role="agent", content=text, metadata=metadata))
 
+    def _judge_request(self, thread_id: str, child: AgentHandle | None) -> JudgeRequest:
+        return JudgeRequest(thread_id=thread_id,
+                            agent_id=child.agent_id if child is not None else "main",
+                            workspace=Path(self._workspace_path))
+
     async def _child_command_approval_cb(
         self, child: AgentHandle, command: str, args: list[str], cwd: str,
     ) -> ApprovalOutcome:
         if self._team_tool_refusal(child, "run_command"):
             return ApprovalOutcome.deny("policy")
-        if (self._shell_policy == ShellPolicy.ALLOW_ALL
-                or CommandRuleStore(self._workspace_path).matches(command, args)):
+        if self._shell_policy == ShellPolicy.ALLOW_ALL:
+            return ApprovalOutcome.allow()
+        if self._shell_policy == ShellPolicy.AUTO and child.context.no_ask:
+            # dontAsk: nobody is asked, so what Auto would ask about is denied instead.
+            decision = await self._auto_gate.decide_command(
+                command, args, self._judge_request(child.thread_id, child))
+            if decision.kind == "run":
+                return ApprovalOutcome.allow(note=decision.note)
+            return ApprovalOutcome.deny("policy", reason=decision.reason)
+        if (self._shell_policy != ShellPolicy.AUTO
+                and CommandRuleStore(self._workspace_path).matches(command, args)):
             return ApprovalOutcome.allow()
         if child.context.no_ask:
             # dontAsk: only a remembered rule or allow_all runs a command; nobody is asked
