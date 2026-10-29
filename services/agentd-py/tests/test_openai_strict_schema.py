@@ -197,6 +197,7 @@ def _every_schema_we_send() -> list[tuple[str, dict[str, object]]]:
     from agentd.planning.prompts import planning_response_schema
     from agentd.providers.validate import _PROBE_SCHEMA
     from agentd.reasoning.env_prompts import DRAFT_CONVENTIONS_RESPONSE_SCHEMA
+    from agentd.approvals.judge_policy import JUDGE_SCHEMA as AUTO_JUDGE_SCHEMA
     from agentd.reasoning.narrative_prompts import TASK_NARRATIVE_RESPONSE_SCHEMA
     from agentd.reasoning.tool_prompts import AGENT_STEP_RESPONSE_SCHEMA
 
@@ -207,6 +208,7 @@ def _every_schema_we_send() -> list[tuple[str, dict[str, object]]]:
         ("patch_document_v2", PatchDocumentV2.model_json_schema()),
         ("consolidator", CANDIDATE_MEMORY_SCHEMA),
         ("memory_judge", JUDGE_SCHEMA),
+        ("auto_judge", AUTO_JUDGE_SCHEMA),
         ("probe", _PROBE_SCHEMA),
         ("conventions", DRAFT_CONVENTIONS_RESPONSE_SCHEMA),
         ("narrative", TASK_NARRATIVE_RESPONSE_SCHEMA),
