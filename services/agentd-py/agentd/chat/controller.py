@@ -3181,7 +3181,12 @@ class ChatController:
         crumb = {"approve": f"✓ Approved {pid} of team {team.name!r}",
                  "feedback": f"↻ Sent {pid} of team {team.name!r} back for another round",
                  "reject": f"✗ Rejected {pid} of team {team.name!r}"}[decision]
-        self._write_breadcrumb(thread_id, f"chat:{thread_id}", crumb)
+        approved = (self._store.teams.get_post(team_id, int(str(pid)[1:]))
+                    if decision == "approve" and pid else None)
+        self._write_breadcrumb(
+            thread_id, f"chat:{thread_id}", crumb,
+            authorization=({"kind": "approved_team_plan", "text": approved.text}
+                           if approved is not None else None))
         coordinator.approval(decision, text or None)
         after = self._store.teams.get_team(team_id)
         return {"team_id": team_id, "phase": after.phase if after is not None else None}
@@ -4459,6 +4464,7 @@ class ChatController:
 
     def _write_breadcrumb(
         self, thread_id: str, channel_id: str, text: str, *, edit_outcome: bool = False,
+        authorization: dict[str, str] | None = None,
     ) -> None:
         """Persist a durable transcript breadcrumb AND broadcast it live (mirror
         engine.write_chat_breadcrumb). The live mode/edit gate is ephemeral; this is
@@ -4471,6 +4477,10 @@ class ChatController:
         if edit_outcome:
             metadata["edit_outcome"] = True
             payload["edit_outcome"] = True
+        if authorization is not None:
+            # A user decision the Auto judge counts as permission (approvals/judge_context).
+            # Only server code resolving a user's own click writes this.
+            metadata["authorization"] = authorization
         self._store.append_message(thread_id, ChatMessage(
             role="agent", content=text, type="text", metadata=metadata))
         self._broadcaster.broadcast(channel_id, {
@@ -4541,7 +4551,10 @@ class ChatController:
         self._store.remove_controller_gate(thread_id, gate.gate_id)
         # PERSIST + broadcast (mirror engine.write_chat_breadcrumb): a bare broadcast
         # dies on reload, leaving no record of what the user chose.
-        self._write_breadcrumb(thread_id, channel_id, f"▸ You chose: {label}")
+        self._write_breadcrumb(
+            thread_id, channel_id, f"▸ You chose: {label}",
+            authorization=({"kind": "approved_plan", "text": sketch}
+                           if mode == "implement" and sketch else None))
 
         if mode == "implement":
             if self._orchestrator is None:
@@ -4624,7 +4637,9 @@ class ChatController:
         self._store.remove_controller_gate(thread_id, gate.gate_id)
         # PERSIST + broadcast (mirror write_chat_breadcrumb): a bare broadcast dies on
         # reload, leaving no record of the Q the agent asked or the A the user gave.
-        self._write_breadcrumb(thread_id, channel_id, f"❓ {question} → {answer}")
+        self._write_breadcrumb(
+            thread_id, channel_id, f"❓ {question} → {answer}",
+            authorization={"kind": "clarify_answer", "text": f"{question} → {answer}"})
 
         # Re-enter: the answer is the user's reply, seeded onto prior history. goal stays
         # the original goal (the answer rides as history, not as the goal).
