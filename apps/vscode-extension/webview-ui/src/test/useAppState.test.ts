@@ -161,6 +161,20 @@ describe("useAppState", () => {
     expect(result.current.state.streaming?.activeThinkingChunk).toBe("");
   });
 
+  it("appendToolResult carries Auto's approval note onto the live pill", () => {
+    const { result } = renderHook(() => useAppState());
+    act(() => {
+      fireMessage({
+        type: "appendToolEvent",
+        event: { id: 1, tool: "run_command", args: { command: "pytest" }, source: "execution" },
+      });
+    });
+    act(() => {
+      fireMessage({ type: "appendToolResult", id: 1, output: "ok", isError: false, approvalNote: "Auto: you asked" });
+    });
+    expect(result.current.state.streaming?.toolEvents[0].approvalNote).toBe("Auto: you asked");
+  });
+
   // 7. tool event pairing
   it("tool event pairing: appendToolResult marks the matching event done", () => {
     const { result } = renderHook(() => useAppState());

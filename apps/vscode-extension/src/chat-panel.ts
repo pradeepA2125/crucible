@@ -756,8 +756,9 @@ export class ChatPanel {
     this.panel?.webview.postMessage({ type: "appendToolEvent", event });
   }
 
-  appendToolResult(id: number, output: string, isError: boolean): void {
-    this.panel?.webview.postMessage({ type: "appendToolResult", id, output, isError });
+  appendToolResult(id: number, output: string, isError: boolean, approvalNote?: string): void {
+    this.panel?.webview.postMessage({ type: "appendToolResult", id, output, isError,
+      ...(approvalNote ? { approvalNote } : {}) });
   }
 
   private lastWorkbarInfo: { stepIndex?: number; totalSteps?: number; stepTitle?: string; phaseLabel?: string } | null = null;

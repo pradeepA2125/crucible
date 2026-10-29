@@ -21,6 +21,7 @@ export function ActivityLine({ event }: { event: ToolEventView }) {
         {target && <span className="min-w-0 truncate text-text-3">{target}</span>}
         {event.isError && <span className="shrink-0" style={{ color: "var(--danger)" }}>failed</span>}
       </button>
+      {event.approvalNote && <p className="min-w-0 pl-[21px] text-caption text-text-3">{event.approvalNote}</p>}
       {open && <div id={panelId} className="min-w-0"><ToolDetailPanel event={event} /></div>}
     </div>
   );

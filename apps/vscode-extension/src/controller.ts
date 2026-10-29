@@ -106,7 +106,7 @@ export interface ControllerUI {
   renderLivePlan(plan: LivePlanView): void;
   clearLivePlan(): void;
   appendToolEvent(event: { id: number; tool: string; args: Record<string, unknown>; thought?: string; source: "explore" | "execution" | "planning" }): void;
-  appendToolResult(id: number, output: string, isError: boolean): void;
+  appendToolResult(id: number, output: string, isError: boolean, approvalNote?: string): void;
   updateWorkbar(info: { stepIndex?: number; totalSteps?: number; stepTitle?: string; phaseLabel?: string } | null): void;
   updateRetryStatus(status: { attempt: number; max_attempts: number; reason: string; message: string } | null): void;
   updateTokenProgress(
@@ -2013,7 +2013,13 @@ export class CrucibleController {
       : this.openToolEvent[source];
     if (id === undefined) return; // result without a call (replay edge) — drop
     if (this.openToolEvent[source] === id) delete this.openToolEvent[source];
-    this.ui.appendToolResult(id, (payload["output"] as string) ?? "", payload["is_error"] === true);
+    const output = (payload["output"] as string) ?? "";
+    const note = payload["approval_note"];
+    if (typeof note === "string" && note) {
+      this.ui.appendToolResult(id, output, payload["is_error"] === true, note);
+    } else {
+      this.ui.appendToolResult(id, output, payload["is_error"] === true);
+    }
   }
 
   /** Test/diagnostic surface — exposes deviation breadcrumbs captured during the last stream. */

@@ -21,6 +21,7 @@ export function McpGate({ gateId, taskId, payload }: Props) {
   const nativeWeb = payload.native_web === true;
   const nativeFetch = payload.native_fetch === true;
   const args = (payload.args ?? {}) as Record<string, unknown>;
+  const autoReason = typeof payload.auto_reason === "string" ? payload.auto_reason : "";
   const [resolved, setResolved] = useState<string | null>(null);
 
   function submit(approve: boolean, remember: boolean) {
@@ -41,6 +42,7 @@ export function McpGate({ gateId, taskId, payload }: Props) {
       borderColor="var(--accent-brd)"
       headerTint="var(--accent-bg)"
     >
+      {autoReason && <p className="px-2.5 py-2 border-t border-border text-meta text-text-2">Auto: {autoReason}</p>}
       <pre className="max-h-40 overflow-auto px-2.5 py-2 text-caption text-text-2 border-t border-border whitespace-pre-wrap">
         {JSON.stringify(args, null, 2)}
       </pre>

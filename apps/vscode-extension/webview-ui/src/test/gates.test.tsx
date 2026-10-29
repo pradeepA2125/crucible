@@ -540,6 +540,21 @@ describe("EditGate — Reject", () => {
 
 // ── McpGate ───────────────────────────────────────────────────────────────────
 
+describe("Auto reasons on approval cards", () => {
+  it("shows the judge's reason on a command card", () => {
+    render(<CommandGate gateId="g1" taskId="t1" payload={{ ...CMD_PAYLOAD, auto_reason: "you didn't ask for a push" }} />);
+    expect(screen.getByText("Auto: you didn't ask for a push")).toBeTruthy();
+  });
+  it("shows the judge's reason on an MCP card", () => {
+    render(<McpGate gateId="g1" taskId="th1" payload={{ server: "gh", tool: "create_issue", args: {}, auto_reason: "not requested" }} />);
+    expect(screen.getByText("Auto: not requested")).toBeTruthy();
+  });
+  it("shows no reason line outside Auto", () => {
+    render(<CommandGate gateId="g1" taskId="t1" payload={CMD_PAYLOAD} />);
+    expect(screen.queryByText(/^Auto:/)).toBeNull();
+  });
+});
+
 describe("McpGate", () => {
   it("renders server.tool + args and posts mcpDecision on approve", () => {
     render(

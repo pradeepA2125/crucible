@@ -254,7 +254,8 @@ function reducer(state: AppState, action: Action): AppState {
             ...prev,
             toolEvents: prev.toolEvents.map((t) =>
               t.id === msg.id
-                ? { ...t, output: msg.output, isError: msg.isError, done: true }
+                ? { ...t, output: msg.output, isError: msg.isError, done: true,
+                    ...(msg.approvalNote ? { approvalNote: msg.approvalNote } : {}) }
                 : t,
             ),
           },
@@ -277,7 +278,8 @@ function reducer(state: AppState, action: Action): AppState {
             ...messages[i].metadata,
             tool_events: events.map((t) =>
               t.id === msg.id
-                ? { ...t, output: msg.output, isError: msg.isError, done: true }
+                ? { ...t, output: msg.output, isError: msg.isError, done: true,
+                    ...(msg.approvalNote ? { approvalNote: msg.approvalNote } : {}) }
                 : t,
             ),
           },

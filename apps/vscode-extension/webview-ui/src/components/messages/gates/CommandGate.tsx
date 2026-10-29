@@ -65,6 +65,7 @@ export function CommandGate({ gateId, taskId, payload }: Props) {
   const command = String(payload.command ?? "");
   const args = Array.isArray(payload.args) ? payload.args.map(String) : [];
   const stepId = String(payload.step_id ?? "");
+  const autoReason = typeof payload.auto_reason === "string" ? payload.auto_reason : "";
 
   const tokens = [command, ...args].filter(Boolean);
   const basename = command.split("/").pop() || command;
@@ -135,6 +136,7 @@ export function CommandGate({ gateId, taskId, payload }: Props) {
       borderColor="var(--accent-brd)"
       headerTint="var(--accent-bg)"
     >
+      {autoReason && <p className="mx-3 mb-2 text-meta text-text-2">Auto: {autoReason}</p>}
       {/* ── Command block ── */}
       <div
         className="mx-3 mb-2.5 px-[11px] py-2 rounded-control font-mono text-caption text-text-2 overflow-x-auto whitespace-nowrap"

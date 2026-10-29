@@ -7,6 +7,7 @@ import { useModalFocus } from "./shared/useModalFocus";
 export const APPROVAL_MODES = [
   { id: "ask", icon: "shield", label: "Ask for approval", description: "Review edits; ask before commands unless you remembered a rule.", policy: { autoAccept: false, shellPolicy: "ask" } },
   { id: "accept_edits", icon: "check", label: "Accept edits", description: "Apply edits automatically; ask before commands unless you remembered a rule.", policy: { autoAccept: true, shellPolicy: "ask" } },
+  { id: "auto", icon: "spark", label: "Auto", description: "Edits apply; safe commands run, risky ones ask.", policy: { autoAccept: true, shellPolicy: "auto" } },
   { id: "full_access", icon: "bolt", label: "Full access", description: "Apply edits and run commands without asking.", policy: { autoAccept: true, shellPolicy: "allow_all" } },
 ] as const;
 function FullAccessWarning({ onCancel, onConfirm, returnTo }: {
@@ -37,6 +38,16 @@ export function ApprovalNotice({ approval }: { approval: ApprovalModeView }) {
   if (approval.error) return <p role="alert" className="basis-full text-caption text-red [overflow-wrap:anywhere]">{approval.error}</p>;
   if (approval.notice) return <p role="status" className="basis-full text-caption text-text-3 [overflow-wrap:anywhere]">{approval.notice}</p>;
   return null;
+}
+/** Full access and Auto run commands without asking first: they need a trusted workspace and
+ * a backend that supports them. Returns whether the row is disabled and the line shown under it. */
+function modeAvailability(mode: (typeof APPROVAL_MODES)[number], approval: ApprovalModeView): { disabled: boolean; note: string } {
+  if (mode.id !== "full_access" && mode.id !== "auto") return { disabled: false, note: mode.description };
+  if (!approval.trusted) return { disabled: true, note: "Needs a trusted workspace." };
+  const backendOffers = approval.tier === "supported"
+    && (mode.id !== "auto" || (approval.snapshot?.shellPolicies?.includes("auto") ?? false));
+  if (!backendOffers) return { disabled: true, note: mode.id === "auto" ? "Needs a newer backend." : mode.description };
+  return { disabled: false, note: mode.description };
 }
 export function ApprovalMenu({ approval }: { approval: ApprovalModeView }) {
   const root = useRef<HTMLDivElement>(null);
@@ -82,17 +93,21 @@ export function ApprovalMenu({ approval }: { approval: ApprovalModeView }) {
           const index = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : (current + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
           e.preventDefault(); items[index]?.focus();
         }}>
-        {APPROVAL_MODES.map(mode => <button key={mode.id} type="button" role="menuitemradio" aria-checked={approval.mode === mode.id}
-          disabled={connecting || approval.pending || requested || mode.id === "full_access" && (approval.tier !== "supported" || !approval.trusted)}
-          onClick={() => choose(mode.id)} className="grid w-full gap-0.5 rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">
-          <span className="flex items-center gap-2 text-body text-text"><Icon name={mode.icon} size={13} />{mode.label}{approval.mode === mode.id ? " ✓" : ""}</span>
-          <span className="text-caption text-text-3">{mode.id === "full_access" && !approval.trusted ? "Needs a trusted workspace." : mode.description}</span>
-        </button>)}
-        <button type="button" role="menuitemradio" aria-checked={false} disabled className="w-full px-2 py-2 text-left text-caption text-text-3 opacity-60">Auto · coming later</button>
+        {APPROVAL_MODES.map(mode => {
+          const { disabled, note } = modeAvailability(mode, approval);
+          return <button key={mode.id} type="button" role="menuitemradio" aria-checked={approval.mode === mode.id}
+            disabled={connecting || approval.pending || requested || disabled}
+            onClick={() => choose(mode.id)} className="grid w-full gap-0.5 rounded-control px-2 py-2 text-left hover:bg-surface-2 disabled:opacity-50">
+            <span className="flex items-center gap-2 text-body text-text"><Icon name={mode.icon} size={13} />{mode.label}{approval.mode === mode.id ? " ✓" : ""}</span>
+            <span className="text-caption text-text-3">{note}</span>
+          </button>;
+        })}
         <div className="grid gap-1 border-t border-border p-2 text-caption text-text-3">
           {approval.tier === "older" && <p>Command approval is set in Settings. This window’s setting{approval.confirmed ? "" : " is unconfirmed — choose a mode"}.</p>}
           {!approval.trusted && <p className="text-text-2">This workspace isn’t trusted, so Full access is off. Trust the workspace to use it.</p>}
-          {approval.tier === "supported" && approval.snapshot && <p>Edits: {approval.snapshot.autoAccept ? "accepted automatically" : "reviewed"}. Commands: {approval.snapshot.shellPolicy === "allow_all" ? "run without asking" : "ask unless remembered"}.</p>}
+          {approval.tier === "supported" && approval.snapshot && <p>Edits: {approval.snapshot.autoAccept ? "accepted automatically" : "reviewed"}. Commands: {approval.snapshot.shellPolicy === "allow_all" ? "run without asking"
+            : approval.snapshot.shellPolicy === "auto" ? "checked against what you asked for; risky ones ask"
+            : "ask unless remembered"}.</p>}
           <p>Protected paths and untrusted-agent edits always need review. Remembered command rules run without asking.</p>
           <p>Sub-agents follow their definitions: Plan cannot edit; Accept edits and Don’t ask apply edits automatically.</p>
           <p>MCP tools keep their own approval. Input to an already-running terminal session isn’t gated.</p>

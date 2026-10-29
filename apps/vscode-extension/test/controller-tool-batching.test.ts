@@ -24,6 +24,13 @@ test("concurrent tool results attach to their own pills in either completion ord
   ]);
 });
 
+test("an Auto approval note rides along with its tool result", () => {
+  const { instance, ui } = router();
+  instance.forwardToolCall("execution", { call_index: 0, tool: "run_command", args: {} });
+  instance.forwardToolResult("execution", { call_index: 0, output: "ok", approval_note: "Auto: you asked" });
+  expect(ui.appendToolResult.mock.calls).toEqual([[0, "ok", false, "Auto: you asked"]]);
+});
+
 test("legacy results still pair by source and orphan results are ignored", () => {
   const { instance, ui } = router();
   instance.forwardToolCall("explore", { tool: "read_file", args: {} });

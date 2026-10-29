@@ -9,10 +9,31 @@ const approval: ApprovalModeView = { tier: "supported", mode: "ask", confirmed: 
 function open(value = approval) { const view = render(<ApprovalMenu approval={value} />); fireEvent.click(screen.getByRole("button", { name: /Approval mode/ })); return view; }
 beforeEach(() => vi.clearAllMocks());
 describe("ApprovalMenu", () => {
-  it("shows effective policy, exceptions, and the reserved Auto mode", () => {
+  it("shows effective policy and exceptions", () => {
     open(); expect(screen.getByRole("menu")).toHaveTextContent("Commands: ask unless remembered");
     expect(screen.getByRole("menu")).toHaveTextContent("Protected paths and untrusted-agent edits");
-    expect(screen.getByRole("menuitemradio", { name: /Auto/ })).toBeDisabled();
+  });
+  it("offers Auto when the backend supports it and drops the placeholder", () => {
+    open({ ...approval, snapshot: { ...approval.snapshot!, shellPolicies: ["ask", "allow_all", "auto"] } });
+    expect(screen.getByRole("menuitemradio", { name: /^Auto/ })).toBeEnabled();
+    expect(screen.queryByText(/coming later/)).toBeNull();
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /^Auto/ }));
+    expect(vscode.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "setApprovalMode", mode: "auto" }));
+  });
+  it("disables Auto on a backend without it", () => {
+    open();
+    const auto = screen.getByRole("menuitemradio", { name: /^Auto/ });
+    expect(auto).toBeDisabled(); expect(auto).toHaveTextContent("Needs a newer backend.");
+  });
+  it("disables Auto in an untrusted workspace", () => {
+    open({ ...approval, trusted: false, snapshot: { ...approval.snapshot!, shellPolicies: ["ask", "allow_all", "auto"] } });
+    const auto = screen.getByRole("menuitemradio", { name: /^Auto/ });
+    expect(auto).toBeDisabled(); expect(auto).toHaveTextContent("Needs a trusted workspace.");
+  });
+  it("describes Auto's command policy in the footer", () => {
+    open({ ...approval, mode: "auto", snapshot: { ...approval.snapshot!, autoAccept: true, shellPolicy: "auto",
+      shellPolicies: ["ask", "allow_all", "auto"] } });
+    expect(screen.getByRole("menu")).toHaveTextContent("Commands: checked against what you asked for; risky ones ask.");
   });
   it("waits for acknowledgement and surfaces failed requests without changing the chip", () => {
     const { rerender } = open(); fireEvent.click(screen.getByRole("menuitemradio", { name: /^Accept edits/ }));

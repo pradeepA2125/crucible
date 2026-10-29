@@ -13,6 +13,11 @@ describe("ActivityLine", () => {
     expect(screen.getByText("pytest -q").className).toContain("text-text-3");
   });
 
+  it("shows why Auto let the step run", () => {
+    render(<ActivityLine event={{ ...done, approvalNote: "Auto: you asked to run the tests" }} />);
+    expect(screen.getByText("Auto: you asked to run the tests").className).toContain("text-text-3");
+  });
+
   it("opens the tool's input and output with the keyboard (native button)", async () => {
     render(<ActivityLine event={done} />);
     const line = screen.getByRole("button", { name: /Ran pytest -q/ });
