@@ -24,6 +24,9 @@ def denial_text(outcome: ApprovalOutcome, *, subject: str, user_text: str) -> st
     the call ("command `pytest -x`"); `user_text` is the consumer's existing wording."""
     if outcome.denied_by == "timeout":
         return f"No decision arrived in time; {subject} was not run."
+    if outcome.denied_by == "policy" and outcome.reason:
+        return (f"Auto blocked {subject}: {outcome.reason}. Do not try to achieve the same "
+                "effect another way; tell the user what you wanted to do.")
     if outcome.denied_by == "policy":
         return subject[:1].upper() + subject[1:] + _POLICY_TAIL
     return user_text

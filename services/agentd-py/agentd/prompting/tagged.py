@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 Audience = Literal["main", "child"]
 Permission = Literal["default", "acceptEdits", "dontAsk", "plan"]
-ShellPolicy = Literal["ask", "allow_all"]
+ShellPolicy = Literal["ask", "allow_all", "auto"]
 
 _PERMISSIONS = frozenset({"default", "acceptEdits", "dontAsk", "plan"})
 _SHELL_POLICIES = frozenset({"ask", "allow_all"})

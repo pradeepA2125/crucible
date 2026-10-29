@@ -168,9 +168,12 @@ class CommandDecisionResponse(BaseModel):
 
 class ShellPolicy(StrEnum):
     """How run_command is gated. Default ASK — every command surfaced for
-    Accept-once / Accept-and-remember / Reject. ALLOW_ALL skips the gate."""
+    Accept-once / Accept-and-remember / Reject. ALLOW_ALL skips the gate. AUTO runs
+    the deterministic checks and the judge (agentd/approvals), asking only about risky
+    actions the user did not request."""
     ASK = "ask"
     ALLOW_ALL = "allow_all"
+    AUTO = "auto"
 
 
 class CommandApprovalRequest(BaseModel):
@@ -213,6 +216,10 @@ class ApprovalOutcome(BaseModel):
     approved: bool
     denied_by: DeniedBy | None = None
     decision: CommandDecision | None = None
+    # Auto mode: why a policy denial happened (shown to the agent), and the note an
+    # Auto approval leaves on the tool pill.
+    reason: str | None = None
+    note: str | None = None
 
     @classmethod
     def from_command(
@@ -223,12 +230,12 @@ class ApprovalOutcome(BaseModel):
                    decision=decision)
 
     @classmethod
-    def allow(cls) -> ApprovalOutcome:
-        return cls(approved=True)
+    def allow(cls, note: str | None = None) -> ApprovalOutcome:
+        return cls(approved=True, note=note)
 
     @classmethod
-    def deny(cls, by: DeniedBy) -> ApprovalOutcome:
-        return cls(approved=False, denied_by=by)
+    def deny(cls, by: DeniedBy, reason: str | None = None) -> ApprovalOutcome:
+        return cls(approved=False, denied_by=by, reason=reason)
 
 
 class CommandRule(BaseModel):

@@ -4058,7 +4058,7 @@ class ChatController:
             names -= MEMBER_TOOL_NAMES - {"team_read", "team_reply_main"}
         render_ctx = RenderContext.for_agent(
             ctx, tools=names,
-            shell_policy="allow_all" if self._shell_policy == ShellPolicy.ALLOW_ALL else "ask",
+            shell_policy=self._shell_policy.value,
             team_brief=(self._teams.brief(membership.team_id, membership.label)
                         if membership is not None and self._teams is not None else ""))
         registry = AggregatingToolRegistry(
