@@ -2003,7 +2003,11 @@ class AgentOrchestrator:
         """
         from uuid import uuid4
 
-        from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
+        from agentd.tools.command_rules import (
+            CommandRuleStore,
+            command_is_covered,
+            rule_from_decision,
+        )
 
         async def _cb(command: str, args: list[str], cwd: str) -> ApprovalOutcome:
             task = await self._store.get(task_id)
@@ -2012,13 +2016,13 @@ class AgentOrchestrator:
             if policy == ShellPolicy.ALLOW_ALL:
                 return ApprovalOutcome.allow()
 
-            # Per-task + per-workspace remembered approvals (token-aware match
-            # via the same CommandRuleStore.rule_matches used for the JSON store).
-            cmd_tokens = [command, *args]
-            for rule in task.execution_state.approved_commands:
-                if CommandRuleStore.rule_matches(rule, cmd_tokens):
-                    return ApprovalOutcome.allow()
-            if CommandRuleStore(task.workspace_path).matches(command, args):
+            # Per-task + per-workspace remembered approvals, checked together: every
+            # command on the line must match one of them (command_is_covered).
+            remembered = [
+                *task.execution_state.approved_commands,
+                *CommandRuleStore(task.workspace_path).load(),
+            ]
+            if command_is_covered(remembered, command, args, task.workspace_path):
                 return ApprovalOutcome.allow()
 
             # ASK — pause + future + broadcast.
