@@ -1130,7 +1130,8 @@ class ChatController:
                 history_update_cb=partial(self._store.set_controller_history, thread_id),
                 inbox_drain=partial(self._drain_main, thread_id, turn_id) if turn_id else None,
                 terminal_guard=partial(self._main_terminal_guard, thread_id),
-                live_work=partial(self._live_work, thread_id))
+                live_work=partial(self._live_work, thread_id),
+                approval_mode=self._approval_mode_value)
         except asyncio.CancelledError:
             # /stop cancels the turn's asyncio.Task, raising here BEFORE the normal post-run
             # persistence below ever runs. Capture what the turn accumulated — its exploration
@@ -2129,6 +2130,9 @@ class ChatController:
         if child.transcript is not None:
             child.transcript.append(ChatMessage(
                 role="agent", content=text, metadata=metadata))
+
+    def _approval_mode_value(self) -> str:
+        return self._shell_policy.value
 
     def _judge_request(self, thread_id: str, child: AgentHandle | None) -> JudgeRequest:
         return JudgeRequest(thread_id=thread_id,
@@ -4271,6 +4275,7 @@ class ChatController:
                 edit_decision_cb=partial(self._child_edit_decision_cb, handle),
                 edit_record_cb=partial(self._child_edit_record_cb, handle),
                 on_pills_update=transcript.upsert_pills,
+                approval_mode=self._approval_mode_value,
             )
             if outcome.kind == "report":
                 status = str((outcome.payload or {}).get("status", "completed"))

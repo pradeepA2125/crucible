@@ -1399,6 +1399,14 @@ def _live_work_clause(live: dict[str, object], delegated: object) -> str:
     return " ".join(parts)
 
 
+AUTO_MODE_NOTE = (
+    "Approval mode is Auto: routine read-only commands run; other commands, MCP and web calls "
+    "are checked against what the user asked for. A risky action the user did not ask for "
+    "pauses for their approval with a reason. If Auto blocks an action, do not achieve the "
+    "same effect another way — tell the user what you wanted to do."
+)
+
+
 @profile_sync("context.payload")
 def build_controller_step_payload(
     plan_context: dict[str, object],
@@ -1472,6 +1480,10 @@ def build_controller_step_payload(
     team_status = plan_context.get("team_status")
     if isinstance(team_status, str) and team_status:
         payload["team_status"] = team_status
+    # Auto approval is a live, global mode: tail-only, re-read every iteration, so the
+    # cached system prompt never changes when the user switches modes.
+    if plan_context.get("approval_mode") == "auto":
+        payload["approval_mode_note"] = AUTO_MODE_NOTE
     # Per-turn steering, mirroring build_planning_step_payload's reflect-then-choose
     # scaffold: first-turn anchoring (don't commit cold), mid-turn reflect→(explore|commit),
     # and a final-step "land it now" warning. Phase-aware (PLAN vs ACTIVE). This — not the

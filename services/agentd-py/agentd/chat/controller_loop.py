@@ -1317,6 +1317,7 @@ class ControllerLoop:
         final_hint: Callable[[], str] | None = None,
         report_check: ReportCheck | None = None,
         live_work: Callable[[], dict[str, object] | None] | None = None,
+        approval_mode: Callable[[], str] | None = None,
     ) -> ControllerOutcome:
         tool_defs = [d.model_dump() for d in self._registry.definitions()]
         history = [dict(m) for m in seed_history] if seed_history else []
@@ -1400,6 +1401,7 @@ class ControllerLoop:
                 final_hint=final_hint,
                 report_check=report_check,
                 live_work=live_work,
+                approval_mode=approval_mode,
             )
             if iteration_cb is not None:
                 iteration_cb(history)
@@ -1473,6 +1475,7 @@ class ControllerLoop:
         final_hint: Callable[[], str] | None = None,
         report_check: ReportCheck | None = None,
         live_work: Callable[[], dict[str, object] | None] | None = None,
+        approval_mode: Callable[[], str] | None = None,
     ) -> ControllerOutcome:
         pending_salvage: list[str] = []
         # Set when preflight rejects generated code for a SYNTAX error, cleared as soon
@@ -1791,6 +1794,9 @@ class ControllerLoop:
                     plan_context["live_work"] = live
                 else:
                     plan_context.pop("live_work", None)
+            if approval_mode is not None:
+                # Global and switchable mid-turn, so read fresh before every step.
+                plan_context["approval_mode"] = approval_mode()
             # Spec v2 §3.11: a forced final (deadline or budget) tells the model what its
             # phase needs before it reports.
             plan_context["forced_final"] = self._force_final

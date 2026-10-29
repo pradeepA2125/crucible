@@ -29,7 +29,7 @@ Permission = Literal["default", "acceptEdits", "dontAsk", "plan"]
 ShellPolicy = Literal["ask", "allow_all", "auto"]
 
 _PERMISSIONS = frozenset({"default", "acceptEdits", "dontAsk", "plan"})
-_SHELL_POLICIES = frozenset({"ask", "allow_all"})
+_SHELL_POLICIES = frozenset({"ask", "allow_all", "auto"})
 _VARIANTS = frozenset({
     "tool_calls", "answer", "clarify", "propose_mode", "edit", "submit_changes", "progress",
     "report",
