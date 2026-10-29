@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+## Desktop UI requirements
+
+For all remaining desktop checkpoints, follow [the shared React UI guidelines](docs/design/desktop-2026-10-21/react-ui-guidelines.md). Reuse existing React components and semantic theme tokens; new interfaces must meet the same visual quality as the composer/cards. Prototype styling is not acceptable. Include this guide in reviewer handoffs and validate actual Dark/Light, wide/narrow presentation.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Service Layout

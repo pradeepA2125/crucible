@@ -48,3 +48,13 @@ aider-references/
 # Claude Code: settings.json is shared project config; these are per-machine
 .claude/settings.local.json
 .claude/*.lock
+
+# Desktop design review evidence — kept locally, regenerated per checkpoint
+docs/design/*/collaboration/
+docs/design/*/previews/
+
+# Generated architecture diagrams
+.archify/
+
+# Per-machine editor settings (absolute paths, experimental flags)
+.vscode/settings.json
