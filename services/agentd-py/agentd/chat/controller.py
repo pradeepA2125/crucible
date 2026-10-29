@@ -65,6 +65,13 @@ from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
 from agentd.chat.turn_control import ChatTurnControl
 from agentd.approvals.auto_gate import AutoGate
+from agentd.approvals.judge import (
+    AutoJudge,
+    TransportSource,
+    auto_judge_timeout_sec,
+    auto_judge_turn_uncached_tokens,
+)
+from agentd.approvals.judge_context import JudgeContext, build_judge_context
 from agentd.approvals.types import JudgeRequest
 from agentd.domain.models import (
     ApprovalOutcome,
@@ -446,6 +453,11 @@ class ChatController:
         # Auto mode's decision order. The judge is attached once the reasoning engine's
         # transport is known; until then it stays None, which makes Auto ask instead.
         self._auto_gate = AutoGate(Path(workspace_path), Path.home(), judge=None)
+        self._auto_judge: AutoJudge | None = None
+        if getattr(reasoning_engine, "_transport", None) is not None:
+            # Re-read per judgment: a provider hot-swap mutates the engine in place.
+            self._attach_judge(lambda: (getattr(self._reasoning, "_transport"),
+                                        str(getattr(self._reasoning, "_model", ""))))
         self._command_decision_timeout_sec = max(0.0, command_decision_timeout_sec)
         # Per-thread controller conversation history — the cache prefix replayed as
         # seed_history on the next turn (clarify/discuss resume, spec §12).
@@ -769,6 +781,9 @@ class ChatController:
         belongs to work that keeps running, so it stays."""
         self._cancel_wake_timer(thread_id)
         self._wake_turns.pop(thread_id, None)
+        if self._auto_judge is not None:
+            # A suspended Auto judge gets one fresh try, and a fresh budget, per message.
+            self._auto_judge.breaker.reset_thread(thread_id)
         self._wakes_suppressed.discard(thread_id)
         self._wake_cap_noted.discard(thread_id)
         self._turn_kinds[thread_id] = "user"
@@ -1537,6 +1552,9 @@ class ChatController:
         self._approval_owned = True
         self._review_control.auto_accept_edits = auto_accept
         self._shell_policy = shell_policy
+        if changed and self._auto_judge is not None:
+            # Choosing a mode again is the user's way to retry a judge that was switched off.
+            self._auto_judge.breaker.reset_process()
         if changed or not before.owned:
             self._approval_version += 1
         result = (self._resolve_waiting_edits() if resolve_waiting and not before.auto_accept
@@ -2133,6 +2151,34 @@ class ChatController:
 
     def _approval_mode_value(self) -> str:
         return self._shell_policy.value
+
+    def _attach_judge(self, transport_source: TransportSource) -> None:
+        self._auto_judge = AutoJudge(
+            transport_source=transport_source, context_source=self._judge_context,
+            artifacts_dir=self._judge_artifacts_dir, timeout_sec=auto_judge_timeout_sec(),
+            turn_uncached_budget=auto_judge_turn_uncached_tokens())
+        self._auto_gate.judge = self._auto_judge
+
+    def _judge_context(self, request: JudgeRequest) -> JudgeContext:
+        thread = self._store.get_thread(request.thread_id)
+        messages = list(thread.messages) if thread is not None else []
+        if request.agent_id == "main":
+            history = list((thread.controller_conversation_history or []) if thread else [])
+        else:
+            record = self._store.get_agent(request.agent_id)
+            history = list(record.history) if record is not None else []
+        try:
+            agents_md: str | None = (Path(self._workspace_path) / "AGENTS.md").read_text(
+                encoding="utf-8", errors="replace")
+        except OSError:
+            agents_md = None
+        return build_judge_context(messages, history, agents_md)
+
+    def _judge_artifacts_dir(self, request: JudgeRequest) -> Path | None:
+        turn_id = self._live_turns.get(request.thread_id)
+        if not turn_id:
+            return None
+        return chat_turn_artifacts_root(request.thread_id, turn_id, self._workspace_path)
 
     def _judge_request(self, thread_id: str, child: AgentHandle | None) -> JudgeRequest:
         return JudgeRequest(thread_id=thread_id,
