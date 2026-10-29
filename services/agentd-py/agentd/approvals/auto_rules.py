@@ -1,0 +1,227 @@
+"""Auto mode's deterministic checks, run before any model call (spec §6.2).
+
+Order of use (AutoGate): deny_reason → writes_protected → rules_cover → is_safe → judge.
+Every check fails closed: a line the parser could not read is never safe, never
+covered by a rule, and counts as a protected write when it names a protected path.
+"""
+from __future__ import annotations
+
+import os
+from collections.abc import Sequence
+from pathlib import Path
+
+from agentd.approvals.command_parse import ParsedCommand
+from agentd.chat.protected_paths import command_mentions_protected, is_protected
+from agentd.domain.models import CommandRule
+from agentd.subagents.write_log import canonical_path
+from agentd.tools.command_rules import command_is_covered
+
+_INTERPRETERS = frozenset({
+    "sh", "bash", "zsh", "dash", "ksh", "python", "python3", "node", "perl", "ruby", "php",
+})
+_DOWNLOADERS = frozenset({"curl", "wget"})
+# Prefixes that run the next words as the real command.
+_PASSTHROUGH = frozenset({"sudo", "doas", "nohup", "time", "exec", "command", "nice"})
+_RECURSIVE_LONG = frozenset({"--recursive"})
+_SHADOWED = frozenset({"HOME", "PATH"})
+# Any binary or package runner that executes arbitrary code by itself.
+_BROAD_BINARIES = frozenset({
+    "uv", "python", "python3", "node", "npx", "bash", "sh", "zsh", "git", "npm", "pnpm",
+    "yarn", "bun", "make", "cargo", "go", "ruby", "perl",
+})
+_PACKAGE_RUNNERS = frozenset({"npm", "pnpm", "yarn", "bun", "uv", "cargo"})
+_SAFE_GIT = frozenset({"status", "diff", "log", "show", "rev-parse", "ls-files", "branch"})
+_GIT_BRANCH_MUTATIONS = frozenset({
+    "-d", "-D", "--delete", "-m", "-M", "--move", "-c", "-C", "--copy", "-f", "--force",
+})
+_SAFE_READERS = frozenset({"ls", "cat", "head", "tail", "wc", "rg", "grep", "pwd", "which",
+                           "date", "echo"})
+_FIND_ACTIONS = frozenset({"-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint",
+                           "-fprint0", "-fprintf", "-fls"})
+# Commands whose file arguments they write.
+_WRITERS_ALL_ARGS = frozenset({
+    "tee", "touch", "truncate", "rm", "rmdir", "mkdir", "chmod", "chown",
+})
+_WRITERS_LAST_ARG = frozenset({"cp", "mv", "ln", "install", "rsync"})
+
+
+def _command_words(segment: tuple[str, ...]) -> tuple[str, ...]:
+    """Skip `sudo`-style prefixes so `sudo rm -rf /` is judged as `rm -rf /`."""
+    words = segment
+    while words and Path(words[0]).name in _PASSTHROUGH:
+        words = words[1:]
+        while words and words[0].startswith("-"):
+            words = words[1:]
+    return words
+
+
+def _name(words: tuple[str, ...]) -> str:
+    return Path(words[0]).name if words else ""
+
+
+def _expand(path: str, *, workspace: Path, home: Path) -> Path:
+    for prefix in ("~", "$HOME", "${HOME}"):
+        if path == prefix or path.startswith(prefix + "/"):
+            path = str(home) + path[len(prefix):]
+            break
+    candidate = Path(path)
+    absolute = candidate if candidate.is_absolute() else workspace / candidate
+    return Path(os.path.normpath(absolute))
+
+
+def _is_catastrophic_target(raw: str, *, workspace: Path, home: Path) -> bool:
+    """`/`, a top-level folder, the home folder or any of its ancestors, or the
+    workspace or any of its ancestors. A trailing `/*` empties that folder."""
+    stripped = raw[:-2] if raw.endswith("/*") else raw
+    target = _expand(stripped or "/", workspace=workspace, home=home)
+    resolved_workspace = Path(os.path.normpath(workspace.resolve()))
+    for protected in (home, workspace, resolved_workspace):
+        if target == protected or target in protected.parents:
+            return True
+    return target == Path("/") or target.parent == Path("/")
+
+
+def _is_recursive(words: tuple[str, ...]) -> bool:
+    for word in words[1:]:
+        if word in _RECURSIVE_LONG:
+            return True
+        if word.startswith("-") and not word.startswith("--") and ("r" in word or "R" in word):
+            return True
+    return False
+
+
+def _operands(words: tuple[str, ...]) -> list[str]:
+    return [w for w in words[1:] if not w.startswith("-")]
+
+
+def deny_reason(parsed: ParsedCommand, *, workspace: Path, home: Path) -> str | None:
+    """A one-line, user-facing reason when the command is catastrophic; else None."""
+    segments = [_command_words(s) for s in parsed.segments]
+    destructive = False
+    for index, words in enumerate(segments):
+        name = _name(words)
+        if name in {"rm", "rmdir"} and _is_recursive(words):
+            destructive = True
+            for target in _operands(words):
+                if _is_catastrophic_target(target, workspace=workspace, home=home):
+                    if _expand(target.removesuffix("/*") or "/", workspace=workspace,
+                               home=home) == home:
+                        return "recursive delete of your home folder"
+                    return (f"recursive delete of {target}, which holds your system, "
+                            "home or workspace")
+        if name in {"chmod", "chown"} and _is_recursive(words):
+            destructive = True
+            if any(_is_catastrophic_target(t, workspace=workspace, home=home)
+                   for t in _operands(words)[1:]):
+                return f"recursive {name} on a system, home or workspace folder"
+        if name.startswith("mkfs"):
+            return "formats a disk"
+        if name == "dd" and any(w.startswith("of=/dev/") for w in words[1:]):
+            return "writes directly to a disk device"
+        if name in _DOWNLOADERS and index < len(parsed.piped) and parsed.piped[index]:
+            following = segments[index + 1] if index + 1 < len(segments) else ()
+            if _name(following) in _INTERPRETERS:
+                return "pipes a download straight into a shell or interpreter"
+    if destructive and _SHADOWED.intersection(parsed.assignments):
+        return "redefines HOME or PATH before a destructive command"
+    return None
+
+
+def _write_operands(words: tuple[str, ...]) -> list[str]:
+    name = _name(words)
+    operands = _operands(words)
+    if name in _WRITERS_ALL_ARGS:
+        return operands
+    if name in _WRITERS_LAST_ARG:
+        return operands[-1:]
+    if name == "sed" and any(w == "-i" or w.startswith("-i") or w == "--in-place"
+                             for w in words[1:]):
+        return operands[1:]  # the first operand is the script
+    return []
+
+
+def writes_protected(parsed: ParsedCommand, *, workspace: Path) -> bool:
+    """True when the command writes (or may write) a protected workspace path."""
+    if parsed.parse_failed or parsed.has_substitution:
+        # Unreadable: treat any mention of a protected path as a write.
+        return command_mentions_protected(parsed.line, [])
+    candidates = list(parsed.redirect_targets)
+    for segment in parsed.segments:
+        candidates.extend(_write_operands(_command_words(segment)))
+    for raw in candidates:
+        key = canonical_path(workspace, raw)
+        if key is not None and is_protected(key):
+            return True
+    return False
+
+
+def is_broad_rule(rule: CommandRule) -> bool:
+    """A remembered rule that amounts to "run any code" (spec §6.2 step 3)."""
+    tokens = rule.value.split()
+    if not tokens:
+        return False
+    head = Path(tokens[0]).name
+    if rule.type == "binary":
+        return head in _BROAD_BINARIES
+    if rule.type == "prefix":
+        if len(tokens) == 1:
+            return head in _BROAD_BINARIES
+        return (len(tokens) == 2 and head in _PACKAGE_RUNNERS
+                and tokens[1] in {"run", "exec", "x", "dlx"})
+    return False
+
+
+def rules_cover(rules: Sequence[CommandRule], command: str, args: list[str],
+                workspace: Path) -> bool:
+    """Remembered rules approve the command only when every part of the line is
+    covered by a rule that is not broad (shared with Ask mode's coverage rule)."""
+    narrow = [r for r in rules if not is_broad_rule(r)]
+    return command_is_covered(narrow, command, args, workspace)
+
+
+def _inside(raw: str, workspace: Path) -> bool:
+    return canonical_path(workspace, raw) is not None
+
+
+def _looks_like_path(word: str) -> bool:
+    return "/" in word or word.startswith(("~", "."))
+
+
+def _segment_is_safe(words: tuple[str, ...], workspace: Path) -> bool:
+    name = _name(words)
+    if not words:
+        return False
+    if name == "git":
+        if len(words) < 2 or words[1] not in _SAFE_GIT:
+            return False
+        if any(w.startswith("--output") for w in words[2:]):
+            return False
+        if words[1] == "branch" and _GIT_BRANCH_MUTATIONS.intersection(words[2:]):
+            return False
+        return True
+    if name == "sed":
+        if not any(w == "-n" for w in words[1:]):
+            return False
+        if any(w.startswith("-i") or w == "--in-place" for w in words[1:]):
+            return False
+    elif name == "find":
+        if _FIND_ACTIONS.intersection(words[1:]):
+            return False
+    elif name == "rg":
+        if any(w == "--pre" or w.startswith("--pre=") for w in words[1:]):
+            return False
+    elif name not in _SAFE_READERS:
+        return False
+    return all(_inside(w, workspace) for w in words[1:]
+               if not w.startswith("-") and _looks_like_path(w))
+
+
+def is_safe(parsed: ParsedCommand, *, workspace: Path) -> bool:
+    """Read-only commands on workspace paths. Test runners, linters, type checkers and
+    builds are deliberately absent: they execute workspace code an injected edit could
+    have changed (spec §10)."""
+    if parsed.parse_failed or parsed.has_substitution or parsed.redirect_targets:
+        return False
+    if not parsed.segments:
+        return False
+    return all(_segment_is_safe(s, workspace) for s in parsed.segments)

@@ -117,12 +117,17 @@ def lex(line: str) -> list[tuple[bool, str]]:
     return items
 
 
-def _walk(line: str, *, strict: bool) -> tuple[list[list[str]], list[str]]:
-    """Simple commands of `line` plus the files it redirects into.
+_PIPES = frozenset({"|", "|&"})
+
+
+def _walk(line: str, *, strict: bool) -> tuple[list[list[str]], list[bool], list[str]]:
+    """Simple commands of `line`, whether each one's output is piped into the next,
+    and the files the line redirects into.
 
     `strict` refuses any redirection to a file (remembered rules); otherwise write
     targets are collected and input redirections are skipped (Auto)."""
     segments: list[list[str]] = []
+    piped: list[bool] = []
     targets: list[str] = []
     current: list[str] = []
     last_separator = ""
@@ -147,6 +152,7 @@ def _walk(line: str, *, strict: bool) -> tuple[list[list[str]], list[str]]:
         elif text in _SEPARATORS:
             if current:
                 segments.append(current)
+                piped.append(text in _PIPES)
             elif text in _NEEDS_RIGHT_SIDE or last_separator in _NEEDS_RIGHT_SIDE:
                 raise UnsafeShellSyntax(f"empty command around {text!r}")
             current, last_separator = [], text
@@ -158,17 +164,19 @@ def _walk(line: str, *, strict: bool) -> tuple[list[list[str]], list[str]]:
         raise UnsafeShellSyntax("incomplete redirection")
     if current:
         segments.append(current)
+        piped.append(False)
     elif last_separator in _NEEDS_RIGHT_SIDE:
         raise UnsafeShellSyntax(f"line ends with {last_separator!r}")
     if not segments:
         raise UnsafeShellSyntax("no command")
-    return segments, targets
+    return segments, piped, targets
 
 
 def strict_segments(line: str) -> list[list[str]]:
     """The simple commands of `line`, each as its word list; raises on file
     redirection, subshells and other syntax a rule must not approve."""
-    return _walk(line, strict=True)[0]
+    segments, _piped, _targets = _walk(line, strict=True)
+    return segments
 
 
 def wrapped_script(segment: list[str]) -> str | None:
@@ -196,6 +204,7 @@ class ParsedCommand:
     assignments: tuple[str, ...]            # variable names set by NAME=, env or export
     has_substitution: bool                  # $( ) or backticks anywhere
     parse_failed: bool                      # unbalanced quotes, subshells, heredocs…
+    piped: tuple[bool, ...] = ()            # per segment: its output feeds the next one
 
 
 def _strip_env(segment: list[str], assignments: list[str]) -> list[str]:
@@ -214,13 +223,13 @@ def _strip_env(segment: list[str], assignments: list[str]) -> list[str]:
                 words.pop(0)
 
 
-def _collect(line: str, depth: int, segments: list[tuple[str, ...]],
+def _collect(line: str, depth: int, segments: list[tuple[str, ...]], piped: list[bool],
              targets: list[str], assignments: list[str]) -> None:
     if depth > MAX_WRAPPER_DEPTH:
         raise UnsafeShellSyntax("shell wrappers nested too deep")
-    raw_segments, raw_targets = _walk(line, strict=False)
+    raw_segments, raw_piped, raw_targets = _walk(line, strict=False)
     targets.extend(raw_targets)
-    for raw in raw_segments:
+    for raw, feeds_next in zip(raw_segments, raw_piped, strict=True):
         words = _strip_env(raw, assignments)
         if not words:
             continue  # `env` alone, or only assignments
@@ -228,9 +237,13 @@ def _collect(line: str, depth: int, segments: list[tuple[str, ...]],
             assignments.extend(w.split("=", 1)[0] for w in words[1:] if ASSIGNMENT.match(w))
         script = wrapped_script(words)
         if script is not None:
-            _collect(script, depth + 1, segments, targets, assignments)
+            _collect(script, depth + 1, segments, piped, targets, assignments)
+            if piped:
+                # The wrapper's own output is its last inner command's output.
+                piped[-1] = feeds_next
         else:
             segments.append(tuple(words))
+            piped.append(feeds_next)
 
 
 def parse_command(command: str, args: list[str], workspace: Path) -> ParsedCommand:
@@ -241,11 +254,12 @@ def parse_command(command: str, args: list[str], workspace: Path) -> ParsedComma
     if "`" in line or "$(" in line:
         return ParsedCommand(line, (), (), (), has_substitution=True, parse_failed=False)
     segments: list[tuple[str, ...]] = []
+    piped: list[bool] = []
     targets: list[str] = []
     assignments: list[str] = []
     try:
-        _collect(line, 0, segments, targets, assignments)
+        _collect(line, 0, segments, piped, targets, assignments)
     except UnsafeShellSyntax:
         return ParsedCommand(line, (), (), (), has_substitution=False, parse_failed=True)
     return ParsedCommand(line, tuple(segments), tuple(targets), tuple(assignments),
-                         has_substitution=False, parse_failed=False)
+                         has_substitution=False, parse_failed=False, piped=tuple(piped))

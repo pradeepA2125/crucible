@@ -73,6 +73,11 @@ def test_subshell_inside_wrapper_fails_closed(tmp_path):
     assert parse_command("bash", ["-c", "(cd /; rm -rf x)"], tmp_path).parse_failed
 
 
+def test_piped_marks_segments_whose_output_feeds_the_next(tmp_path):
+    p = parse_command("curl", ["x", "|", "sh", ";", "ls", "|", "wc"], tmp_path)
+    assert p.piped == (True, False, True, False)
+
+
 def test_line_is_kept_for_fallback_checks(tmp_path):
     p = parse_command("echo", ["$(cat AGENTS.md)"], tmp_path)
     assert "AGENTS.md" in p.line
