@@ -32,6 +32,16 @@ describe("approval client", () => {
     await expect(op()).rejects.toMatchObject({ status: 409, detail: { code: "approval_not_confirmed" } });
     expect(body).toHaveProperty("expected_process_id", "p");
   });
+  it("parses shell_policy auto and the shell_policies capability", async () => {
+    const auto = { ...wire, auto_accept: true, shell_policy: "auto", shell_policies: ["ask", "allow_all", "auto"] };
+    const config = await client({ approval: auto, shell_policy: "auto" }).getConfig();
+    expect(config.approval).toMatchObject({ shellPolicy: "auto", shellPolicies: ["ask", "allow_all", "auto"] });
+    let body: unknown;
+    await client(auto, 200, b => body = b).setApprovalMode({
+      autoAccept: true, shellPolicy: "auto", resolveWaiting: true, expectedProcessId: "p", expectedVersion: 3,
+    });
+    expect(body).toMatchObject({ shell_policy: "auto" });
+  });
   it("accepts unsupported effort descriptor options", () => {
     expect(EffortSupportSchema.parse({ supported: [], unsupported: {}, control: {
       options: [{ value: "max", label: "Max", description: "", state: "unsupported" }], source: "catalog", default: null, reason: null,

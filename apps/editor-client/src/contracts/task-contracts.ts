@@ -649,8 +649,12 @@ export function parseContextUsage(raw: unknown): ContextUsage | null {
 // A thread's current actionable state — what the UI polls and renders from.
 // Resolved server-side from the thread's active task (GET /chat/threads/{id}/live),
 // so reloads and resume task-id churn self-heal on the next poll.
+export const ShellPolicySchema = z.enum(["ask", "allow_all", "auto"]);
+export type ShellPolicy = z.infer<typeof ShellPolicySchema>;
 export const ApprovalStateSchema = z.discriminatedUnion("supported", [
-  z.object({ supported: z.literal(true), autoAccept: z.boolean(), shellPolicy: z.enum(["ask", "allow_all"]),
+  z.object({ supported: z.literal(true), autoAccept: z.boolean(), shellPolicy: ShellPolicySchema,
+    // Policies this backend accepts; absent on backends that predate Auto.
+    shellPolicies: z.array(z.string()).optional(),
     version: z.number().int().nonnegative(), owned: z.boolean(), processId: z.string().min(1) }),
   z.object({ supported: z.literal(false) }),
 ]);
@@ -658,7 +662,7 @@ export type ApprovalState = z.infer<typeof ApprovalStateSchema>;
 export type ApprovalSnapshot = Extract<ApprovalState, { supported: true }>;
 export type ApprovalModeResult = ApprovalSnapshot & { autoResolvedEdits: number; background: number };
 export interface SetApprovalModeOptions {
-  autoAccept: boolean; shellPolicy: "ask" | "allow_all"; resolveWaiting: boolean;
+  autoAccept: boolean; shellPolicy: ShellPolicy; resolveWaiting: boolean;
   expectedProcessId: string; expectedVersion: number;
 }
 
@@ -668,6 +672,7 @@ export function approvalFromWire(raw: unknown): ApprovalState | undefined {
   const v = raw as Record<string, unknown>;
   return ApprovalStateSchema.parse(v.supported === false ? { supported: false } : {
     supported: v.supported, autoAccept: v.auto_accept, shellPolicy: v.shell_policy,
+    ...(v.shell_policies !== undefined ? { shellPolicies: v.shell_policies } : {}),
     version: v.version, owned: v.owned, processId: v.process_id,
   });
 }
@@ -737,7 +742,7 @@ export const BackendConfigSchema = z.object({
     }),
   }).optional(),
   approval: ApprovalStateSchema.optional(),
-  shellPolicy: z.enum(["ask", "allow_all"]).optional(),
+  shellPolicy: ShellPolicySchema.optional(),
   taskSubsystemEnabled: z.boolean(),
   chatControllerEnabled: z.boolean(),
   memoryEnabled: z.boolean(),

@@ -1,6 +1,6 @@
-import { approvalFromWire, type ApprovalSnapshot, type ApprovalState, type BackendTaskClient } from "@crucible/editor-client";
+import { approvalFromWire, type ApprovalSnapshot, type ApprovalState, type BackendTaskClient, type ShellPolicy } from "@crucible/editor-client";
 
-export type ApprovalMode = "ask" | "accept_edits" | "full_access";
+export type ApprovalMode = "ask" | "accept_edits" | "auto" | "full_access";
 export interface ApprovalView {
   tier: "unknown" | "supported" | "older" | "legacy";
   snapshot: ApprovalSnapshot | null;
@@ -31,16 +31,25 @@ export interface ApprovalDependencies {
 export type FirstSendChoice = "continue" | "accept_edits" | "cancel";
 
 export function isApprovalMode(value: unknown): value is ApprovalMode {
-  return value === "ask" || value === "accept_edits" || value === "full_access";
+  return value === "ask" || value === "accept_edits" || value === "auto" || value === "full_access";
 }
-export function policyFor(mode: ApprovalMode): { autoAccept: boolean; shellPolicy: "ask" | "allow_all" } {
-  return { autoAccept: mode !== "ask", shellPolicy: mode === "full_access" ? "allow_all" : "ask" };
+export function policyFor(mode: ApprovalMode): { autoAccept: boolean; shellPolicy: ShellPolicy } {
+  const shellPolicy: ShellPolicy = mode === "full_access" ? "allow_all" : mode === "auto" ? "auto" : "ask";
+  return { autoAccept: mode !== "ask", shellPolicy };
 }
 export function modeFor(state: ApprovalSnapshot): ApprovalMode | null {
   if (!state.autoAccept) return state.shellPolicy === "ask" ? "ask" : null;
-  return state.shellPolicy === "allow_all" ? "full_access" : "accept_edits";
+  if (state.shellPolicy === "allow_all") return "full_access";
+  return state.shellPolicy === "auto" ? "auto" : "accept_edits";
 }
-export function migrateApproval(shell: "ask" | "allow_all", reviewOn: boolean): ApprovalMode {
+/** Auto and Full access run commands without asking first, so both need a trusted workspace. */
+function needsTrust(mode: ApprovalMode): boolean {
+  return mode === "full_access" || mode === "auto";
+}
+function offersAuto(state: ApprovalSnapshot | null | undefined): boolean {
+  return state?.shellPolicies?.includes("auto") ?? false;
+}
+export function migrateApproval(shell: ShellPolicy, reviewOn: boolean): ApprovalMode {
   return reviewOn ? "ask" : shell === "allow_all" ? "full_access" : "accept_edits";
 }
 export function isApprovalAdmissionError(error: unknown): boolean {
@@ -68,9 +77,12 @@ export class ApprovalCoordinator {
     this.view = next;
     this.deps.render(this.view);
   }
-  /** Full access never applies to an untrusted workspace; the saved preference is kept for trusted ones. */
-  private allowedMode(mode: ApprovalMode): ApprovalMode {
-    return mode === "full_access" && !this.deps.isTrusted() ? "accept_edits" : mode;
+  /** Full access and Auto never apply to an untrusted workspace, and Auto only where the
+   * backend offers it; the saved preference is kept either way. */
+  private allowedMode(mode: ApprovalMode, state?: ApprovalSnapshot | null): ApprovalMode {
+    if (needsTrust(mode) && !this.deps.isTrusted()) return "accept_edits";
+    if (mode === "auto" && !offersAuto(state ?? this.view.snapshot)) return "accept_edits";
+    return mode;
   }
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
     const next = this.queue.catch(() => undefined).then(work);
@@ -115,13 +127,13 @@ export class ApprovalCoordinator {
             await client.setGlobalReviewPref({ autoAccept: false });
             this.publish({ tier: "older", snapshot: null, mode, confirmed: true, pending: false });
           } else {
-            this.publish({ tier: "older", snapshot: null, mode: mode === "full_access" ? "accept_edits" : mode,
+            this.publish({ tier: "older", snapshot: null, mode: needsTrust(mode) ? "accept_edits" : mode,
               confirmed: false, pending: false });
           }
           return;
         }
         const ownedMode = state.owned ? modeFor(state) : null;
-        if (state.owned && ownedMode === this.allowedMode(ownedMode ?? "ask")) {
+        if (state.owned && ownedMode === this.allowedMode(ownedMode ?? "ask", state)) {
           this.adopt(state);
           if (!this.deps.savedMode() && ownedMode) await this.persist(ownedMode);
           this.publish({ pending: false });
@@ -129,7 +141,7 @@ export class ApprovalCoordinator {
         }
         const saved = this.deps.savedMode();
         const preferred = state.owned ? ownedMode! : saved ?? migrateApproval(state.shellPolicy, this.deps.reviewOn());
-        const mode = this.allowedMode(preferred);
+        const mode = this.allowedMode(preferred, state);
         try {
           const applied = await client.setApprovalMode({ ...policyFor(mode), resolveWaiting: false,
             expectedProcessId: state.processId, expectedVersion: state.version });
@@ -143,7 +155,7 @@ export class ApprovalCoordinator {
         } catch (error) {
           const current = this.conflict(error);
           if (!current) throw error;
-          if (current.owned && modeFor(current) === this.allowedMode(modeFor(current) ?? "ask")) {
+          if (current.owned && modeFor(current) === this.allowedMode(modeFor(current) ?? "ask", current)) {
             this.adopt(current); this.publish({ pending: false }); return;
           }
           // Another restart/unowned conflict: read config again, never resolve edits.
@@ -193,7 +205,7 @@ export class ApprovalCoordinator {
       return;
     }
     this.adopt(snapshot);
-    if (this.view.mode === "full_access" && !this.deps.isTrusted()) void this.connect().catch(() => undefined);
+    if (this.view.mode && needsTrust(this.view.mode) && !this.deps.isTrusted()) void this.connect().catch(() => undefined);
   }
   async recover(error: unknown): Promise<boolean> {
     if (!isApprovalAdmissionError(error)) return false;
@@ -210,10 +222,15 @@ export class ApprovalCoordinator {
         if (this.view.tier === "unknown" || (this.view.tier === "supported" && !this.view.confirmed)) await this.connectNow();
         if (this.view.tier === "legacy") throw new Error("Approval modes need the chat controller");
         if (mode === "full_access" && !this.deps.isTrusted()) throw new Error("Full access needs a trusted workspace");
+        if (mode === "auto" && !this.deps.isTrusted()) throw new Error("Auto needs a trusted workspace");
+        if (mode === "auto" && this.view.tier !== "older" && !offersAuto(this.view.snapshot)) {
+          throw new Error("Auto requires an updated backend");
+        }
         if (mode === "full_access" && !this.deps.warningDismissed() && !fullAccessConfirmed) throw new Error("Confirm Full access first");
         const client = this.deps.client();
         if (this.view.tier === "older") {
           if (mode === "full_access") throw new Error("Full access requires an updated backend");
+          if (mode === "auto") throw new Error("Auto requires an updated backend");
           await client.setGlobalReviewPref({ autoAccept: mode === "accept_edits" });
           await this.persist(mode);
           this.publish({ mode, confirmed: true, pending: false });

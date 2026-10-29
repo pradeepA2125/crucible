@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ApprovalSnapshot, BackendTaskClient } from "@crucible/editor-client";
-import { ApprovalCoordinator, migrateApproval, type ApprovalMode, type FirstSendChoice } from "../src/approval-mode";
+import { ApprovalCoordinator, isApprovalMode, migrateApproval, modeFor, policyFor, type ApprovalMode, type FirstSendChoice } from "../src/approval-mode";
 const state = (patch: Partial<ApprovalSnapshot> = {}): ApprovalSnapshot => ({ supported: true, autoAccept: false, shellPolicy: "ask", version: 0, owned: false, processId: "p", ...patch });
 function setup(options: { saved?: ApprovalMode; review?: boolean; owned?: boolean; older?: boolean; legacy?: boolean;
-  trusted?: boolean; firstSend?: FirstSendChoice; shellPolicy?: "ask" | "allow_all" } = {}) {
-  let snapshot = state({ owned: options.owned ?? false, ...(options.shellPolicy ? { shellPolicy: options.shellPolicy, autoAccept: options.shellPolicy === "allow_all" } : {}) });
+  trusted?: boolean; firstSend?: FirstSendChoice; shellPolicy?: "ask" | "allow_all" | "auto"; policies?: string[] } = {}) {
+  let snapshot = state({ owned: options.owned ?? false,
+    ...(options.shellPolicy ? { shellPolicy: options.shellPolicy, autoAccept: options.shellPolicy !== "ask" } : {}),
+    ...(options.policies ? { shellPolicies: options.policies } : {}) });
   let trusted = options.trusted ?? true;
   let acknowledged = false;
   const confirmFirstFullAccessSend = vi.fn(async () => options.firstSend ?? "continue");
@@ -148,6 +150,48 @@ it("drops the supported chip when a restarted backend has an older capability", 
   expect(t.setGlobalReviewPref).not.toHaveBeenCalled();
 });
 
+describe("auto mode", () => {
+  const withAuto = ["ask", "allow_all", "auto"];
+  it("maps auto both ways", () => {
+    expect(policyFor("auto")).toEqual({ autoAccept: true, shellPolicy: "auto" });
+    expect(modeFor(state({ autoAccept: true, shellPolicy: "auto" }))).toBe("auto");
+    expect(modeFor(state({ autoAccept: false, shellPolicy: "auto" }))).toBeNull();
+    expect(isApprovalMode("auto")).toBe(true);
+  });
+  it("applies a saved auto on a backend that offers it", async () => {
+    const t = setup({ saved: "auto", policies: withAuto });
+    await t.c.connect();
+    expect(t.setApprovalMode).toHaveBeenCalledWith(expect.objectContaining({ autoAccept: true, shellPolicy: "auto" }));
+    expect(t.c.current().mode).toBe("auto");
+  });
+  it("falls back to accept_edits for auto in an untrusted workspace and keeps the saved mode", async () => {
+    const t = setup({ saved: "auto", policies: withAuto, trusted: false });
+    await t.c.connect();
+    expect(t.setApprovalMode).toHaveBeenCalledWith(expect.objectContaining({ shellPolicy: "ask", autoAccept: true }));
+    expect(t.saveMode).not.toHaveBeenCalled();
+    expect(t.c.current().mode).toBe("accept_edits");
+  });
+  it("falls back when the backend does not offer auto", async () => {
+    const t = setup({ saved: "auto" });
+    await t.c.connect();
+    expect(t.setApprovalMode).toHaveBeenCalledWith(expect.objectContaining({ shellPolicy: "ask" }));
+    expect(t.c.current().mode).toBe("accept_edits");
+  });
+  it("refuses an auto selection in an untrusted workspace", async () => {
+    const t = setup({ policies: withAuto, trusted: false });
+    await t.c.connect();
+    t.setApprovalMode.mockClear();
+    await t.c.select("auto");
+    expect(t.setApprovalMode).not.toHaveBeenCalled();
+    expect(t.c.current().error).toContain("Auto needs a trusted workspace");
+  });
+  it("needs no first-send confirmation", async () => {
+    const t = setup({ saved: "auto", policies: withAuto });
+    await t.c.connect();
+    expect(await t.c.confirmFirstSend()).toBe(true);
+    expect(t.confirmFirstFullAccessSend).not.toHaveBeenCalled();
+  });
+});
 describe("approval view publishing", () => {
   it("does not re-render an unchanged view on every /live poll", async () => {
     const t = setup({ owned: true }); await t.c.connect();
