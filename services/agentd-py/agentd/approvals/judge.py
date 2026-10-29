@@ -77,7 +77,7 @@ def _status(exc: BaseException) -> int | None:
 def _is_probative(exc: BaseException) -> bool:
     """Input- or account-determined: retrying the same request would fail the same way."""
     return (isinstance(exc, ProviderAccessStopped | ContextWindowExceeded)
-            or _status(exc) == 400)
+            or _status(exc) in (400, 404))
 
 
 def _short(exc: BaseException) -> str:
@@ -106,6 +106,9 @@ class JudgeBreaker:
         if self._spent.get(thread_id, 0) >= self.turn_budget:
             return "Auto review used its token budget for this turn — asking instead"
         return None
+
+    def has_failures(self, thread_id: str) -> bool:
+        return thread_id in self._failures or thread_id in self._suspended
 
     def record_success(self, thread_id: str) -> None:
         self._failures.pop(thread_id, None)
@@ -158,6 +161,7 @@ class AutoJudge:
         self.breaker = JudgeBreaker(turn_budget=turn_uncached_budget)
         self.sessions = JudgeSessions()
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
+        self._thread_locks: dict[str, asyncio.Lock] = {}
         # (transport id, model) pairs the provider refused as a judge model: use the
         # agent's model for them instead of paying for a failing call every judgment.
         self._rejected_models: set[tuple[int, str]] = set()
@@ -178,6 +182,12 @@ class AutoJudge:
         key = (request.thread_id, request.agent_id)
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
+            if not self.breaker.has_failures(request.thread_id):
+                return await self._judge_locked(request, action)
+        # After a failure, the thread's agents judge one at a time, so the next failure
+        # suspends the thread before the others each pay for a failing call.
+        thread_lock = self._thread_locks.setdefault(request.thread_id, asyncio.Lock())
+        async with thread_lock, lock:
             return await self._judge_locked(request, action)
 
     async def _judge_locked(self, request: JudgeRequest, action: PendingAction) -> AutoDecision:

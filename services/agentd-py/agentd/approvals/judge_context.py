@@ -19,7 +19,6 @@ AUTHORIZATION_TOKEN_CAP = 4000
 AGENTS_MD_MAX_CHARS = 16000
 CALL_SUMMARY_MAX_CHARS = 300
 ACTION_LOG_MAX_ENTRIES = 200
-_MID_TURN_PREFIX = "New message:\n"
 # Patch ops carry whole file contents; the judge only needs which files changed.
 _EDIT_ACTIONS = frozenset({"edit"})
 
@@ -115,17 +114,15 @@ def _newest_under_cap(texts: list[str]) -> tuple[str, ...]:
 
 def build_judge_context(messages: Sequence[ChatMessage], history: Sequence[dict[str, object]],
                         agents_md: str | None, *, history_anchor: str = "") -> JudgeContext:
+    # Authorization comes only from the persisted thread messages. Loop history's user-role
+    # entries are not the user: "New message:" items are framed sub-agent reports and team
+    # notes (agent-written), and the user's own mid-turn messages are persisted messages too.
     texts = [t for t in (_authorization_text(m) for m in messages) if t]
     log: list[str] = []
     for entry in history:
-        role = entry.get("role")
-        if role == "assistant":
+        if entry.get("role") == "assistant":
             log.extend(_actions(entry))
-        elif role == "user":
-            content = str(entry.get("content", ""))
-            if content.startswith(_MID_TURN_PREFIX):
-                texts.append(content[len(_MID_TURN_PREFIX):])
-        # tool_result entries are never read (spec §6.3).
+        # tool_result and user-role history entries are never read (spec §6.3).
     return JudgeContext(
         authorizations=_newest_under_cap(texts),
         agents_md=(agents_md or "")[:AGENTS_MD_MAX_CHARS],

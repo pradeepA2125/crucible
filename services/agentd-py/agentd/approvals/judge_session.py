@@ -9,7 +9,8 @@ Verdicts are not replayed: they are context, not precedent (the policy says so),
 leaving them out keeps the history free of action-shaped items.
 
 A session restarts when the thread's rewind generation changes or when a count shrinks
-(compaction evicted history), so a rewound message can never keep authorizing.
+(compaction evicted history), so a rewound message can never keep authorizing. It also
+restarts when AGENTS.md changes and when its history outgrows JUDGE_SESSION_MAX_CHARS.
 """
 
 from __future__ import annotations
@@ -23,6 +24,9 @@ from agentd.approvals.judge_context import JudgeContext
 from agentd.approvals.types import PendingAction
 
 HISTORY_KEY = "conversation_history"
+# A session's history past this size starts over from the capped full context, so a long
+# thread never grows the judge's prompt without bound (~12k tokens first judgment).
+JUDGE_SESSION_MAX_CHARS = 48_000
 CODEX_REVIEW_MODEL = "codex-auto-review"
 CLAUDE_REVIEW_MODEL = "claude-haiku-5-5"
 
@@ -33,6 +37,7 @@ class JudgeSession:
     history: list[dict[str, str]] = field(default_factory=list)
     _authorizations_sent: int = 0
     _actions_sent: int = 0
+    _agents_md: str = ""
 
     def _restart(self) -> None:
         self.history.clear()
@@ -41,27 +46,30 @@ class JudgeSession:
 
     def _sync(self, ctx: JudgeContext) -> None:
         if (ctx.authorization_total < self._authorizations_sent
-                or ctx.action_total < self._actions_sent):
+                or ctx.action_total < self._actions_sent
+                or ctx.agents_md != self._agents_md):
             self._restart()
+        if self.history:
+            self._append_new(ctx)
+            if len(json.dumps(self.history)) > JUDGE_SESSION_MAX_CHARS:
+                self._restart()
         if not self.history:
-            self.history.append({"role": "user", "content": json.dumps({
-                "agents_md": ctx.agents_md,
-                "authorizations": list(ctx.authorizations),
-                "action_log": list(ctx.action_log),
-            })})
-        else:
-            new_auth = _newest(ctx.authorizations,
-                               ctx.authorization_total - self._authorizations_sent)
-            new_actions = _newest(ctx.action_log, ctx.action_total - self._actions_sent)
-            if new_auth or new_actions:
-                update: dict[str, list[str]] = {}
-                if new_auth:
-                    update["new_authorizations"] = new_auth
-                if new_actions:
-                    update["new_actions"] = new_actions
-                self.history.append({"role": "user", "content": json.dumps(update)})
+            self.history.append({"role": "user", "content": _opening(ctx)})
         self._authorizations_sent = ctx.authorization_total
         self._actions_sent = ctx.action_total
+        self._agents_md = ctx.agents_md
+
+    def _append_new(self, ctx: JudgeContext) -> None:
+        new_auth = _newest(ctx.authorizations,
+                           ctx.authorization_total - self._authorizations_sent)
+        new_actions = _newest(ctx.action_log, ctx.action_total - self._actions_sent)
+        if new_auth or new_actions:
+            update: dict[str, list[str]] = {}
+            if new_auth:
+                update["new_authorizations"] = new_auth
+            if new_actions:
+                update["new_actions"] = new_actions
+            self.history.append({"role": "user", "content": json.dumps(update)})
 
     def payload(self, ctx: JudgeContext, action: PendingAction,
                 checks: list[dict[str, str]], instruction: str = "") -> dict[str, object]:
@@ -72,6 +80,22 @@ class JudgeSession:
             payload["checks"] = list(checks)
         payload["instruction"] = instruction or "Judge the pending action."
         return payload
+
+
+def _opening(ctx: JudgeContext) -> str:
+    """The full context, dropping the oldest authorizations and actions until it fits the
+    session cap. Losing an old authorization can only make the judge ask more."""
+    authorizations = list(ctx.authorizations)
+    actions = list(ctx.action_log)
+    while True:
+        text = json.dumps({"agents_md": ctx.agents_md, "authorizations": authorizations,
+                           "action_log": actions})
+        if len(text) <= JUDGE_SESSION_MAX_CHARS or not (authorizations or actions):
+            return text
+        if len(actions) >= len(authorizations):
+            actions.pop(0)
+        else:
+            authorizations.pop(0)
 
 
 def _newest(items: tuple[str, ...], count: int) -> list[str]:

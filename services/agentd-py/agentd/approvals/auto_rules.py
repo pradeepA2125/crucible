@@ -33,6 +33,8 @@ _PACKAGE_RUNNERS = frozenset({"npm", "pnpm", "yarn", "bun", "uv", "cargo"})
 _SAFE_GIT = frozenset({"status", "diff", "log", "show", "rev-parse", "ls-files", "branch"})
 _GIT_BRANCH_MUTATIONS = frozenset({
     "-d", "-D", "--delete", "-m", "-M", "--move", "-c", "-C", "--copy", "-f", "--force",
+    "-u", "--set-upstream-to", "--unset-upstream", "-t", "--track", "--no-track",
+    "--edit-description",
 })
 _SAFE_READERS = frozenset({"ls", "cat", "head", "tail", "wc", "rg", "grep", "pwd", "which",
                            "date", "echo"})
@@ -140,19 +142,42 @@ def _write_operands(words: tuple[str, ...]) -> list[str]:
     return []
 
 
-def writes_protected(parsed: ParsedCommand, *, workspace: Path) -> bool:
+def _from_cwd(raw: str, cwd: str) -> str:
+    """run_command resolves relative paths against its cwd argument."""
+    if not cwd or Path(raw).is_absolute() or raw.startswith("~"):
+        return raw
+    return str(Path(cwd) / raw)
+
+
+def writes_protected(parsed: ParsedCommand, *, workspace: Path, cwd: str = "") -> bool:
     """True when the command writes (or may write) a protected workspace path."""
     if parsed.parse_failed or parsed.has_substitution:
         # Unreadable: treat any mention of a protected path as a write.
         return command_mentions_protected(parsed.line, [])
     candidates = list(parsed.redirect_targets)
+    # Every directory the line may run in. Redirections are not tied to a segment, so
+    # each write is checked against all of them (over-asking, never under-asking).
+    directories = [cwd]
+    untracked_cd = False
     for segment in parsed.segments:
-        candidates.extend(_write_operands(_command_words(segment)))
+        words = _command_words(segment)
+        if _name(words) in {"cd", "pushd"}:
+            operands = _operands(words)
+            if len(operands) == 1 and operands[0] != "-":
+                directories.append(_from_cwd(operands[0], directories[-1]))
+            elif operands:
+                untracked_cd = True
+        elif _name(words) == "popd":
+            untracked_cd = True
+        candidates.extend(_write_operands(words))
     for raw in candidates:
-        key = canonical_path(workspace, raw)
-        if key is not None and is_protected(key):
-            return True
-    return False
+        for directory in directories:
+            key = canonical_path(workspace, _from_cwd(raw, directory))
+            if key is not None and is_protected(key):
+                return True
+    # `cd -` or `popd` lands somewhere we do not track: any write on a line that names a
+    # protected path counts.
+    return untracked_cd and bool(candidates) and command_mentions_protected(parsed.line, [])
 
 
 def is_broad_rule(rule: CommandRule) -> bool:
@@ -179,15 +204,15 @@ def rules_cover(rules: Sequence[CommandRule], command: str, args: list[str],
     return command_is_covered(narrow, command, args, workspace)
 
 
-def _inside(raw: str, workspace: Path) -> bool:
-    return canonical_path(workspace, raw) is not None
+def _inside(raw: str, workspace: Path, cwd: str = "") -> bool:
+    return canonical_path(workspace, _from_cwd(raw, cwd)) is not None
 
 
 def _looks_like_path(word: str) -> bool:
     return "/" in word or word.startswith(("~", "."))
 
 
-def _segment_is_safe(words: tuple[str, ...], workspace: Path) -> bool:
+def _segment_is_safe(words: tuple[str, ...], workspace: Path, cwd: str = "") -> bool:
     name = _name(words)
     if not words:
         return False
@@ -196,15 +221,11 @@ def _segment_is_safe(words: tuple[str, ...], workspace: Path) -> bool:
             return False
         if any(w.startswith("--output") for w in words[2:]):
             return False
-        if words[1] == "branch" and _GIT_BRANCH_MUTATIONS.intersection(words[2:]):
+        if words[1] == "branch" and _GIT_BRANCH_MUTATIONS.intersection(
+                w.split("=", 1)[0] for w in words[2:]):
             return False
         return True
-    if name == "sed":
-        if not any(w == "-n" for w in words[1:]):
-            return False
-        if any(w.startswith("-i") or w == "--in-place" for w in words[1:]):
-            return False
-    elif name == "find":
+    if name == "find":
         if _FIND_ACTIONS.intersection(words[1:]):
             return False
     elif name == "rg":
@@ -212,16 +233,20 @@ def _segment_is_safe(words: tuple[str, ...], workspace: Path) -> bool:
             return False
     elif name not in _SAFE_READERS:
         return False
-    return all(_inside(w, workspace) for w in words[1:]
+    return all(_inside(w, workspace, cwd) for w in words[1:]
                if not w.startswith("-") and _looks_like_path(w))
 
 
-def is_safe(parsed: ParsedCommand, *, workspace: Path) -> bool:
+def is_safe(parsed: ParsedCommand, *, workspace: Path, cwd: str = "") -> bool:
     """Read-only commands on workspace paths. Test runners, linters, type checkers and
     builds are deliberately absent: they execute workspace code an injected edit could
     have changed (spec §10)."""
     if parsed.parse_failed or parsed.has_substitution or parsed.redirect_targets:
         return False
+    if parsed.assignments:
+        # NAME=value prefixes (GIT_EXTERNAL_DIFF, LD_PRELOAD, PATH, RIPGREP_CONFIG_PATH…)
+        # make "read-only" commands run other programs.
+        return False
     if not parsed.segments:
         return False
-    return all(_segment_is_safe(s, workspace) for s in parsed.segments)
+    return all(_segment_is_safe(s, workspace, cwd) for s in parsed.segments)

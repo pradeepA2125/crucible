@@ -1707,7 +1707,8 @@ class ChatController:
         auto_reason: str | None = None
         if self._shell_policy == ShellPolicy.AUTO:
             decision = await self._auto_gate.decide_command(
-                command, args, self._judge_request(thread_id, child), agent_reason=reason)
+                command, args, self._judge_request(thread_id, child), agent_reason=reason,
+                cwd=cwd)
             if self._shell_policy != ShellPolicy.AUTO:
                 # The user switched modes while the judge was deciding: the new mode rules.
                 return await self._command_approval_cb(
@@ -2276,7 +2277,10 @@ class ChatController:
         if self._shell_policy == ShellPolicy.AUTO and child.context.no_ask:
             # dontAsk: nobody is asked, so what Auto would ask about is denied instead.
             decision = await self._auto_gate.decide_command(
-                command, args, self._judge_request(child.thread_id, child))
+                command, args, self._judge_request(child.thread_id, child), cwd=cwd)
+            if self._shell_policy != ShellPolicy.AUTO:
+                # The mode changed while the judge decided: apply the new mode's rules.
+                return await self._child_command_approval_cb(child, command, args, cwd)
             if decision.kind == "run":
                 return ApprovalOutcome.allow(note=decision.note)
             return ApprovalOutcome.deny("policy", reason=decision.reason)
@@ -2312,6 +2316,10 @@ class ChatController:
             return ApprovalOutcome.deny("policy")
         decision = await self._auto_gate.decide_tool_call(
             kind, server, tool, args, self._judge_request(child.thread_id, child))
+        if self._shell_policy != ShellPolicy.AUTO:
+            # The mode changed while the judge decided: outside Auto a never-ask child
+            # runs nothing unremembered.
+            return ApprovalOutcome.deny("policy")
         if decision.kind == "run":
             return ApprovalOutcome.allow(note=decision.note)
         return ApprovalOutcome.deny("policy", reason=decision.reason)
@@ -4781,7 +4789,8 @@ class ChatController:
         # reload, leaving no record of the Q the agent asked or the A the user gave.
         self._write_breadcrumb(
             thread_id, channel_id, f"❓ {question} → {answer}",
-            authorization={"kind": "clarify_answer", "text": f"{question} → {answer}"})
+            authorization={"kind": "clarify_answer",
+                           "text": f"agent asked: {question} / user answered: {answer}"})
 
         # Re-enter: the answer is the user's reply, seeded onto prior history. goal stays
         # the original goal (the answer rides as history, not as the goal).

@@ -107,7 +107,6 @@ def test_safe_list_is_read_only(tmp_path):
     assert is_safe(parse_command("git", ["status"], tmp_path), workspace=tmp_path)
     assert is_safe(parse_command("git", ["log", "--oneline", "-5"], tmp_path), workspace=tmp_path)
     assert is_safe(parse_command("rg", ["foo", "src"], tmp_path), workspace=tmp_path)
-    assert is_safe(parse_command("sed", ["-n", "1,20p", "a.py"], tmp_path), workspace=tmp_path)
     assert is_safe(parse_command("ls", ["|", "wc", "-l"], tmp_path), workspace=tmp_path)
 
 

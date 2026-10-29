@@ -36,8 +36,6 @@ _C_FLAG = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 _SHORT_SHELL_OPTIONS = re.compile(r"[-+][A-NP-Za-np-z]+")
 _LONG_SHELL_OPTIONS = frozenset({"--login", "--noprofile", "--norc", "--posix"})
 MAX_WRAPPER_DEPTH = 3
-# `env` options that take a value (`env -u NAME cmd`, `env -C dir cmd`).
-_ENV_OPTIONS_WITH_VALUE = frozenset({"-u", "--unset", "-C", "--chdir", "-S", "--split-string"})
 
 
 class UnsafeShellSyntax(ValueError):
@@ -217,10 +215,10 @@ def _strip_env(segment: list[str], assignments: list[str]) -> list[str]:
         if not words or Path(words[0]).name != "env":
             return words
         words.pop(0)
-        while words and words[0].startswith("-"):
-            option = words.pop(0)
-            if option in _ENV_OPTIONS_WITH_VALUE and words:
-                words.pop(0)
+        if words and words[0].startswith("-"):
+            # `env -S STRING` runs STRING as a command line, and other options change
+            # the environment in ways a check cannot follow: fail closed.
+            raise UnsafeShellSyntax(f"env option {words[0]!r}")
 
 
 def _collect(line: str, depth: int, segments: list[tuple[str, ...]], piped: list[bool],

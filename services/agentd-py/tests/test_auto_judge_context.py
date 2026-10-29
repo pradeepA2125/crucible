@@ -62,12 +62,6 @@ def test_plain_breadcrumbs_grant_nothing():
     assert ctx.authorizations == ()
 
 
-def test_mid_turn_user_message_in_history_counts():
-    history = [{"role": "user", "content": "New message:\nalso push it"}]
-    ctx = build_judge_context([_user("fix it")], history, None)
-    assert ctx.authorizations[-1] == "also push it"
-
-
 def test_edits_summarized_by_path():
     edit = {"role": "assistant", "content": json.dumps({"type": "edit", "patch_ops": [
         {"op": "create_file", "file": "src/a.py", "content": "x" * 9000},
@@ -105,8 +99,8 @@ async def test_clarify_answer_is_recorded_as_authorization(tmp_path):
     ctrl._run_loop = _noop_loop  # type: ignore[assignment]
     await ctrl.resolve_clarify(tid, "yes, push", channel_id=f"chat:{tid}", goal="g")
     crumb = next(m for m in store.get_thread(tid).messages if m.metadata.get("breadcrumb"))
-    assert crumb.metadata["authorization"] == {"kind": "clarify_answer",
-                                               "text": "Push too? → yes, push"}
+    assert crumb.metadata["authorization"] == {
+        "kind": "clarify_answer", "text": "agent asked: Push too? / user answered: yes, push"}
 
 
 @pytest.mark.asyncio

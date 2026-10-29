@@ -43,6 +43,15 @@ class ClaudeAccessStopped(ProviderAccessStopped):
         self.kind = kind
 
 
+class ClaudeRequestError(RuntimeError):
+    """Any other HTTP failure. `status` lets callers tell a rejected request (400/404,
+    e.g. an unknown model) from a server error without reading the body."""
+
+    def __init__(self, message: str, *, status: int) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 class _Actions:
     """History encoder uses the existing, tested batch and result pairing machinery."""
 
@@ -340,7 +349,8 @@ class ClaudeSubscriptionTransport:
                 request_id=request_id,
             )
         # Never echo a provider response body into logs/UI (credentials may be reflected).
-        return RuntimeError(f"Claude could not complete this request (HTTP {status}).")
+        return ClaudeRequestError(
+            f"Claude could not complete this request (HTTP {status}).", status=status)
 
     async def _stream(
         self, client: httpx.AsyncClient, body: dict, headers: dict, on_thinking: Callable | None
