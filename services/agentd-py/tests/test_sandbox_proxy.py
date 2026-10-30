@@ -96,15 +96,29 @@ async def test_workspace_and_extra_hosts_allowed_for_that_lease_only():
 
 
 @pytest.mark.asyncio
-async def test_metadata_address_refused_unless_listed():
-    proxy = await _proxy({"pypi.org": METADATA, "meta.internal": METADATA})
+async def test_internal_address_refused_unless_listed():
+    # The local test server stands in for an internal address (dialing the real metadata
+    # address hangs on networks without it).
+    server, port = await _echo_server()
+    table = {"pypi.org": "127.0.0.1", "meta.internal": "127.0.0.1"}
+    proxy = SandboxProxy(resolver=_resolver(table), is_internal=lambda ip: ip == "127.0.0.1",
+                         unix_socket=False)
+    await proxy.start()
     lease = proxy.lease(workspace_hosts=[])
-    head, _ = await _connect(proxy, "pypi.org:80", lease.token)
+    head, _ = await _connect(proxy, f"pypi.org:{port}", lease.token)
     assert head.startswith(b"HTTP/1.1 403")
+    assert lease.refused == ["pypi.org"]
     listed = proxy.lease(workspace_hosts=["meta.internal"])
-    head, _ = await _connect(proxy, "meta.internal:1", listed.token)
-    assert not head.startswith(b"HTTP/1.1 403")
+    head, _ = await _connect(proxy, f"meta.internal:{port}", listed.token)
+    assert head.startswith(b"HTTP/1.1 200")
     await proxy.close()
+    server.close()
+
+
+def test_metadata_and_loopback_are_internal():
+    from agentd.sandbox.proxy import is_internal_address
+    assert is_internal_address(METADATA) and is_internal_address("127.0.0.1")
+    assert is_internal_address("::1") and not is_internal_address("140.82.112.3")
 
 
 @pytest.mark.asyncio
