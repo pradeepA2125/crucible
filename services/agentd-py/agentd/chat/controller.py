@@ -1180,7 +1180,8 @@ class ChatController:
                 inbox_drain=partial(self._drain_main, thread_id, turn_id) if turn_id else None,
                 terminal_guard=partial(self._main_terminal_guard, thread_id),
                 live_work=partial(self._live_work, thread_id),
-                approval_mode=self._approval_mode_value)
+                approval_mode=self._approval_mode_value,
+                sandbox_state=self._sandbox_state)
         except asyncio.CancelledError:
             # /stop cancels the turn's asyncio.Task, raising here BEFORE the normal post-run
             # persistence below ever runs. Capture what the turn accumulated — its exploration
@@ -1571,6 +1572,15 @@ class ChatController:
 
     def _sandbox_active(self) -> bool:
         return self._sandbox is not None and self._sandbox.active()
+
+    def _sandbox_state(self) -> str:
+        """What the agent is told: "on", "unavailable" (commands run unprotected) or
+        "off". Before the startup probe finishes it says nothing ("off")."""
+        if self._sandbox is None or not self._sandbox.enabled:
+            return "off"
+        if self._sandbox.active():
+            return "on"
+        return "off" if self._sandbox.status().reason == "not checked yet" else "unavailable"
 
     def approval_state(self) -> ApprovalState:
         return ApprovalState(auto_accept=self._review_control.auto_accept_edits,
@@ -4532,6 +4542,7 @@ class ChatController:
                 edit_record_cb=partial(self._child_edit_record_cb, handle),
                 on_pills_update=transcript.upsert_pills,
                 approval_mode=self._approval_mode_value,
+                sandbox_state=self._sandbox_state,
             )
             if outcome.kind == "report":
                 status = str((outcome.payload or {}).get("status", "completed"))

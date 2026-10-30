@@ -35,6 +35,8 @@ _VARIANTS = frozenset({
     "report",
 })
 _CHILD_SUBTAGS = frozenset({"edit", "readonly"})
+SandboxState = Literal["on", "off", "unavailable"]
+_SANDBOX_STATES = frozenset({"on", "off", "unavailable"})
 
 _MARKER_RE = re.compile(r"<<(/?)([a-z_]+)(?::([A-Za-z0-9_]+))?>>")
 
@@ -61,6 +63,9 @@ class RenderContext:
     # A team member's goal + roster (spec v2 §7.5); empty for everyone else. Fixed for the
     # team's life, so it can sit in the cached system prompt.
     team_brief: str = ""
+    # The command sandbox, for every audience (main included): tool descriptions say
+    # what it allows and how to ask past it. "off" renders today's text.
+    sandbox: SandboxState = "off"
 
     @classmethod
     def main(cls) -> RenderContext:
@@ -109,6 +114,8 @@ def _holds(kind: str, arg: str | None, ctx: RenderContext) -> bool:
         return ctx.is_main or arg in ctx.tools
     if kind == "team":
         return ctx.has_team
+    if kind == "sandbox":
+        return ctx.sandbox == arg
     if kind == "type":
         if ctx.is_main:
             return arg != "report"
@@ -125,6 +132,7 @@ def _check_tag(kind: str, arg: str | None, where: str) -> None:
         or (kind == "tool" and arg is not None)
         or (kind == "type" and arg in _VARIANTS)
         or (kind == "team" and arg is None)
+        or (kind == "sandbox" and arg in _SANDBOX_STATES)
     )
     if not ok:
         tag = kind if arg is None else f"{kind}:{arg}"

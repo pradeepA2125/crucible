@@ -1407,6 +1407,18 @@ AUTO_MODE_NOTE = (
 )
 
 
+SANDBOX_NOTE = (
+    "Commands run in a sandbox: they can write only inside the workspace, temp and package "
+    "caches, cannot read credential folders, and reach only allowed hosts (package "
+    "registries, GitHub, hosts approved for this workspace). If the sandbox blocks a command, "
+    "the result says so; ask with allow_hosts or outside_sandbox and a reason instead of "
+    "working around it."
+)
+SANDBOX_UNAVAILABLE_NOTE = (
+    "The command sandbox is unavailable on this machine, so commands run unprotected."
+)
+
+
 @profile_sync("context.payload")
 def build_controller_step_payload(
     plan_context: dict[str, object],
@@ -1484,6 +1496,12 @@ def build_controller_step_payload(
     # cached system prompt never changes when the user switches modes.
     if plan_context.get("approval_mode") == "auto":
         payload["approval_mode_note"] = AUTO_MODE_NOTE
+    # The sandbox is switchable too: tail-only for the same reason.
+    sandbox = plan_context.get("sandbox")
+    if sandbox == "on":
+        payload["sandbox_note"] = SANDBOX_NOTE
+    elif sandbox == "unavailable":
+        payload["sandbox_note"] = SANDBOX_UNAVAILABLE_NOTE
     # Per-turn steering, mirroring build_planning_step_payload's reflect-then-choose
     # scaffold: first-turn anchoring (don't commit cold), mid-turn reflect→(explore|commit),
     # and a final-step "land it now" warning. Phase-aware (PLAN vs ACTIVE). This — not the

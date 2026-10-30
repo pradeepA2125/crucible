@@ -1,6 +1,7 @@
 """Tool registry: discovers available tools and dispatches execute() calls."""
 from __future__ import annotations
 
+import dataclasses
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -77,6 +78,11 @@ _RUN_COMMAND_DESCRIPTION = tagged("run_command_description", (
     "approval. <</shell:allow_all>><<shell:auto>>In Auto mode a command runs only if it is "
     "routine or the user asked for it; otherwise it is refused (nobody is asked). "
     "<</shell:auto>><</perm:dontAsk>>"
+    "<<sandbox:on>>Commands run in a sandbox: they can write only inside the workspace, temp "
+    "and package caches, cannot read credential folders, and reach only allowed hosts "
+    "(package registries, GitHub, hosts approved for this workspace). If the sandbox blocks a "
+    "command, the result says so; call run_command again with allow_hosts or outside_sandbox "
+    "and a reason instead of working around it. <</sandbox:on>>"
     "Use to run tests, "
     "linters, or type checkers."
 ))
@@ -245,7 +251,10 @@ class ToolRegistry:
             ),
             ToolDefinition(
                 name="run_command",
-                description=render_prompt(_RUN_COMMAND_DESCRIPTION, self._render_ctx),
+                description=render_prompt(
+                    _RUN_COMMAND_DESCRIPTION,
+                    dataclasses.replace(self._render_ctx, sandbox="on")
+                    if self._sandbox_active() else self._render_ctx),
                 parameters={
                     "type": "object",
                     "properties": {
