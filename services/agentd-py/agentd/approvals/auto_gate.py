@@ -55,7 +55,7 @@ class AutoGate:
         reason = deny_reason(parsed, workspace=self._workspace, home=self._home)
         if reason is not None:
             return AutoDecision("deny", reason, None)
-        if writes_protected(parsed, workspace=self._workspace, cwd=cwd):
+        if writes_protected(parsed, workspace=self._workspace, home=self._home, cwd=cwd):
             # These files feed the judge and the remembered rules: never self-approved.
             return AutoDecision("ask", PROTECTED_WRITE_REASON, None)
         if rules_cover(CommandRuleStore(self._workspace).load(), command, args, self._workspace):

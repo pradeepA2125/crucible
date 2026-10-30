@@ -132,12 +132,18 @@ substitution. `run_command` passes operator args through to the shell unquoted
    a device); recursive permission changes on system or home paths; commands that shadow `HOME`
    or similar variables before a destructive operation. The user can run such a command
    themselves; Auto never runs it. A breadcrumb records the denial.
-2. **Protected paths always ask.** A command that writes to, or names as a write target, a
-   protected path (`PROTECTED_PATTERNS` — including `AGENTS.md`, `.crucible/approved-commands.json`,
-   `.crucible/approved-mcp-tools.json` and the other rule stores) goes straight to the user's
-   card, never the judge. These files feed the judge's authorization and the remembered rules,
-   so letting the judge approve writes to them would be a self-escalation path.
-   `command_mentions_protected` already detects this for the card; Auto makes it force an ask.
+2. **Permission and agent files always ask.** A command that writes a file which grants
+   permission, becomes the user's words, or makes a tool run code later goes straight to the
+   user's card, never the judge: `AGENTS.md`, `.crucible/approved-*.json`, `.crucible/mcp.json`,
+   `.crucible/{agents,skills,prompts,state}/`, `.claude/{agents,skills}/`, `.vscode/settings.json`,
+   `tasks.json`, `launch.json`, `*.code-workspace`, `.git/hooks/`, `.git/config`, and in the
+   home folder `~/.crucible/` (agent trust, backend tokens, sign-ins) and `~/.claude/{agents,skills}/`
+   (`auto_rules._ALWAYS_ASK_IN_*`). One wrong verdict on these would persist, so the judge
+   never decides them. This list is narrower than edit protection (`PROTECTED_PATTERNS`): a
+   scratch file such as `.crucible/a.txt` is left to the judge (changed after the 2026-10-30
+   live run, where harmless `touch .crucible/*.txt` commands asked every time). Edits through
+   the `edit` action still follow `PROTECTED_PATTERNS` in every mode. A line the parser cannot
+   read, or a write after `cd -`/`popd`, asks when it names any protected path.
 3. **Remembered rules.** Remembered command rules and remembered MCP / web approvals apply,
    with two limits in Auto: a command rule matches only when **every part** of the command
    matches a rule (or the safe list), and **broad rules that amount to arbitrary code

@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from agentd.approvals.command_parse import ParsedCommand
-from agentd.chat.protected_paths import command_mentions_protected, is_protected
+from agentd.chat.protected_paths import command_mentions_protected
 from agentd.domain.models import CommandRule
 from agentd.subagents.write_log import canonical_path
 from agentd.tools.command_rules import command_is_covered
@@ -45,6 +46,18 @@ _WRITERS_ALL_ARGS = frozenset({
     "tee", "touch", "truncate", "rm", "rmdir", "mkdir", "chmod", "chown",
 })
 _WRITERS_LAST_ARG = frozenset({"cp", "mv", "ln", "install", "rsync"})
+# Shell writes Auto never leaves to the judge: they grant permissions (approval rules,
+# MCP servers, agent definitions), become your words (AGENTS.md, prompt files, the chat
+# record in .crucible/state), or make tools run code later (VS Code tasks, git hooks).
+# One wrong verdict here would persist, so these always ask.
+_ALWAYS_ASK_IN_WORKSPACE = (
+    "AGENTS.md", ".crucible/approved-*.json", ".crucible/mcp.json", ".crucible/agents/*",
+    ".crucible/skills/*", ".crucible/prompts/*", ".crucible/state/*", ".claude/agents/*",
+    ".claude/skills/*", ".vscode/settings.json", ".vscode/tasks.json", ".vscode/launch.json",
+    "*.code-workspace", ".git/hooks/*", ".git/config",
+)
+# ~/.crucible holds agent trust, backend tokens and sign-ins.
+_ALWAYS_ASK_IN_HOME = (".crucible/*", ".claude/agents/*", ".claude/skills/*")
 
 
 def _command_words(segment: tuple[str, ...]) -> tuple[str, ...]:
@@ -144,13 +157,30 @@ def _write_operands(words: tuple[str, ...]) -> list[str]:
 
 def _from_cwd(raw: str, cwd: str) -> str:
     """run_command resolves relative paths against its cwd argument."""
-    if not cwd or Path(raw).is_absolute() or raw.startswith("~"):
+    if not cwd or Path(raw).is_absolute() or raw.startswith(("~", "$HOME", "${HOME}")):
         return raw
     return str(Path(cwd) / raw)
 
 
-def writes_protected(parsed: ParsedCommand, *, workspace: Path, cwd: str = "") -> bool:
-    """True when the command writes (or may write) a protected workspace path."""
+def _always_asks(raw: str, directory: str, *, workspace: Path, home: Path) -> bool:
+    """A shell write to a file that grants permission or steers the agent. Narrower than
+    the edit-protection list: a scratch file in `.crucible/` is left to the judge."""
+    target = _expand(_from_cwd(raw, directory), workspace=workspace, home=home)
+    key = canonical_path(workspace, str(target))
+    if key is not None:
+        return any(fnmatchcase(key, pattern) for pattern in _ALWAYS_ASK_IN_WORKSPACE)
+    try:
+        relative = target.relative_to(home).as_posix()
+    except ValueError:
+        return False
+    return any(fnmatchcase(relative, pattern) for pattern in _ALWAYS_ASK_IN_HOME)
+
+
+def writes_protected(parsed: ParsedCommand, *, workspace: Path, home: Path | None = None,
+                     cwd: str = "") -> bool:
+    """True when the command writes (or may write) a file that grants permission or
+    steers the agent, in the workspace or the home folder."""
+    home = home or Path.home()
     if parsed.parse_failed or parsed.has_substitution:
         # Unreadable: treat any mention of a protected path as a write.
         return command_mentions_protected(parsed.line, [])
@@ -172,8 +202,7 @@ def writes_protected(parsed: ParsedCommand, *, workspace: Path, cwd: str = "") -
         candidates.extend(_write_operands(words))
     for raw in candidates:
         for directory in directories:
-            key = canonical_path(workspace, _from_cwd(raw, directory))
-            if key is not None and is_protected(key):
+            if _always_asks(raw, directory, workspace=workspace, home=home):
                 return True
     # `cd -` or `popd` lands somewhere we do not track: any write on a line that names a
     # protected path counts.
