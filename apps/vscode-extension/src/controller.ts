@@ -1851,6 +1851,11 @@ export class CrucibleController {
     return this.approval?.ready();
   }
 
+  async setSandboxEnabled(enabled: boolean): Promise<void> {
+    if (!this.approval) throw new Error("The sandbox needs the chat controller");
+    await this.approval.setSandboxEnabled(enabled);
+  }
+
   async approvalTrustGranted(): Promise<void> {
     await this.approval?.trustGranted();
   }

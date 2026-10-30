@@ -35,9 +35,24 @@ async def test_probe_native_windows_unsupported(tmp_path):
     assert runtime.status().reason == "native Windows is not supported"
 
 
-def test_status_before_probe_is_unavailable(tmp_path):
+def test_status_before_probe_is_unavailable_without_a_reason(tmp_path):
+    # No reason yet is what tells clients "still checking" apart from "unavailable".
     status = SandboxRuntime(tmp_path).status()
-    assert not status.available and status.reason == "not checked yet"
+    assert not status.available and status.reason is None
+
+
+@pytest.mark.asyncio
+async def test_failed_start_reports_why_instead_of_checking_forever(tmp_path, monkeypatch):
+    runtime = SandboxRuntime(tmp_path)
+
+    def broken_probe() -> tuple[bool, str | None]:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(runtime, "_probe", broken_probe)
+    with pytest.raises(RuntimeError):
+        await runtime.start()
+    status = runtime.status()
+    assert not status.available and status.reason == "sandbox failed to start: boom"
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt probe")

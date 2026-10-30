@@ -73,7 +73,7 @@ describe("settings mutation wiring", () => {
       SettingsPanel: panel, context: { extensionUri: "uri" }, runtimeManager: "runtime",
       folder: "folder", clientFactory: "client", settings: {}, afterSettingsMutation: callback,
     });
-    expect(panel.mock.calls[0]?.[5]).toBe(callback);
+    expect(panel.mock.calls[0]?.[6]).toBe(callback);
   });
 
   it("forwards the standalone panel callback to its real handler factory", () => {
@@ -90,7 +90,7 @@ describe("settings mutation wiring", () => {
       themeHub: { settings: { appearance: "vscode", accent: "blue" }, subscribe: () => () => {} },
       injectThemeAttributes: (html: string) => html,
     }) as new (...args: unknown[]) => { open(): void; buildHtml(): string; buildDeps(): unknown };
-    const instance = new SettingsPanel({}, {}, "", {}, () => "", callback);
+    const instance = new SettingsPanel({}, {}, "", {}, () => "", async () => {}, callback);
     instance.buildHtml = () => "";
     instance.buildDeps = () => ({});
     instance.open();

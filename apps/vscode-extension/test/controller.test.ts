@@ -2786,7 +2786,8 @@ describe("Phase 3 approval admission integration", () => {
     (c as unknown as { activeThreadId: string }).activeThreadId = "t";
     c.configureApproval({ savedMode: () => "ask", reviewOn: () => true, saveMode: async () => {}, warningDismissed: () => false, saveWarningDismissed: async () => {},
       isTrusted: () => true, firstSendAcknowledged: () => true, acknowledgeFirstSend: async () => {},
-      confirmFirstFullAccessSend: async () => "continue" });
+      confirmFirstFullAccessSend: async () => "continue",
+      sandboxEnabled: () => true, saveSandboxEnabled: async () => {}, notifySandboxUnavailable: () => {} });
     return { c, backend, ui };
   }
   const snapshot = { supported: true as const, autoAccept: false, shellPolicy: "ask" as const, version: 1, owned: true, processId: "process" };
@@ -2828,7 +2829,8 @@ describe("Phase 3 approval admission integration", () => {
     const confirm = vi.fn(async () => "cancel" as const);
     c.configureApproval({ savedMode: () => "full_access", reviewOn: () => false, saveMode: async () => {}, warningDismissed: () => true,
       saveWarningDismissed: async () => {}, isTrusted: () => true, firstSendAcknowledged: () => false,
-      acknowledgeFirstSend: async () => {}, confirmFirstFullAccessSend: confirm });
+      acknowledgeFirstSend: async () => {}, confirmFirstFullAccessSend: confirm,
+      sandboxEnabled: () => true, saveSandboxEnabled: async () => {}, notifySandboxUnavailable: () => {} });
     backend.getConfig = vi.fn(async () => ({ approval: { ...snapshot, autoAccept: true, shellPolicy: "allow_all" }, chatControllerEnabled: true })) as BackendTaskClient["getConfig"];
     backend.sendChatMessage = vi.fn();
     await c.sendChatMessage("hi");

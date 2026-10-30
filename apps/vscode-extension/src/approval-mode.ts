@@ -26,6 +26,11 @@ export interface ApprovalDependencies {
   firstSendAcknowledged(): boolean;
   acknowledgeFirstSend(): Promise<void>;
   confirmFirstFullAccessSend(): Promise<FirstSendChoice>;
+  /** The user's sandbox switch, global like the saved mode. */
+  sandboxEnabled(): boolean;
+  saveSandboxEnabled(enabled: boolean): Promise<void>;
+  /** The sandbox is on but cannot run; commands are unprotected. Called once per window. */
+  notifySandboxUnavailable(reason: string): void;
   render(view: ApprovalView): void;
 }
 export type FirstSendChoice = "continue" | "accept_edits" | "cancel";
@@ -65,6 +70,7 @@ export class ApprovalCoordinator {
   private view: ApprovalView;
   private endpoint: string | undefined;
   private observedProcessId: string | undefined;
+  private sandboxNoticeGiven = false;
   constructor(private readonly deps: ApprovalDependencies) {
     this.view = { tier: "unknown", snapshot: null, mode: null, confirmed: false, pending: false,
       warningDismissed: deps.warningDismissed(), trusted: deps.isTrusted(), error: null, notice: null };
@@ -93,6 +99,21 @@ export class ApprovalCoordinator {
     this.observedProcessId = snapshot.processId;
     if (this.view.snapshot?.processId === snapshot.processId && this.view.snapshot.version > snapshot.version) return;
     this.publish({ tier: "supported", snapshot, mode: modeFor(snapshot), confirmed: snapshot.owned, error: null });
+    this.noticeSandboxUnavailable(snapshot);
+  }
+  private noticeSandboxUnavailable(snapshot: ApprovalSnapshot): void {
+    const sandbox = snapshot.sandbox;
+    // No reason yet means the startup check is still running.
+    if (this.sandboxNoticeGiven || !sandbox?.enabled || sandbox.available || !sandbox.reason) return;
+    this.sandboxNoticeGiven = true;
+    this.deps.notifySandboxUnavailable(sandbox.reason);
+  }
+  /** A backend without a sandbox gets nothing, so an older one never sees the field. */
+  private sandboxField(state: ApprovalSnapshot): { sandbox?: boolean } {
+    return state.sandbox ? { sandbox: this.deps.sandboxEnabled() } : {};
+  }
+  private sandboxAgrees(state: ApprovalSnapshot): boolean {
+    return !state.sandbox || state.sandbox.enabled === this.deps.sandboxEnabled();
   }
   private conflict(error: unknown): ApprovalSnapshot | null {
     const e = error as { status?: number; detail?: unknown };
@@ -133,7 +154,7 @@ export class ApprovalCoordinator {
           return;
         }
         const ownedMode = state.owned ? modeFor(state) : null;
-        if (state.owned && ownedMode === this.allowedMode(ownedMode ?? "ask", state)) {
+        if (state.owned && ownedMode === this.allowedMode(ownedMode ?? "ask", state) && this.sandboxAgrees(state)) {
           this.adopt(state);
           if (!this.deps.savedMode() && ownedMode) await this.persist(ownedMode);
           this.publish({ pending: false });
@@ -143,7 +164,7 @@ export class ApprovalCoordinator {
         const preferred = state.owned ? ownedMode! : saved ?? migrateApproval(state.shellPolicy, this.deps.reviewOn());
         const mode = this.allowedMode(preferred, state);
         try {
-          const applied = await client.setApprovalMode({ ...policyFor(mode), resolveWaiting: false,
+          const applied = await client.setApprovalMode({ ...policyFor(mode), ...this.sandboxField(state), resolveWaiting: false,
             expectedProcessId: state.processId, expectedVersion: state.version });
           if (this.endpointChanged()) continue;
           this.adopt(applied);
@@ -155,7 +176,7 @@ export class ApprovalCoordinator {
         } catch (error) {
           const current = this.conflict(error);
           if (!current) throw error;
-          if (current.owned && modeFor(current) === this.allowedMode(modeFor(current) ?? "ask", current)) {
+          if (current.owned && modeFor(current) === this.allowedMode(modeFor(current) ?? "ask", current) && this.sandboxAgrees(current)) {
             this.adopt(current); this.publish({ pending: false }); return;
           }
           // Another restart/unowned conflict: read config again, never resolve edits.
@@ -238,7 +259,7 @@ export class ApprovalCoordinator {
         }
         const before = this.view.snapshot!;
         try {
-          const applied = await client.setApprovalMode({ ...policyFor(mode), resolveWaiting: true,
+          const applied = await client.setApprovalMode({ ...policyFor(mode), ...this.sandboxField(before), resolveWaiting: true,
             expectedProcessId: before.processId, expectedVersion: before.version });
           this.adopt(applied);
           await this.persist(mode);
@@ -263,6 +284,41 @@ export class ApprovalCoordinator {
         this.publish({ pending: false, error: `Not applied — retry: ${error instanceof Error ? error.message : String(error)}` });
       }
     });
+  }
+  /** The switch persists only after the backend acknowledges. Throws, after showing the
+   * error, so Settings can keep it beside the switch. */
+  setSandboxEnabled(enabled: boolean): Promise<void> {
+    return this.enqueue(async () => {
+      this.publish({ pending: true, error: null, notice: null });
+      try {
+        if (this.endpointChanged() || this.view.tier === "unknown" || (this.view.tier === "supported" && !this.view.confirmed)) await this.connectNow();
+        await this.applySandbox(enabled, true);
+        if (this.deps.sandboxEnabled() !== enabled) {
+          try { await this.deps.saveSandboxEnabled(enabled); }
+          catch (error) { this.publish({ error: `Applied, but the preference could not be saved: ${error instanceof Error ? error.message : String(error)}` }); }
+        }
+        this.publish({ pending: false });
+      } catch (error) {
+        this.publish({ pending: false, error: `Not applied — retry: ${error instanceof Error ? error.message : String(error)}` });
+        throw error;
+      }
+    });
+  }
+  private async applySandbox(enabled: boolean, mayRetry: boolean): Promise<void> {
+    const before = this.view.snapshot;
+    if (this.view.tier !== "supported" || !before?.sandbox) throw new Error("The sandbox needs an updated backend");
+    if (before.sandbox.enabled === enabled) return;
+    try {
+      // The mode stays what the backend has; only the switch changes.
+      this.adopt(await this.deps.client().setApprovalMode({ autoAccept: before.autoAccept, shellPolicy: before.shellPolicy,
+        sandbox: enabled, resolveWaiting: false, expectedProcessId: before.processId, expectedVersion: before.version }));
+    } catch (error) {
+      const current = this.conflict(error);
+      if (!current || !mayRetry) throw error;
+      if (current.processId === before.processId) this.adopt(current);
+      else await this.connectNow();
+      await this.applySandbox(enabled, false);
+    }
   }
   /** Trust granted mid-session: re-apply a saved Full access preference the trust check held back. */
   trustGranted(): Promise<void> {

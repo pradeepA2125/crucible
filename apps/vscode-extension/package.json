@@ -124,6 +124,12 @@
           "description": "Leave default for the managed backend; set explicitly to attach to a dev backend (e.g. one started via start-backend.sh).",
           "scope": "machine"
         },
+        "crucible.sandbox.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run agent commands in an OS sandbox: writes stay in the workspace, credentials are unreadable and only allowed hosts are reachable. Machine-scoped so a repository's settings cannot turn it off.",
+          "scope": "machine"
+        },
         "crucible.defaultMode": {
           "type": "string",
           "default": "project_edit",

@@ -510,7 +510,7 @@ if _sandbox_runtime is not None:
     async def _start_sandbox() -> None:
         try:
             await _sandbox_runtime.start()  # probe, then the proxy
-        except Exception:  # noqa: BLE001 — an unprobed sandbox reports "not checked yet"
+        except Exception:  # noqa: BLE001 — the runtime reports why; the backend keeps serving
             _agentd_logger.warning("[sandbox] failed to start", exc_info=True)
         _agentd_logger.info("[sandbox] %s", _sandbox_runtime.status().model_dump())
 

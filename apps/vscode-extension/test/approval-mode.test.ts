@@ -3,10 +3,12 @@ import type { ApprovalSnapshot, BackendTaskClient } from "@crucible/editor-clien
 import { ApprovalCoordinator, isApprovalMode, migrateApproval, modeFor, policyFor, type ApprovalMode, type FirstSendChoice } from "../src/approval-mode";
 const state = (patch: Partial<ApprovalSnapshot> = {}): ApprovalSnapshot => ({ supported: true, autoAccept: false, shellPolicy: "ask", version: 0, owned: false, processId: "p", ...patch });
 function setup(options: { saved?: ApprovalMode; review?: boolean; owned?: boolean; older?: boolean; legacy?: boolean;
-  trusted?: boolean; firstSend?: FirstSendChoice; shellPolicy?: "ask" | "allow_all" | "auto"; policies?: string[] } = {}) {
+  trusted?: boolean; firstSend?: FirstSendChoice; shellPolicy?: "ask" | "allow_all" | "auto"; policies?: string[];
+  sandbox?: ApprovalSnapshot["sandbox"]; sandboxSaved?: boolean } = {}) {
   let snapshot = state({ owned: options.owned ?? false,
     ...(options.shellPolicy ? { shellPolicy: options.shellPolicy, autoAccept: options.shellPolicy !== "ask" } : {}),
-    ...(options.policies ? { shellPolicies: options.policies } : {}) });
+    ...(options.policies ? { shellPolicies: options.policies } : {}),
+    ...(options.sandbox ? { sandbox: options.sandbox } : {}) });
   let trusted = options.trusted ?? true;
   let acknowledged = false;
   const confirmFirstFullAccessSend = vi.fn(async () => options.firstSend ?? "continue");
@@ -15,18 +17,24 @@ function setup(options: { saved?: ApprovalMode; review?: boolean; owned?: boolea
   const getConfig = vi.fn(async () => ({ approval: options.older || options.legacy ? undefined : snapshot,
     shellPolicy: snapshot.shellPolicy, chatControllerEnabled: !options.legacy }));
   const setApprovalMode = vi.fn(async (req) => {
-    snapshot = { ...snapshot, autoAccept: req.autoAccept, shellPolicy: req.shellPolicy, owned: true, version: snapshot.version + 1 };
+    snapshot = { ...snapshot, autoAccept: req.autoAccept, shellPolicy: req.shellPolicy, owned: true, version: snapshot.version + 1,
+      ...(req.sandbox !== undefined && snapshot.sandbox ? { sandbox: { ...snapshot.sandbox, enabled: req.sandbox } } : {}) };
     return { ...snapshot, autoResolvedEdits: 0, background: 0 };
   });
   const setGlobalReviewPref = vi.fn(async () => ({ autoResolved: 0, background: 0 }));
   const saveMode = vi.fn(async (mode: ApprovalMode) => { saved = mode; });
   const render = vi.fn();
+  let sandboxSaved = options.sandboxSaved ?? true;
+  const saveSandboxEnabled = vi.fn(async (enabled: boolean) => { sandboxSaved = enabled; });
+  const notifySandboxUnavailable = vi.fn();
   const c = new ApprovalCoordinator({ client: () => ({ getConfig, setApprovalMode, setGlobalReviewPref } as unknown as BackendTaskClient),
     savedMode: () => saved, reviewOn: () => options.review ?? true, saveMode, render,
     warningDismissed: () => warning, saveWarningDismissed: async () => { warning = true; },
     isTrusted: () => trusted, firstSendAcknowledged: () => acknowledged,
-    acknowledgeFirstSend: async () => { acknowledged = true; }, confirmFirstFullAccessSend });
+    acknowledgeFirstSend: async () => { acknowledged = true; }, confirmFirstFullAccessSend,
+    sandboxEnabled: () => sandboxSaved, saveSandboxEnabled, notifySandboxUnavailable });
   return { c, getConfig, setApprovalMode, setGlobalReviewPref, saveMode, render, confirmFirstFullAccessSend,
+    saveSandboxEnabled, notifySandboxUnavailable,
     setState: (s: ApprovalSnapshot) => { snapshot = s; }, trust: () => { trusted = true; }, acknowledged: () => acknowledged };
 }
 describe("approval migration", () => {
@@ -262,5 +270,93 @@ describe("first send under Full access", () => {
     await t.c.select("full_access", true); await t.c.acknowledgeUserSelection();
     expect(await t.c.confirmFirstSend()).toBe(true);
     expect(t.confirmFirstFullAccessSend).not.toHaveBeenCalled();
+  });
+});
+describe("sandbox switch", () => {
+  const on = { enabled: true, available: true, reason: null };
+  const conflict = (detail: unknown) => Object.assign(new Error("conflict"), { status: 409, detail });
+  const wire = { supported: true, auto_accept: false, shell_policy: "ask", version: 5, owned: true, process_id: "p", sandbox: on };
+
+  it("sends the saved switch when initializing a backend", async () => {
+    const t = setup({ saved: "ask", sandbox: on, sandboxSaved: false });
+    await t.c.connect();
+    expect(t.setApprovalMode).toHaveBeenCalledWith(expect.objectContaining({ sandbox: false, resolveWaiting: false }));
+    expect(t.c.current().snapshot?.sandbox?.enabled).toBe(false);
+  });
+  it("sends the saved switch with every mode change", async () => {
+    const t = setup({ saved: "ask", sandbox: on, owned: true });
+    await t.c.connect();
+    await t.c.select("accept_edits");
+    expect(t.setApprovalMode).toHaveBeenLastCalledWith(expect.objectContaining({ autoAccept: true, sandbox: true }));
+  });
+  it("corrects an owned backend whose switch disagrees with the saved one", async () => {
+    const t = setup({ saved: "ask", sandbox: on, owned: true, sandboxSaved: false });
+    await t.c.connect();
+    expect(t.setApprovalMode).toHaveBeenCalledWith(expect.objectContaining({ sandbox: false, resolveWaiting: false }));
+  });
+  it("adopts an owned backend that agrees without writing", async () => {
+    const t = setup({ saved: "ask", sandbox: on, owned: true });
+    await t.c.connect();
+    expect(t.setApprovalMode).not.toHaveBeenCalled();
+  });
+  it("sends nothing to a backend without a sandbox and refuses the toggle", async () => {
+    const t = setup({ saved: "accept_edits" });
+    await t.c.connect();
+    expect(t.setApprovalMode.mock.calls[0]![0]).not.toHaveProperty("sandbox");
+    expect(t.c.current().snapshot).not.toHaveProperty("sandbox");
+    await expect(t.c.setSandboxEnabled(false)).rejects.toThrow("updated backend");
+    expect(t.saveSandboxEnabled).not.toHaveBeenCalled();
+  });
+  it("persists the toggle only after the backend acknowledges, keeping the mode", async () => {
+    const t = setup({ saved: "accept_edits", sandbox: on, owned: true, shellPolicy: "ask" });
+    t.setState(state({ autoAccept: true, shellPolicy: "ask", owned: true, version: 5, sandbox: on }));
+    await t.c.connect();
+    await t.c.setSandboxEnabled(false);
+    expect(t.setApprovalMode).toHaveBeenCalledWith(expect.objectContaining({ autoAccept: true, shellPolicy: "ask", sandbox: false,
+      resolveWaiting: false, expectedProcessId: "p", expectedVersion: 5 }));
+    expect(t.saveSandboxEnabled).toHaveBeenCalledWith(false);
+    expect(t.saveSandboxEnabled).toHaveBeenCalledAfter(t.setApprovalMode);
+    expect(t.c.current().snapshot?.sandbox?.enabled).toBe(false);
+  });
+  it("does not persist when the backend refuses, and says so", async () => {
+    const t = setup({ saved: "ask", sandbox: on, owned: true });
+    await t.c.connect();
+    t.setApprovalMode.mockRejectedValueOnce(new Error("offline"));
+    await expect(t.c.setSandboxEnabled(false)).rejects.toThrow("offline");
+    expect(t.saveSandboxEnabled).not.toHaveBeenCalled();
+    expect(t.c.current().error).toContain("offline");
+    expect(t.c.current().pending).toBe(false);
+  });
+  it("retries once at the current version when another write got there first", async () => {
+    const t = setup({ saved: "ask", sandbox: on, owned: true });
+    await t.c.connect();
+    t.setApprovalMode.mockRejectedValueOnce(conflict(wire));
+    await t.c.setSandboxEnabled(false);
+    expect(t.setApprovalMode).toHaveBeenLastCalledWith(expect.objectContaining({ sandbox: false, expectedVersion: 5 }));
+    expect(t.saveSandboxEnabled).toHaveBeenCalledWith(false);
+  });
+  it("writes nothing when the switch already matches", async () => {
+    const t = setup({ saved: "ask", sandbox: on, owned: true });
+    await t.c.connect();
+    await t.c.setSandboxEnabled(true);
+    expect(t.setApprovalMode).not.toHaveBeenCalled();
+    expect(t.saveSandboxEnabled).not.toHaveBeenCalled();
+  });
+  it("gives one notice per window when the sandbox cannot start", async () => {
+    const down = { enabled: true, available: false, reason: "bubblewrap is not installed" };
+    const t = setup({ saved: "ask", sandbox: down, owned: true });
+    await t.c.connect();
+    t.c.observe(state({ owned: true, version: 1, sandbox: down }));
+    expect(t.notifySandboxUnavailable).toHaveBeenCalledTimes(1);
+    expect(t.notifySandboxUnavailable).toHaveBeenCalledWith("bubblewrap is not installed");
+  });
+  it("gives no notice while the check is running or when the user switched it off", async () => {
+    const t = setup({ saved: "ask", sandbox: { enabled: true, available: false, reason: null }, owned: true });
+    await t.c.connect();
+    expect(t.notifySandboxUnavailable).not.toHaveBeenCalled();
+    t.c.observe(state({ owned: true, version: 1, sandbox: { enabled: false, available: false, reason: "no bwrap" } }));
+    expect(t.notifySandboxUnavailable).not.toHaveBeenCalled();
+    t.c.observe(state({ owned: true, version: 2, sandbox: { enabled: true, available: false, reason: "no bwrap" } }));
+    expect(t.notifySandboxUnavailable).toHaveBeenCalledTimes(1);
   });
 });

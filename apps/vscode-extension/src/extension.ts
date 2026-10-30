@@ -642,6 +642,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "",
         clientFactory,
         resolveBackendUrl: () => settings.getBackendBaseUrl(),
+        setSandboxEnabled: (enabled) => controller.setSandboxEnabled(enabled),
       }),
       post,
       afterSettingsMutation,
@@ -652,6 +653,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     openDiff: openReviewDiff,
   });
 
+  const readSandboxEnabled = (): boolean =>
+    vscode.workspace.getConfiguration("crucible").get<boolean>("sandbox.enabled", true);
   controller.configureApproval({
     savedMode: () => { const mode = context.globalState.get<unknown>("crucible.approvalMode"); return isApprovalMode(mode) ? mode : undefined; },
     reviewOn: () => runtimeManager.getStepReview(),
@@ -667,7 +670,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     acknowledgeFirstSend: () => context.workspaceState.update("crucible.fullAccessFirstSendAcknowledged", true),
     confirmFirstFullAccessSend: () =>
       chatPanel.confirmFullAccessFirstSend(vscode.workspace.workspaceFolders?.[0]?.name ?? "this workspace"),
+    sandboxEnabled: readSandboxEnabled,
+    saveSandboxEnabled: async (enabled) => {
+      await vscode.workspace.getConfiguration("crucible").update("sandbox.enabled", enabled, vscode.ConfigurationTarget.Global);
+    },
+    notifySandboxUnavailable: (reason) => {
+      void vscode.window.showWarningMessage(`Sandbox unavailable: ${reason} — commands run unprotected.`);
+    },
   });
+  context.subscriptions.push(vscode.workspace.onDidChangeConfiguration((event) => {
+    if (!event.affectsConfiguration("crucible.sandbox.enabled")) return;
+    // A hand edit of settings.json; the coordinator has already shown any failure.
+    void controller.setSandboxEnabled(readSandboxEnabled()).catch(() => undefined);
+  }));
   context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => {
     void controller.approvalTrustGranted();
   }));
@@ -857,6 +872,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             folder,
             clientFactory,
             () => settings.getBackendBaseUrl(),
+            (enabled) => controller.setSandboxEnabled(enabled),
             afterSettingsMutation,
           );
         }

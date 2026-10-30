@@ -42,6 +42,35 @@ describe("approval client", () => {
     });
     expect(body).toMatchObject({ shell_policy: "auto" });
   });
+  it("maps the sandbox status and sends the switch only when given", async () => {
+    const sandbox = { enabled: true, available: false, reason: "bubblewrap is not installed" };
+    expect((await client({ approval: { ...wire, sandbox } }).getConfig()).approval).toMatchObject({ sandbox });
+    const noSandbox = (await client({ approval: { ...wire, sandbox: null } }).getConfig()).approval;
+    expect(noSandbox).not.toHaveProperty("sandbox");
+    const request = { autoAccept: false, shellPolicy: "ask" as const, resolveWaiting: false, expectedProcessId: "p", expectedVersion: 3 };
+    let sent: unknown;
+    const applied = await client({ ...wire, sandbox: { ...sandbox, enabled: false } }, 200, b => sent = b)
+      .setApprovalMode({ ...request, sandbox: false });
+    expect(sent).toMatchObject({ sandbox: false });
+    expect(applied.sandbox?.enabled).toBe(false);
+    await client(wire, 200, b => sent = b).setApprovalMode(request);
+    expect(sent).not.toHaveProperty("sandbox");
+  });
+  it("reads and writes the workspace's sandbox hosts and folders", async () => {
+    const view = { status: { enabled: true, available: true, reason: null }, default_hosts: ["registry.npmjs.org"],
+      hosts: ["example.com"], folders: ["/data"] };
+    const config = { status: view.status, defaultHosts: view.default_hosts, hosts: view.hosts, folders: view.folders };
+    expect(await client(view).getSandbox()).toEqual(config);
+    let sent: unknown;
+    expect(await client(view, 200, b => sent = b).setSandboxHosts(["example.com"])).toEqual(config);
+    expect(sent).toEqual({ hosts: ["example.com"] });
+    expect(await client(view, 200, b => sent = b).setSandboxFolders(["/data"])).toEqual(config);
+    expect(sent).toEqual({ folders: ["/data"] });
+  });
+  it("surfaces a refused host's reason", async () => {
+    await expect(client({ detail: "not a bare host: https://x" }, 422).setSandboxHosts(["https://x"]))
+      .rejects.toThrow("not a bare host: https://x");
+  });
   it("maps the thread usage's auto_review line", async () => {
     const z = { requests: 0, input: 0, output: 0, cached: 0 };
     const review = { requests: 2, input: 900, output: 40, cached: 600 };

@@ -1580,7 +1580,7 @@ class ChatController:
             return "off"
         if self._sandbox.active():
             return "on"
-        return "off" if self._sandbox.status().reason == "not checked yet" else "unavailable"
+        return "off" if self._sandbox.status().reason is None else "unavailable"
 
     def approval_state(self) -> ApprovalState:
         return ApprovalState(auto_accept=self._review_control.auto_accept_edits,

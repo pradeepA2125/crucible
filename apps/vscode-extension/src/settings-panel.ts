@@ -29,6 +29,7 @@ export class SettingsPanel {
     // managed backend. runtimeManager.backendUrl() alone only knows the managed
     // port, so the panel could never reach a dev backend without this.
     private readonly resolveBackendUrl: () => string,
+    private readonly setSandboxEnabled: (enabled: boolean) => Promise<void>,
     private readonly afterMutation?: SettingsMutationHandler,
   ) {}
 
@@ -86,6 +87,7 @@ export class SettingsPanel {
       workspacePath: this.workspacePath,
       clientFactory: this.clientFactory,
       resolveBackendUrl: this.resolveBackendUrl,
+      setSandboxEnabled: this.setSandboxEnabled,
     });
   }
 

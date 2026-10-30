@@ -654,10 +654,22 @@ export function parseContextUsage(raw: unknown): ContextUsage | null {
 // so reloads and resume task-id churn self-heal on the next poll.
 export const ShellPolicySchema = z.enum(["ask", "allow_all", "auto"]);
 export type ShellPolicy = z.infer<typeof ShellPolicySchema>;
+// available=false with no reason means the startup check has not finished yet.
+export const SandboxStatusSchema = z.object({
+  enabled: z.boolean(), available: z.boolean(), reason: z.string().nullable(),
+});
+export type SandboxStatus = z.infer<typeof SandboxStatusSchema>;
+export const SandboxConfigSchema = z.object({
+  status: SandboxStatusSchema, defaultHosts: z.array(z.string()),
+  hosts: z.array(z.string()), folders: z.array(z.string()),
+});
+export type SandboxConfig = z.infer<typeof SandboxConfigSchema>;
 export const ApprovalStateSchema = z.discriminatedUnion("supported", [
   z.object({ supported: z.literal(true), autoAccept: z.boolean(), shellPolicy: ShellPolicySchema,
     // Policies this backend accepts; absent on backends that predate Auto.
     shellPolicies: z.array(z.string()).optional(),
+    // Absent on backends that have no sandbox.
+    sandbox: SandboxStatusSchema.optional(),
     version: z.number().int().nonnegative(), owned: z.boolean(), processId: z.string().min(1) }),
   z.object({ supported: z.literal(false) }),
 ]);
@@ -667,6 +679,8 @@ export type ApprovalModeResult = ApprovalSnapshot & { autoResolvedEdits: number;
 export interface SetApprovalModeOptions {
   autoAccept: boolean; shellPolicy: ShellPolicy; resolveWaiting: boolean;
   expectedProcessId: string; expectedVersion: number;
+  /** Omitted = leave the sandbox switch as it is. */
+  sandbox?: boolean;
 }
 
 /** Wire state and conflict details use the same authoritative policy shape. */
@@ -676,6 +690,7 @@ export function approvalFromWire(raw: unknown): ApprovalState | undefined {
   return ApprovalStateSchema.parse(v.supported === false ? { supported: false } : {
     supported: v.supported, autoAccept: v.auto_accept, shellPolicy: v.shell_policy,
     ...(v.shell_policies !== undefined ? { shellPolicies: v.shell_policies } : {}),
+    ...(v.sandbox != null ? { sandbox: v.sandbox } : {}),
     version: v.version, owned: v.owned, processId: v.process_id,
   });
 }
@@ -1013,6 +1028,9 @@ export interface BackendTaskClient {
   }): Promise<MemoryView[]>;
   getSupersedeChain(memoryId: string): Promise<MemoryView[]>;
   listSkills(workspace: string): Promise<SkillSummary[]>;
+  getSandbox(): Promise<SandboxConfig>;
+  setSandboxHosts(hosts: string[]): Promise<SandboxConfig>;
+  setSandboxFolders(folders: string[]): Promise<SandboxConfig>;
   listAgentDefinitions(): Promise<AgentCatalog>;
   saveAgentDefinition(name: string, input: AgentDefinitionInput): Promise<AgentDefinitionView>;
   deleteAgentDefinition(name: string): Promise<void>;

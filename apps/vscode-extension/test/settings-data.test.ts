@@ -14,6 +14,8 @@ function stateMsg(
   return msg;
 }
 
+const SANDBOX = { status: { enabled: true, available: true, reason: null }, defaultHosts: ["registry.npmjs.org"],
+  hosts: [] as string[], folders: [] as string[] };
 const CATALOG = {
   agents: [{
     name: "helper", description: "d", tools: null, disallowedTools: [], permission: "default",
@@ -62,7 +64,11 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
       saveAgentDefinition: vi.fn(async () => CATALOG.agents[0]!),
       deleteAgentDefinition: vi.fn(async () => {}),
       trustAgentDefinition: vi.fn(async () => {}),
+      getSandbox: vi.fn(async () => SANDBOX),
+      setSandboxHosts: vi.fn(async (hosts: string[]) => ({ ...SANDBOX, hosts })),
+      setSandboxFolders: vi.fn(async (folders: string[]) => ({ ...SANDBOX, folders })),
     },
+    setSandboxEnabled: vi.fn(async () => {}),
     workspace: "/ws",
     readRuntimeJson: () => ({ releaseTag: "v0.1.0", components: {} }),
     mcpDisabled: () => box.disabled,
@@ -507,5 +513,40 @@ describe("appearance (spec 2026-10-13 §1)", () => {
     await handle({ type: "settings/setAppearance", appearance: "neon", accent: "blue" });
     expect(d.setAppearance).not.toHaveBeenCalled();
     expect(posted.at(-1)).toEqual({ type: "settings/error", message: "Unknown appearance or accent: neon / blue" });
+  });
+});
+
+describe("settings handler: sandbox", () => {
+  const run = async (d: ReturnType<typeof deps>, msg: Parameters<ReturnType<typeof createSettingsHandler>>[0]) => {
+    const posted: SettingsOutMsg[] = [];
+    await createSettingsHandler(d, (m) => posted.push(m))(msg);
+    return posted;
+  };
+  it("loads the section's state on its own, not a settings snapshot", async () => {
+    expect(await run(deps(), { type: "settings/sandbox" })).toEqual([{ type: "settings/sandboxState", config: SANDBOX }]);
+  });
+  it("round-trips hosts and folders", async () => {
+    const d = deps();
+    expect(await run(d, { type: "settings/setSandboxHosts", hosts: ["example.com"] }))
+      .toEqual([{ type: "settings/sandboxState", config: { ...SANDBOX, hosts: ["example.com"] } }]);
+    expect(d.client.setSandboxHosts).toHaveBeenCalledWith(["example.com"]);
+    expect(await run(d, { type: "settings/setSandboxFolders", folders: ["/data"] }))
+      .toEqual([{ type: "settings/sandboxState", config: { ...SANDBOX, folders: ["/data"] } }]);
+    expect(d.client.setSandboxFolders).toHaveBeenCalledWith(["/data"]);
+  });
+  it("turns the switch through the approval coordinator, then re-reads", async () => {
+    const d = deps();
+    expect(await run(d, { type: "settings/setSandboxEnabled", enabled: false }))
+      .toEqual([{ type: "settings/sandboxState", config: SANDBOX }]);
+    expect(d.setSandboxEnabled).toHaveBeenCalledWith(false);
+  });
+  it("keeps errors in the section", async () => {
+    const d = deps();
+    d.client.setSandboxHosts = vi.fn(async () => { throw new Error("not a bare host"); });
+    expect(await run(d, { type: "settings/setSandboxHosts", hosts: ["https://x"] }))
+      .toEqual([{ type: "settings/sandboxError", message: "not a bare host" }]);
+    d.setSandboxEnabled = vi.fn(async () => { throw new Error("offline"); });
+    expect(await run(d, { type: "settings/setSandboxEnabled", enabled: false }))
+      .toEqual([{ type: "settings/sandboxError", message: "offline" }]);
   });
 });

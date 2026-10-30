@@ -19,6 +19,8 @@ import {
   ChatMessageSchema,
   ThreadLiveStateSchema,
   approvalFromWire,
+  SandboxConfigSchema,
+  type SandboxConfig,
   type ApprovalModeResult, type SetApprovalModeOptions,
   parseContextUsage,
   SessionTranscriptSchema,
@@ -398,6 +400,7 @@ export class HttpBackendClient implements BackendTaskClient {
     const raw = await this.fetchJson("/v1/chat/approval-mode", { method: "PUT", body: JSON.stringify({
       auto_accept: options.autoAccept, shell_policy: options.shellPolicy, resolve_waiting: options.resolveWaiting,
       expected_process_id: options.expectedProcessId, expected_version: options.expectedVersion,
+      ...(options.sandbox !== undefined ? { sandbox: options.sandbox } : {}),
     }) }) as Record<string, unknown>;
     const state = approvalFromWire(raw);
     if (!state?.supported) throw new Error("Approval modes need the chat controller");
@@ -1070,6 +1073,28 @@ export class HttpBackendClient implements BackendTaskClient {
       shadowedBy: raw["shadowed_by"] ?? null, persona: raw["persona"] ?? "",
       content: raw["content"] ?? null,
     });
+  }
+
+  private static toSandboxConfig(raw: unknown): SandboxConfig {
+    const v = raw as Record<string, unknown>;
+    return SandboxConfigSchema.parse({ status: v["status"], defaultHosts: v["default_hosts"],
+      hosts: v["hosts"], folders: v["folders"] });
+  }
+
+  async getSandbox(): Promise<SandboxConfig> {
+    return HttpBackendClient.toSandboxConfig(await this.fetchJsonDetail("/v1/sandbox"));
+  }
+
+  async setSandboxHosts(hosts: string[]): Promise<SandboxConfig> {
+    return HttpBackendClient.toSandboxConfig(await this.fetchJsonDetail("/v1/sandbox/hosts", {
+      method: "PUT", body: JSON.stringify({ hosts }),
+    }));
+  }
+
+  async setSandboxFolders(folders: string[]): Promise<SandboxConfig> {
+    return HttpBackendClient.toSandboxConfig(await this.fetchJsonDetail("/v1/sandbox/folders", {
+      method: "PUT", body: JSON.stringify({ folders }),
+    }));
   }
 
   async listAgentDefinitions(): Promise<AgentCatalog> {

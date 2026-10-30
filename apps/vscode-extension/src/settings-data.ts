@@ -5,6 +5,7 @@ import type {
   AgentDefinitionView,
   McpServerList,
   McpServerView,
+  SandboxConfig,
 } from "@crucible/editor-client";
 
 import {
@@ -72,6 +73,10 @@ export type SettingsInMsg =
   | { type: "settings/trustAgent"; path: string; sha256: string }
   | { type: "settings/openFile"; path: string }
   | { type: "settings/listModels" }
+  | { type: "settings/sandbox" }
+  | { type: "settings/setSandboxEnabled"; enabled: boolean }
+  | { type: "settings/setSandboxHosts"; hosts: string[] }
+  | { type: "settings/setSandboxFolders"; folders: string[] }
   | ClaudeInMsg
   | ChatGPTInMsg;
 
@@ -88,6 +93,8 @@ export type SettingsOutMsg =
   | { type: "settings/agents"; catalog: AgentCatalog }
   | { type: "settings/agentsError"; message: string }
   | { type: "settings/models"; models: string[] }
+  | { type: "settings/sandboxState"; config: SandboxConfig }
+  | { type: "settings/sandboxError"; message: string }
   | ClaudeOutMsg
   | ChatGPTOutMsg;
 
@@ -131,7 +138,12 @@ export interface SettingsDeps {
     saveAgentDefinition(name: string, input: AgentDefinitionInput): Promise<AgentDefinitionView>;
     deleteAgentDefinition(name: string): Promise<void>;
     trustAgentDefinition(path: string, sha256: string): Promise<void>;
+    getSandbox(): Promise<SandboxConfig>;
+    setSandboxHosts(hosts: string[]): Promise<SandboxConfig>;
+    setSandboxFolders(folders: string[]): Promise<SandboxConfig>;
   };
+  /** Through the approval coordinator: the switch travels with the approval mode. */
+  setSandboxEnabled(enabled: boolean): Promise<void>;
   workspace: string;
   /** crucible.appearance + crucible.accent. Local VS Code settings — no backend needed. */
   readAppearance(): ThemeSettings;
@@ -210,6 +222,16 @@ export function createSettingsHandler(
 
   const postState = async (): Promise<void> => {
     post({ type: "settings/state", state: await buildState(deps, restartRequired, providerWarning) });
+  };
+
+  // Loaded apart from buildState for the same reason as the agents catalog below; a backend
+  // without a sandbox answers 404, which stays in the section.
+  const sandboxAction = async (load: () => Promise<SandboxConfig>): Promise<void> => {
+    try {
+      post({ type: "settings/sandboxState", config: await load() });
+    } catch (err) {
+      post({ type: "settings/sandboxError", message: err instanceof Error ? err.message : String(err) });
+    }
   };
 
   // The agents catalog is loaded separately from buildState's Promise.all: one failing
@@ -436,6 +458,25 @@ export function createSettingsHandler(
         }
         case "settings/openFile": {
           await deps.openFile(msg.path);
+          return;
+        }
+        case "settings/sandbox": {
+          await sandboxAction(() => deps.client.getSandbox());
+          return;
+        }
+        case "settings/setSandboxEnabled": {
+          await sandboxAction(async () => {
+            await deps.setSandboxEnabled(msg.enabled);
+            return deps.client.getSandbox();
+          });
+          return;
+        }
+        case "settings/setSandboxHosts": {
+          await sandboxAction(() => deps.client.setSandboxHosts(msg.hosts));
+          return;
+        }
+        case "settings/setSandboxFolders": {
+          await sandboxAction(() => deps.client.setSandboxFolders(msg.folders));
           return;
         }
         case "settings/listModels": {

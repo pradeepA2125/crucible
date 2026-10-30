@@ -27,6 +27,7 @@ export interface SettingsDepsOptions {
   // Resolves the backend URL the same way the chat controller does — honors an
   // explicit `crucible.backendBaseUrl` (dev-attach), else the managed backend.
   resolveBackendUrl: () => string;
+  setSandboxEnabled: (enabled: boolean) => Promise<void>;
 }
 
 /**
@@ -71,7 +72,11 @@ export function buildSettingsDeps(opts: SettingsDepsOptions): SettingsDeps {
       saveAgentDefinition: (name, input) => client().saveAgentDefinition(name, input),
       deleteAgentDefinition: (name) => client().deleteAgentDefinition(name),
       trustAgentDefinition: (path, sha256) => client().trustAgentDefinition(path, sha256),
+      getSandbox: () => client().getSandbox(),
+      setSandboxHosts: (hosts) => client().setSandboxHosts(hosts),
+      setSandboxFolders: (folders) => client().setSandboxFolders(folders),
     },
+    setSandboxEnabled: opts.setSandboxEnabled,
     workspace: workspacePath,
     readRuntimeJson: () => runtimeManager.installedRuntime(),
     mcpDisabled: () => runtimeManager.mcpDisabled(),

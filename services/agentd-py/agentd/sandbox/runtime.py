@@ -42,7 +42,8 @@ class SandboxRuntime:
         self._platform = platform
         self._which = which
         self._available = False
-        self._reason: str | None = "not checked yet"
+        # available=False with no reason: the check has not finished yet.
+        self._reason: str | None = None
         self.store = WorkspaceSandboxStore(workspace)
         self.proxy: SandboxProxy | None = None
 
@@ -55,7 +56,12 @@ class SandboxRuntime:
 
     async def start(self) -> None:
         """Probe, then start the proxy when the sandbox can run."""
-        await self.probe()
+        try:
+            await self.probe()
+        except Exception as exc:
+            # Without a reason clients would keep reading this as "still checking".
+            self._available, self._reason = False, f"sandbox failed to start: {exc}"
+            raise
         if self._available and self.proxy is None:
             proxy = SandboxProxy()
             await proxy.start()
