@@ -1,7 +1,17 @@
 name: sandbox
 # The command sandbox behaves differently on each platform and its tests spawn real sandboxed
-# processes, so they run on both before a change merges, not first at a release tag.
+# processes, so they run on both for every change, not first at a release tag. This repo
+# fast-forwards main rather than always opening pull requests, so both events count.
 on:
+  push:
+    branches: [main]
+    paths:
+      - "services/agentd-py/agentd/sandbox/**"
+      - "services/agentd-py/agentd/approvals/**"
+      - "services/agentd-py/agentd/tools/**"
+      - "services/agentd-py/agentd/exec_sessions/**"
+      - "services/agentd-py/tests/test_sandbox_*"
+      - ".github/workflows/sandbox.yml"
   pull_request:
     paths:
       - "services/agentd-py/agentd/sandbox/**"
