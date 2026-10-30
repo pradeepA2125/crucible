@@ -5,21 +5,29 @@ environment. A command run outside the sandbox gets the full environment back.
 """
 from __future__ import annotations
 
+import re
 import sys
 from collections.abc import Mapping
 
 _SECRET_MARKERS = ("KEY", "SECRET", "TOKEN", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH")
 _SECRET_PREFIXES = ("AWS_", "AZURE_")
-_SECRET_NAMES = frozenset({"GOOGLE_APPLICATION_CREDENTIALS"})
+_SECRET_NAMES = frozenset({"GOOGLE_APPLICATION_CREDENTIALS", "PGPASS"})
+# Whole words only: PATH, PATTERN and COMPASS are not secrets.
+_SECRET_WORDS = frozenset({"PAT", "PASS", "DSN", "CRED", "CREDS"})
+# A URL with a password in it, whatever the variable is called (DATABASE_URL).
+_CREDENTIAL_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/\s]*:[^/\s@]*@")
 _PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY")
 # Loopback stays direct: the sandbox allows it, and the proxy refuses it.
 _NO_PROXY = "localhost,127.0.0.1,::1"
 
 
-def _is_secret(name: str) -> bool:
-    upper = name.upper()
+def _is_secret(name: str, value: str) -> bool:
+    # AUTHOR contains AUTH; git's identity variables are not credentials.
+    upper = name.upper().replace("AUTHOR", "")
     return (upper in _SECRET_NAMES or upper.startswith(_SECRET_PREFIXES)
-            or any(marker in upper for marker in _SECRET_MARKERS))
+            or any(marker in upper for marker in _SECRET_MARKERS)
+            or not _SECRET_WORDS.isdisjoint(upper.split("_"))
+            or _CREDENTIAL_URL.match(value) is not None)
 
 
 def _is_proxy_var(name: str) -> bool:
@@ -38,9 +46,11 @@ def _without_system_ca(env: dict[str, str]) -> None:
         env.pop("NODE_OPTIONS", None)
 
 
-def sandbox_env(env: Mapping[str, str], proxy_url: str | None, *,
-                platform: str = sys.platform) -> dict[str, str]:
-    result = {k: v for k, v in env.items() if not _is_secret(k) and not _is_proxy_var(k)}
+def sandbox_env(env: Mapping[str, str], proxy_url: str | None, *, platform: str = sys.platform,
+                tmpdir: str | None = None) -> dict[str, str]:
+    result = {k: v for k, v in env.items() if not _is_secret(k, v) and not _is_proxy_var(k)}
+    if tmpdir is not None:
+        result["TMPDIR"] = result["TEMP"] = result["TMP"] = tmpdir
     if platform == "darwin":
         _without_system_ca(result)
     if proxy_url is not None:

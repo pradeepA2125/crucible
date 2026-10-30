@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 class WorkspaceSandboxStore:
     def __init__(self, workspace: Path, home: Path) -> None:
-        key = hashlib.sha256(os.path.realpath(workspace).encode()).hexdigest()[:16]
-        root = home / ".crucible" / "sandbox" / key
+        self.key = hashlib.sha256(os.path.realpath(workspace).encode()).hexdigest()[:16]
+        root = home / ".crucible" / "sandbox" / self.key
         self._hosts_path = root / "hosts.json"
         self._config_path = root / "folders.json"
 

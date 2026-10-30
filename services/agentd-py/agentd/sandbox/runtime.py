@@ -7,7 +7,10 @@ is reported with its reason instead of failing every command.
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 import shutil
+import stat
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Sequence
@@ -22,6 +25,8 @@ from agentd.sandbox.policy import SandboxPolicy, build_policy
 from agentd.sandbox.proxy import SandboxProxy
 from agentd.sandbox.seatbelt import seatbelt_argv
 from agentd.sandbox.store import WorkspaceSandboxStore
+
+logger = logging.getLogger(__name__)
 
 _PROBE_TIMEOUT_SEC = 10
 
@@ -56,6 +61,7 @@ class SandboxRuntime:
 
     async def start(self) -> None:
         """Probe, then start the proxy when the sandbox can run."""
+        self._clear_private_tmp()
         try:
             await self.probe()
         except Exception as exc:
@@ -63,7 +69,7 @@ class SandboxRuntime:
             self._available, self._reason = False, f"sandbox failed to start: {exc}"
             raise
         if self._available and self.proxy is None:
-            proxy = SandboxProxy()
+            proxy = SandboxProxy(baseline_hosts=self.store.hosts)
             await proxy.start()
             self.proxy = proxy
 
@@ -80,14 +86,49 @@ class SandboxRuntime:
             return None
         lease = (self.proxy.lease(self.store.hosts(), extra_hosts, allow_any)
                  if self.proxy is not None else None)
+        private_tmp = self._private_tmp()
         policy = build_policy(
             workspace=self.workspace, home=self.home, shadow_root=shadow_root,
             extra_writable=self.store.folders(),
             proxy_port=self.proxy.port if self.proxy is not None else None,
-            proxy_socket=self.proxy.socket_path if self.proxy is not None else None)
-        return SandboxLaunch(policy=policy, lease=lease,
-                             _wrap=lambda argv: self.wrap_argv(argv, policy),
+            proxy_socket=self.proxy.socket_path if self.proxy is not None else None,
+            private_tmp=private_tmp)
+        # Linux mounts the private folder at /tmp; macOS can only point TMPDIR at it.
+        tmpdir = None if private_tmp is None else ("/tmp" if self._linux else str(policy.private_tmp))
+        return SandboxLaunch(policy=policy, lease=lease, tmpdir=tmpdir,
+                             _wrap=lambda argv, interactive: self.wrap_argv(
+                                 argv, policy, interactive=interactive),
                              _release=self._release_lease)
+
+    @property
+    def _linux(self) -> bool:
+        return self._platform != "darwin"
+
+    def _private_tmp_path(self) -> Path:
+        # Short on macOS: Unix socket paths are limited to about 104 characters there.
+        key = self.store.key
+        return (self.home / ".crucible" / "sandbox" / key / "tmp" if self._linux
+                else Path(f"/tmp/crucible-sbx-{os.getuid()}-{key}"))
+
+    def _private_tmp(self) -> Path | None:
+        """Ours, or none: /tmp is shared, and another user may have created this name first."""
+        path = self._private_tmp_path()
+        try:
+            path.mkdir(parents=True, exist_ok=True, mode=0o700)
+            info = path.lstat()
+        except OSError:
+            logger.warning("[sandbox] no private temp folder at %s", path, exc_info=True)
+            return None
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+            logger.warning("[sandbox] %s is not ours; using no private temp folder", path)
+            return None
+        return path
+
+    def _clear_private_tmp(self) -> None:
+        # Commands from a previous run are gone; one backend serves one workspace.
+        path = self._private_tmp_path()
+        if path.is_dir() and not path.is_symlink() and path.lstat().st_uid == os.getuid():
+            shutil.rmtree(path, ignore_errors=True)
 
     def release(self, launch: SandboxLaunch | None) -> None:
         if launch is not None:
@@ -97,11 +138,12 @@ class SandboxRuntime:
         if launch.lease is not None and self.proxy is not None:
             self.proxy.release(launch.lease)
 
-    def wrap_argv(self, argv: Sequence[str], policy: SandboxPolicy) -> list[str]:
+    def wrap_argv(self, argv: Sequence[str], policy: SandboxPolicy, *,
+                  interactive: bool = False) -> list[str]:
         if self._platform == "darwin":
             return seatbelt_argv(policy, argv)
         return bwrap_argv(policy, argv, bwrap=self._which("bwrap") or "bwrap",
-                          python=sys.executable)
+                          python=sys.executable, interactive=interactive)
 
     async def probe(self) -> None:
         self._available, self._reason = await asyncio.to_thread(self._probe)

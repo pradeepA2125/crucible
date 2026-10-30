@@ -93,6 +93,12 @@ def seatbelt_profile(policy: SandboxPolicy) -> str:
     rules = [_BASE, _KEYCHAIN, _CLIPBOARD]
     if policy.writable:
         rules.append(f"(allow file-write* {_filters(policy.writable)})\n")
+    # Test servers and multiprocessing need Unix sockets; the host's own are elsewhere.
+    for root in (policy.workspace, policy.private_tmp):
+        if root is not None:
+            # One folder per rule: a second filter inside `unix-socket` is ignored.
+            rules.append(f"(allow network-bind network-inbound (local unix-socket (subpath {_literal(root)})))\n"
+                         f"(allow network-outbound (remote unix-socket (subpath {_literal(root)})))\n")
     if policy.read_only:
         rules.append(f"(deny file-write* {_filters(policy.read_only)})\n")
         reopened = [p for p in policy.writable if _inside(p, policy.read_only)]

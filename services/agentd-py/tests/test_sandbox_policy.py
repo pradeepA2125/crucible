@@ -124,3 +124,17 @@ def test_sandbox_env_keeps_node_system_ca_on_linux():
 def test_sandbox_env_drops_inherited_proxy_without_one():
     env = sandbox_env({"PATH": "/bin", "HTTPS_PROXY": "http://corp:8080"}, None)
     assert "HTTPS_PROXY" not in env
+
+
+def test_sandbox_env_strips_more_secret_shapes():
+    env = sandbox_env({"GITHUB_PAT": "x", "MY_PAT": "x", "DB_PASS": "x", "PGPASS": "x", "SENTRY_DSN": "x",
+                       "DB_CRED": "x", "DATABASE_URL": "postgres://u:p@h/d", "REDIS_URI": "redis://:p@h",
+                       "PATH": "/bin", "PATTERN": "a", "COMPASS": "n", "DOCS_URL": "https://x/y",
+                       "KUBE_API_URL": "https://h:6443"}, None)
+    assert set(env) == {"PATH", "PATTERN", "COMPASS", "DOCS_URL", "KUBE_API_URL"}
+
+
+def test_sandbox_env_keeps_the_git_identity():
+    env = sandbox_env({"GIT_AUTHOR_NAME": "a", "GIT_AUTHOR_EMAIL": "b", "GIT_COMMITTER_NAME": "c",
+                       "AUTHOR": "d", "OAUTH_CLIENT": "e", "HTTP_AUTH": "f"}, None)
+    assert set(env) == {"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "AUTHOR"}

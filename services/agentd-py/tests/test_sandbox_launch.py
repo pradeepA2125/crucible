@@ -21,7 +21,8 @@ from agentd.sandbox.runtime import SandboxRuntime
 from agentd.tools.registry import ToolRegistry
 from agentd.tools.shell import run_command
 
-pytestmark = pytest.mark.skipif(sys.platform != "darwin", reason="spawns Seatbelt processes")
+pytestmark = pytest.mark.skipif(sys.platform != "darwin" and shutil.which("bwrap") is None,
+                                reason="needs Seatbelt or bubblewrap")
 
 
 @pytest.fixture
@@ -137,3 +138,15 @@ async def test_node_set_to_use_the_system_ca_store_does_not_crash(tmp_path):
         subprocess.run, launch.wrap(["node", "-e", connect]), capture_output=True, text=True,
         timeout=30, env=launch.env({**os.environ, "NODE_USE_SYSTEM_CA": "1"}), cwd=tmp_path)
     assert done.returncode == 0, done.stderr
+
+
+@pytest.mark.asyncio
+async def test_ctrl_c_stops_a_command_in_a_sandboxed_session(tmp_path):
+    runtime = await _runtime(tmp_path)
+    manager = SessionManager(tmp_path, registry_path=tmp_path / "sessions.json")
+    session = await manager.start("t1", "/bin/sh", [], None, 300,
+                                  sandbox=runtime.launch_for(shadow_root=None))
+    await manager.write_stdin("t1", session.session_id, "sleep 20\n", 800)
+    await manager.write_stdin("t1", session.session_id, "\x03", 800)
+    read = await manager.write_stdin("t1", session.session_id, "echo alive-$((1+1))\n", 1500)
+    assert "alive-2" in read.new_output

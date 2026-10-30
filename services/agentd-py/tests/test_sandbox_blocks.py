@@ -200,3 +200,11 @@ def test_sandbox_marker_names_a_block_or_a_command_let_out() -> None:
     assert sandbox_marker(ToolOutput(output="", status="sandbox_blocked")) == "blocked"
     assert sandbox_marker(ToolOutput(output="", outside_sandbox=True)) == "outside"
     assert sandbox_marker(ToolOutput(output="", sandboxed=True)) is None
+
+
+def test_masked_credential_folder_reads_as_a_block():
+    # bwrap masks these with an empty mount, so the read looks like a missing file.
+    out = "cat: /Users/u/.ssh/id_rsa: No such file or directory"
+    assert _classify(out) == SandboxBlock("read", "/Users/u/.ssh/id_rsa")
+    assert _classify("cat: /work/space/nope: No such file or directory") is None
+    assert _classify("cat: nope: No such file or directory") is None

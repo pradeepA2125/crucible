@@ -194,7 +194,7 @@ class SessionManager:
         buf = RingBuffer(buffer_bytes())
         argv = [command, *args]
         if sandbox is not None:
-            argv, env = sandbox.wrap(argv), sandbox.env(env)
+            argv, env = sandbox.wrap(argv, interactive=True), sandbox.env(env)
         try:
             proc = await self._pty_cls.spawn(
                 argv[0], argv[1:], cwd=target_cwd, env=env, on_output=buf.append)

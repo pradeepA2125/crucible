@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -167,3 +168,37 @@ def test_real_network_denied_loopback_allowed(tmp_path):
                 "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); "
                 "c=socket.create_connection(s.getsockname()); print('ok')")
     assert loop.stdout.strip() == "ok", loop.stderr
+
+
+def test_argv_hides_host_sockets_and_shares_nothing_in_tmp(tmp_path):
+    policy, _ws, _home = _policy(tmp_path)
+    private = tmp_path / "private"
+    private.mkdir()
+    argv = bwrap_argv(replace(policy, private_tmp=private), ["true"], bwrap=BWRAP, python=sys.executable)
+    assert (str(private), "/tmp") in _pairs(argv, "--bind")
+    tmpfs = [argv[i + 1] for i, a in enumerate(argv) if a == "--tmpfs"]
+    assert "/run" in tmpfs
+
+
+def test_argv_makes_masked_folders_read_only(tmp_path):
+    policy, _ws, home = _policy(tmp_path)
+    argv = bwrap_argv(policy, ["true"], bwrap=BWRAP, python=sys.executable)
+    remounts = [argv[i + 1] for i, a in enumerate(argv) if a == "--remount-ro"]
+    assert str(home / ".ssh") in remounts
+
+
+def test_argv_keeps_the_terminal_for_interactive_sessions(tmp_path):
+    policy, _ws, _home = _policy(tmp_path)
+    assert "--new-session" in bwrap_argv(policy, ["true"], bwrap=BWRAP, python=sys.executable)
+    # setsid would drop the controlling terminal PtyProcess acquires: Ctrl-C would reach nobody.
+    assert "--new-session" not in bwrap_argv(policy, ["true"], bwrap=BWRAP, python=sys.executable,
+                                             interactive=True)
+
+
+def test_argv_creates_a_missing_cache_folder_so_it_can_be_bound(tmp_path):
+    # Home is read-only; on a fresh machine ~/.npm doesn't exist and npm would hit EROFS.
+    policy, _ws, home = _policy(tmp_path)
+    cache = home / ".npm"
+    argv = bwrap_argv(replace(policy, writable=(*policy.writable, cache)), ["true"],
+                      bwrap=BWRAP, python=sys.executable)
+    assert cache.is_dir() and (str(cache), str(cache)) in _pairs(argv, "--bind")

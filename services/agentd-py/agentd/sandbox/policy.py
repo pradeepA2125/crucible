@@ -31,7 +31,7 @@ CACHE_DIRS = (
 UNREADABLE_IN_HOME = (
     ".ssh", ".aws", ".gnupg", ".config/gcloud", ".azure", ".kube", ".docker/config.json",
     ".netrc", ".git-credentials", ".config/gh", ".crucible/run", ".crucible/auth",
-    ".crucible/trust.json", ".claude", "Library/Keychains",
+    ".crucible/trust.json", ".claude", "Library/Keychains", ".docker/run", ".docker/desktop",
 )
 # Shell startup files and git config that something unsandboxed would run or read later.
 STARTUP_FILES = (".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile",
@@ -69,6 +69,9 @@ class SandboxPolicy:
     # folder in an ordinary repository; apart in a linked worktree.
     git_dir: Path | None = None
     git_common_dir: Path | None = None
+    # This workspace's own temp folder. Host sockets (VS Code's, tmux's, ssh-agent's) live in
+    # the shared temp folders, so commands get sockets only here and in the workspace.
+    private_tmp: Path | None = None
 
 
 def _canonical(path: Path) -> Path:
@@ -121,7 +124,8 @@ def _pinned(paths: Sequence[Path]) -> tuple[Path, ...]:
 def _temp_dirs() -> list[Path]:
     dirs = [Path(d) for d in _TEMP_DIRS if sys.platform == "darwin" or not d.startswith("/private")]
     tmpdir = os.environ.get("TMPDIR")
-    if tmpdir:
+    # On Linux /run is hidden from commands, and that's where a per-user TMPDIR often is.
+    if tmpdir and not tmpdir.startswith(("/run/", "/var/run/")):
         dirs.append(Path(tmpdir))
     return dirs
 
@@ -132,7 +136,8 @@ def _unique(paths: list[Path]) -> tuple[Path, ...]:
 
 def build_policy(*, workspace: Path, home: Path, shadow_root: Path | None,
                  extra_writable: Sequence[Path], proxy_port: int | None,
-                 proxy_socket: Path | None = None) -> SandboxPolicy:
+                 proxy_socket: Path | None = None,
+                 private_tmp: Path | None = None) -> SandboxPolicy:
     root = _canonical(workspace)
     writable = [root, *_temp_dirs(), *(home / d for d in CACHE_DIRS), *extra_writable]
     if shadow_root is not None:
@@ -149,4 +154,5 @@ def build_policy(*, workspace: Path, home: Path, shadow_root: Path | None,
         pinned=_pinned(protected),
         git_dir=git_dir,
         git_common_dir=git_common_dir,
+        private_tmp=_canonical(private_tmp) if private_tmp is not None else None,
     )

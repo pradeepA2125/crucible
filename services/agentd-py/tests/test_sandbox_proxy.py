@@ -122,12 +122,38 @@ def test_metadata_and_loopback_are_internal():
 
 
 @pytest.mark.asyncio
-async def test_missing_token_407():
+async def test_a_tool_that_ignores_proxy_credentials_gets_only_the_baseline():
+    # Ubuntu's npm 9 and some Java tools drop the credentials in a proxy URL. They get what
+    # every sandboxed command already has, and nothing a single command was granted.
+    server, port = await _echo_server()
+    proxy = SandboxProxy(resolver=_resolver({"pypi.org": "127.0.0.1", "kept.example": "127.0.0.1",
+                                             "extra.example": "127.0.0.1"}),
+                         is_internal=lambda ip: ip == METADATA, unix_socket=False,
+                         baseline_hosts=lambda: ["kept.example"])
+    await proxy.start()
+    proxy.lease([], ["extra.example"])
+    head, _ = await _connect(proxy, f"pypi.org:{port}", None)
+    assert head.startswith(b"HTTP/1.1 200")
+    head, _ = await _connect(proxy, f"kept.example:{port}", None)
+    assert head.startswith(b"HTTP/1.1 200")
+    head, _ = await _connect(proxy, f"extra.example:{port}", None)
+    assert head.startswith(b"HTTP/1.1 403")
+    head, _ = await _connect(proxy, f"pypi.org:{port}", "not-a-real-token")
+    assert head.startswith(b"HTTP/1.1 407")
+    await proxy.close()
+    server.close()
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_without_a_token_is_recorded_when_only_one_command_runs():
     proxy = await _proxy({})
-    head, _ = await _connect(proxy, "pypi.org:443", None)
-    assert head.startswith(b"HTTP/1.1 407")
-    head, _ = await _connect(proxy, "pypi.org:443", "not-a-lease")
-    assert head.startswith(b"HTTP/1.1 407")
+    lease = proxy.lease([])
+    head, _ = await _connect(proxy, "evil.example:443", None)
+    assert head.startswith(b"HTTP/1.1 403")
+    assert lease.refused == ["evil.example"]
+    second = proxy.lease([])
+    await _connect(proxy, "other.example:443", None)
+    assert "other.example" not in lease.refused and second.refused == []
     await proxy.close()
 
 
@@ -182,3 +208,70 @@ def test_lease_url_carries_token():
     proxy.port = 4321
     lease = proxy.lease(workspace_hosts=[])
     assert lease.url == f"http://{lease.token}:x@127.0.0.1:4321"
+
+
+async def _upstream_capture() -> tuple[asyncio.AbstractServer, int, list[bytes]]:
+    seen: list[bytes] = []
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        seen.append(await reader.readuntil(b"\r\n\r\n"))
+        writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    return server, server.sockets[0].getsockname()[1], seen
+
+
+@pytest.mark.asyncio
+async def test_forwarded_request_cannot_smuggle_another_host():
+    server, port, seen = await _upstream_capture()
+    proxy = await _proxy({"pypi.org": "127.0.0.1"})
+    lease = proxy.lease([])
+    reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+    writer.write((f"GET http://pypi.org:{port}/a HTTP/1.1\r\nHost: evil.example\r\n"
+                  f"Connection: keep-alive\r\nProxy-Authorization: {_auth(lease.token)}\r\n\r\n").encode())
+    await writer.drain()
+    await reader.read()
+    sent = seen[0].decode().lower()
+    assert f"host: pypi.org:{port}" in sent
+    assert "evil.example" not in sent and "proxy-authorization" not in sent
+    assert "connection: close" in sent and "keep-alive" not in sent
+    writer.close()
+    await proxy.close()
+    server.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["http://[bad/", "http://pypi.org:notaport/", "http://pypi.org:70000/"])
+async def test_a_bad_url_gets_an_answer_not_a_stack_trace(target):
+    proxy = await _proxy({"pypi.org": "127.0.0.1"})
+    lease = proxy.lease([])
+    reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+    writer.write(f"GET {target} HTTP/1.1\r\nProxy-Authorization: {_auth(lease.token)}\r\n\r\n".encode())
+    await writer.drain()
+    head = await asyncio.wait_for(reader.read(), 5)
+    assert head.startswith((b"HTTP/1.1 400", b"HTTP/1.1 502"))
+    writer.close()
+    await proxy.close()
+
+
+@pytest.mark.asyncio
+async def test_a_tunnel_opening_as_its_lease_ends_does_not_survive():
+    server, port = await _echo_server()
+    table = {"pypi.org": "127.0.0.1"}
+    release_hook: list[object] = []
+
+    async def resolve(host: str) -> list[str]:
+        for release in release_hook:
+            release()  # type: ignore[operator]
+        return [table[host]]
+
+    proxy = SandboxProxy(resolver=resolve, is_internal=lambda ip: False, unix_socket=False)
+    await proxy.start()
+    lease = proxy.lease([])
+    release_hook.append(lambda: proxy.release(lease))
+    head, _ = await _connect(proxy, f"pypi.org:{port}", lease.token)
+    assert head.startswith(b"HTTP/1.1 407")
+    await proxy.close()
+    server.close()

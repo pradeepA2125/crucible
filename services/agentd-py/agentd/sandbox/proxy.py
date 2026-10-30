@@ -7,6 +7,11 @@ annotation. TLS is tunnelled, never inspected. A host that resolves only to inte
 addresses (loopback, link-local, cloud metadata) is refused unless the workspace or the
 command listed it explicitly; the proxy connects to the address it checked, so a second
 DNS answer cannot redirect it.
+
+Some tools drop the credentials in a proxy URL (Ubuntu's npm 9, some Java tools). A request
+with no token gets the baseline every sandboxed command already has, so it gains nothing:
+the default and remembered hosts, never a command's extras. A wrong or released token is
+still refused.
 """
 from __future__ import annotations
 
@@ -64,7 +69,9 @@ def _short_socket_path() -> Path:
 class SandboxProxy:
     def __init__(self, *, resolver: Resolver = _system_resolve,
                  is_internal: Callable[[str], bool] = is_internal_address,
-                 unix_socket: bool = sys.platform != "darwin") -> None:
+                 unix_socket: bool = sys.platform != "darwin",
+                 baseline_hosts: Callable[[], Iterable[str]] = tuple) -> None:
+        self._baseline_hosts = baseline_hosts
         self._resolve = resolver
         self._is_internal = is_internal
         self._want_unix = unix_socket
@@ -130,28 +137,24 @@ class SandboxProxy:
             await self._reply(writer, 407, "Proxy Authentication Required",
                               'Proxy-Authenticate: Basic realm="crucible-sandbox"\r\n')
             return
-        if method.upper() == "CONNECT":
-            host, _, port_text = target.rpartition(":")
-            first = b""
-        else:
-            parts = urlsplit(target)
-            if parts.scheme != "http" or not parts.hostname:
-                await self._reply(writer, 400, "Bad Request")
-                return
-            host, port_text = parts.hostname, str(parts.port or 80)
-            path = parts.path or "/"
-            if parts.query:
-                path += "?" + parts.query
-            kept = [h for h in headers
-                    if not h.lower().startswith(("proxy-authorization:", "proxy-connection:"))]
-            first = "\r\n".join([f"{method} {path} {version}", *kept, "", ""]).encode("latin-1")
         try:
+            if method.upper() == "CONNECT":
+                host, _, port_text = target.rpartition(":")
+                first = b""
+            else:
+                host, port_text, first = self._forward_request(method, target, version, headers)
             host = normalize_host(host.strip("[]"))
             port = int(port_text)
+            if not 0 < port < 65536:
+                raise ValueError(f"bad port {port}")
         except ValueError:
             await self._reply(writer, 400, "Bad Request")
             return
         address = await self._check(lease, host)
+        if lease.token and lease.token not in self._leases:
+            # Released during the name lookup: its command is over.
+            await self._reply(writer, 407, "Proxy Authentication Required")
+            return
         if address is None:
             await self._reply(writer, 403, "Forbidden")
             return
@@ -160,7 +163,7 @@ class SandboxProxy:
             return
         try:
             up_reader, up_writer = await asyncio.open_connection(address, port)
-        except OSError:
+        except (OSError, OverflowError):
             await self._reply(writer, 502, "Bad Gateway")
             return
         if first:
@@ -171,6 +174,25 @@ class SandboxProxy:
         tracked.update((writer, up_writer))
         await asyncio.gather(self._pipe(reader, up_writer), self._pipe(up_reader, writer))
         tracked.difference_update((writer, up_writer))
+
+    @staticmethod
+    def _forward_request(method: str, target: str, version: str,
+                         headers: list[str]) -> tuple[str, str, bytes]:
+        """Plain HTTP. The checked host is the one that goes upstream: on a CDN a different
+        Host header would reach another tenant through an allowed name. One request per
+        connection, so later ones can't pass unchecked with the token still attached."""
+        parts = urlsplit(target)
+        if parts.scheme != "http" or not parts.hostname:
+            raise ValueError(f"not a forwardable URL: {target}")
+        host, port = parts.hostname, str(parts.port or 80)
+        path = parts.path or "/"
+        if parts.query:
+            path += "?" + parts.query
+        authority = host if port == "80" else f"{host}:{port}"
+        dropped = ("proxy-authorization:", "proxy-connection:", "connection:", "host:")
+        kept = [h for h in headers if not h.lower().startswith(dropped)]
+        lines = [f"{method} {path} {version}", f"Host: {authority}", *kept, "Connection: close", "", ""]
+        return host, port, "\r\n".join(lines).encode("latin-1")
 
     def _lease_for(self, headers: list[str]) -> ProxyLease | None:
         for line in headers:
@@ -185,7 +207,8 @@ class SandboxProxy:
             except ValueError:
                 return None
             return self._leases.get(user)
-        return None
+        return ProxyLease(token="", url="", extra_hosts=frozenset(),
+                          workspace_hosts=frozenset(self._baseline_hosts()))
 
     async def _check(self, lease: ProxyLease, host: str) -> str | None:
         """The address to connect to, None when the host is refused (recorded), or
@@ -207,8 +230,12 @@ class SandboxProxy:
             elif address is None:
                 return _UNRESOLVED
         if not allowed:
-            if host not in lease.refused:
-                lease.refused.append(host)
+            recorded = lease
+            # No token to name the command; with one running it can only be that one.
+            if not lease.token and len(self._leases) == 1:
+                recorded = next(iter(self._leases.values()))
+            if host not in recorded.refused:
+                recorded.refused.append(host)
             logger.info("[sandbox] proxy refused %s", host)
             return None
         return address

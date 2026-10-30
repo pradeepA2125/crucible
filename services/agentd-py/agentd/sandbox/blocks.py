@@ -32,6 +32,7 @@ _PATH_PATTERNS = (
     re.compile(rf"(?<![^\s:'\"])(?P<path>/[^:'\"\n]+): {_DENIED}", re.IGNORECASE),
     re.compile(rf"(?<!\S)(?P<path>[^\s:'\"/][^\s:'\"]*): {_DENIED}", re.IGNORECASE),
 )
+_MISSING_FILE = re.compile(r"(?P<path>/[^:'\"\n]+): No such file or directory")
 _DIRECT_NETWORK = (
     re.compile(r"connect to host \S+ port \d+: Operation not permitted"),
     re.compile(r"Could not resolve host: "),
@@ -88,12 +89,23 @@ def _direct_network(output: str) -> bool:
     return bool(_SOCKET_EPERM.search(output)) and ("connect" in output or "socket" in output)
 
 
+def _masked_read(output: str, policy: SandboxPolicy) -> SandboxBlock | None:
+    for match in _MISSING_FILE.finditer(output):
+        raw = match["path"]
+        if os.path.isabs(raw) and _inside(Path(os.path.realpath(raw)), policy.unreadable):
+            return SandboxBlock("read", raw)
+    return None
+
+
 def classify_block(output: str, exit_code: int | None, policy: SandboxPolicy,
                    refused_hosts: Sequence[str]) -> SandboxBlock | None:
     if exit_code == 0:
         return None
     if refused_hosts:
         return SandboxBlock("network", refused_hosts[0])
+    masked = _masked_read(output, policy)
+    if masked is not None:
+        return masked
     for pattern in _PATH_PATTERNS:
         for match in pattern.finditer(output):
             block = _path_block(match["path"], policy)

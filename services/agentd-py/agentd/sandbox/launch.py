@@ -13,16 +13,18 @@ from agentd.sandbox.proxy import ProxyLease
 class SandboxLaunch:
     policy: SandboxPolicy
     lease: ProxyLease | None
-    _wrap: Callable[[list[str]], list[str]]
+    _wrap: Callable[[list[str], bool], list[str]]
     _release: Callable[[SandboxLaunch], None]
+    tmpdir: str | None = None
     _released: bool = field(default=False, init=False)
 
-    def wrap(self, argv: list[str]) -> list[str]:
-        return self._wrap(argv)
+    def wrap(self, argv: list[str], *, interactive: bool = False) -> list[str]:
+        return self._wrap(argv, interactive)
 
     def env(self, base: Mapping[str, str]) -> dict[str, str]:
         """The caller's environment (venv, PYTHONPATH…) minus secrets, plus the proxy."""
-        return sandbox_env(base, self.lease.url if self.lease is not None else None)
+        return sandbox_env(base, self.lease.url if self.lease is not None else None,
+                           tmpdir=self.tmpdir)
 
     def release(self) -> None:
         if not self._released:
