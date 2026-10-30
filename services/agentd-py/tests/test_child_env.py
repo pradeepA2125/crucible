@@ -12,7 +12,9 @@ _SUBPROCESS_ATTRS = {"run", "Popen", "call", "check_call", "check_output"}
 _ASYNC_ATTRS = {"create_subprocess_exec", "create_subprocess_shell"}
 # The MCP SDK builds stdio env from its own allowlist; pty_process receives the env its
 # only caller (exec_sessions/manager.py) built with child_env().
-_EXEMPT = {"mcp/client.py", "exec_sessions/pty_process.py"}
+# sandbox/netbridge.py runs as a standalone script inside the sandbox: the backend package is
+# not importable there, and its child inherits the environment the launcher already cleaned.
+_EXEMPT = {"mcp/client.py", "exec_sessions/pty_process.py", "sandbox/netbridge.py"}
 
 
 def test_exec_sessions_build_their_env_with_child_env() -> None:

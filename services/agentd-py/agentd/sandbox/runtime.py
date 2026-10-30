@@ -15,6 +15,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from agentd.child_env import child_env
 from agentd.sandbox.bubblewrap import bwrap_argv
 from agentd.sandbox.launch import SandboxLaunch
 from agentd.sandbox.policy import SandboxPolicy, build_policy
@@ -110,7 +111,7 @@ class SandboxRuntime:
         true = "/usr/bin/true" if Path("/usr/bin/true").exists() else "/bin/true"
         try:
             result = subprocess.run(self.wrap_argv([true], policy), capture_output=True,
-                                    text=True, timeout=_PROBE_TIMEOUT_SEC)
+                                    text=True, timeout=_PROBE_TIMEOUT_SEC, env=child_env())
         except (OSError, subprocess.TimeoutExpired) as exc:
             return False, f"sandbox failed to start: {exc}"
         if result.returncode == 0:
