@@ -34,6 +34,11 @@ describe("ApprovalMenu", () => {
     open({ ...approval, mode: "auto", snapshot: { ...approval.snapshot!, autoAccept: true, shellPolicy: "auto",
       shellPolicies: ["ask", "allow_all", "auto"] } });
     expect(screen.getByRole("menu")).toHaveTextContent("Commands: checked against what you asked for; risky ones ask.");
+    expect(screen.getByRole("menu")).toHaveTextContent("MCP tools and input to running terminal sessions are checked the same way.");
+    expect(screen.getByRole("menu")).not.toHaveTextContent("isn’t gated");
+  });
+  it("says MCP and terminal input keep their own approval outside Auto", () => {
+    open(); expect(screen.getByRole("menu")).toHaveTextContent("Input to an already-running terminal session isn’t gated.");
   });
   it("waits for acknowledgement and surfaces failed requests without changing the chip", () => {
     const { rerender } = open(); fireEvent.click(screen.getByRole("menuitemradio", { name: /^Accept edits/ }));

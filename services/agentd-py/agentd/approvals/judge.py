@@ -29,6 +29,7 @@ from agentd.providers.context_overflow import ContextWindowExceeded
 from agentd.providers.plan_access import ProviderAccessStopped
 from agentd.providers.reasoning_effort import EFFORT_OVERRIDE, ReasoningEffort
 from agentd.providers.usage import METER, USAGE_OWNER, Usage
+from agentd.reasoning.react_common import accepts_kwarg
 
 logger = logging.getLogger(__name__)
 
@@ -265,11 +266,17 @@ class AutoJudge:
         checks: list[dict[str, str]] = []
         responses = record["responses"]
         assert isinstance(responses, list)
+        # Some transports (the Claude plan) report token counts only to an on_usage
+        # callback; without one the judge's usage and per-turn budget would read 0.
+        generate = getattr(getattr(transport, "wrapped", transport), "generate_json", None)
+        usage_kwargs: dict[str, object] = (
+            {"on_usage": _record_usage} if accepts_kwarg(generate, "on_usage") else {})
         for _ in range(MAX_CHECKS + 1):
             payload = session.payload(context, action, checks, _instruction(len(checks)))
             response = await transport.generate_json(
                 model=model, schema_name="auto_judge", schema=JUDGE_SCHEMA,
-                system_instructions=JUDGE_POLICY, user_payload=payload, on_retry=_abort_retry)
+                system_instructions=JUDGE_POLICY, user_payload=payload, on_retry=_abort_retry,
+                **usage_kwargs)
             responses.append(response)
             if not isinstance(response, dict):
                 raise _MalformedVerdict("judge returned no object")
@@ -300,6 +307,10 @@ class AutoJudge:
 
 def _abort_retry(*_args: object) -> None:
     raise JudgeRetryAbort("transient provider error during an Auto judgment")
+
+
+def _record_usage(prompt_tokens: int, completion_tokens: int) -> None:
+    METER.record(USAGE_OWNER.get(), prompt=prompt_tokens, completion=completion_tokens)
 
 
 def _instruction(checks_used: int) -> str:

@@ -110,7 +110,9 @@ export function ApprovalMenu({ approval }: { approval: ApprovalModeView }) {
             : "ask unless remembered"}.</p>}
           <p>Protected paths and untrusted-agent edits always need review. Remembered command rules run without asking.</p>
           <p>Sub-agents follow their definitions: Plan cannot edit; Accept edits and Don’t ask apply edits automatically.</p>
-          <p>MCP tools keep their own approval. Input to an already-running terminal session isn’t gated.</p>
+          <p>{approval.snapshot?.shellPolicy === "auto"
+            ? "MCP tools and input to running terminal sessions are checked the same way."
+            : "MCP tools keep their own approval. Input to an already-running terminal session isn’t gated."}</p>
         </div>
       </div>}
       {warning && <FullAccessWarning returnTo={chip} onCancel={() => setWarning(false)} onConfirm={remember => { setWarning(false); choose("full_access", true, remember); }} />}

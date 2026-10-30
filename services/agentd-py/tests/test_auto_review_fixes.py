@@ -204,3 +204,33 @@ async def test_failures_are_capped_across_concurrent_agents():
     agents = [JudgeRequest("t1", f"a{i}", Path("/tmp")) for i in range(6)]
     await asyncio.gather(*(j.judge(r, ACTION) for r in agents))
     assert fake.calls == 2  # the second failure suspends the thread before the others call
+
+
+# Transports that report usage only through on_usage (the Claude plan) still count
+# toward the judge's usage line and its per-turn budget.
+class _UsageCallbackTransport:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate_json(self, *, model, schema_name, schema, system_instructions,
+                            user_payload, on_retry=None, on_usage=None):
+        self.calls += 1
+        if on_usage is not None:
+            on_usage(90_000, 40)
+        return VERDICT_LOW
+
+
+@pytest.mark.asyncio
+async def test_usage_reported_through_callback_is_recorded_and_budgeted():
+    transport = _UsageCallbackTransport()
+    seen = []
+    j = AutoJudge(transport_source=lambda: (transport, "m"),
+                  context_source=lambda _r: JudgeContext((), "", (), "0"),
+                  artifacts_dir=lambda _r: None, timeout_sec=5.0,
+                  turn_uncached_budget=150_000,
+                  usage_sink=lambda _r, used: seen.append(used))
+    await j.judge(REQ, ACTION)
+    assert (seen[0].prompt_tokens, seen[0].completion_tokens) == (90_000, 40)
+    await j.judge(REQ, ACTION)
+    third = await j.judge(REQ, ACTION)  # 180k uncached spent: the budget stops the judge
+    assert third.kind == "ask" and transport.calls == 2
