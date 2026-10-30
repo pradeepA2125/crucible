@@ -78,6 +78,7 @@ from agentd.domain.models import (
     ApprovalOutcome,
     CommandDecision,
     DeniedBy,
+    Escalation,
     McpToolDecision,
     ShellPolicy,
 )
@@ -399,6 +400,17 @@ _MAX_ARRIVAL_REDIRECTS = 5
 _AUTO_ASK_STREAK_OFFER = 3
 
 
+def _decision_breadcrumb(command: str, escalation: Escalation | None, approved: bool) -> str:
+    if escalation is None:
+        return f"✓ Command approved: {command}" if approved else f"✗ Command rejected: {command}"
+    if escalation.kind == "allow_hosts":
+        hosts = ", ".join(escalation.hosts)
+        return (f"✓ Network access allowed: {hosts}" if approved
+                else f"✗ Network access refused: {hosts}")
+    return (f"✓ Allowed outside the sandbox: {command}" if approved
+            else f"✗ Not allowed outside the sandbox: {command}")
+
+
 def _tool_kind(native_web: bool, native_fetch: bool) -> PendingActionKind:
     return "web_fetch" if native_fetch else "web_search" if native_web else "mcp"
 
@@ -641,6 +653,7 @@ class ChatController:
         thread_id: str = "",
         read_observer: Callable[[str], None] | None = None,
         extra_sources: list[object] | None = None,
+        escalation_approval_cb: object | None = None,
     ) -> AggregatingToolRegistry:
         sources: list[object] = [BuiltinToolSource(
             shadow_root=Path(self._workspace_path),
@@ -650,6 +663,7 @@ class ChatController:
             command_approval_callback=command_approval_callback,
             read_observer=read_observer,
             sandbox_runtime=self._sandbox,
+            escalation_approval_callback=escalation_approval_cb,
         )]
         from agentd.web.config import is_web_search_enabled
         from agentd.web.exa import ExaSearchClient
@@ -981,6 +995,7 @@ class ChatController:
         # run_command (ACTIVE-only; PLAN rejects it) is gated through the controller's
         # command callback — closes over this turn's thread/channel like edit_cb.
         command_cb = partial(self._command_approval_cb, thread_id, channel_id)
+        escalation_cb = partial(self._escalation_approval_cb, thread_id, channel_id)
         # MCP tool calls gate through the same thread-gate machinery (kind="mcp_tool").
         mcp_cb = partial(self._mcp_approval_cb, thread_id, channel_id)
         # Persist the ledger mid-turn on every write_todos so /live renders it during the turn.
@@ -996,7 +1011,8 @@ class ChatController:
             exec_source = ExecSessionToolSource(
                 self._exec_sessions, thread_id, command_cb,
                 stdin_approval_callback=partial(self._stdin_approval_cb, thread_id, channel_id),
-                sandbox_runtime=self._sandbox)
+                sandbox_runtime=self._sandbox,
+                escalation_approval_callback=escalation_cb)
         # Shared active-skills map: SkillToolSource (in the registry) writes activated bodies
         # here, the loop re-injects them into the dynamic tail each iteration. Rehydrated
         # from the thread's persisted single active skill (survives every turn boundary —
@@ -1052,6 +1068,7 @@ class ChatController:
                                   active_skills=active_skills,
                                   active_skill_persist_cb=active_skill_persist_cb,
                                   thread_id=thread_id,
+                                  escalation_approval_cb=escalation_cb,
                                   mcp_approval_cb=mcp_cb,
                                   exec_session_source=exec_source,
                                   read_observer=(
@@ -1744,6 +1761,33 @@ class ChatController:
         return await self._ask_command(thread_id, channel_id, command, args, cwd, child=child,
                                        auto_reason=auto_reason)
 
+    async def _escalation_approval_cb(
+        self, thread_id: str, channel_id: str, escalation: Escalation,
+        command: str, args: list[str], cwd: str, *, child: AgentHandle | None = None,
+    ) -> ApprovalOutcome:
+        """Leaving the sandbox or reaching hosts it blocks. Full access lets it through;
+        Auto asks the judge (the deny list still denies); otherwise the user decides on a
+        card. A remembered command rule never covers it."""
+        if self._shell_policy == ShellPolicy.ALLOW_ALL:
+            return ApprovalOutcome.allow()
+        auto_reason: str | None = None
+        if self._shell_policy == ShellPolicy.AUTO:
+            decision = await self._auto_gate.decide_escalation(
+                escalation, command, args, self._judge_request(thread_id, child))
+            if self._shell_policy != ShellPolicy.AUTO:
+                return await self._escalation_approval_cb(
+                    thread_id, channel_id, escalation, command, args, cwd, child=child)
+            if decision.kind == "run":
+                return ApprovalOutcome.allow(note=decision.note)
+            if decision.kind == "deny":
+                cmdline = f"{command} {' '.join(args)}".strip()
+                self._gate_breadcrumb(thread_id, channel_id,
+                                      f"✗ Auto blocked: {cmdline} — {decision.reason}", child)
+                return ApprovalOutcome.deny("policy", reason=decision.reason)
+            auto_reason = decision.reason
+        return await self._ask_command(thread_id, channel_id, command, args, cwd, child=child,
+                                       auto_reason=auto_reason, escalation=escalation)
+
     def _auto_gate_payload(self, thread_id: str, payload: dict[str, object],
                            auto_reason: str | None) -> dict[str, object]:
         """Auto's reason on the card, and after three approved Auto asks in a row the
@@ -1764,12 +1808,16 @@ class ChatController:
     async def _ask_command(
         self, thread_id: str, channel_id: str, command: str, args: list[str], cwd: str, *,
         child: AgentHandle | None = None, auto_reason: str | None = None,
-        remember: bool = True,
+        remember: bool = True, escalation: Escalation | None = None,
     ) -> ApprovalOutcome:
-        """Raise the durable command card and wait for the user's decision."""
+        """Raise the durable command card and wait for the user's decision. With an
+        escalation the card asks to leave the sandbox or allow hosts instead; "remember"
+        then stores the hosts for this workspace, never a command rule."""
         gate_payload = self._auto_gate_payload(thread_id, {
             "command": command, "args": args, "cwd": cwd,
             "mentions_protected": command_mentions_protected(command, args)}, auto_reason)
+        if escalation is not None:
+            gate_payload["escalation"] = escalation.model_dump()
         gate = self._store.add_controller_gate(thread_id, PendingGate.new(
             "command", gate_payload, agent=self._gate_agent(child)))
         loop = asyncio.get_event_loop()
@@ -1805,14 +1853,17 @@ class ChatController:
             self._store.remove_controller_gate(thread_id, gate.gate_id)
             self._refresh_child_gate_status(thread_id, child)
 
-        rule = rule_from_decision(decision, command, args) if remember else None
-        if rule is not None:
-            CommandRuleStore(self._workspace_path).add(rule)
+        if escalation is None:
+            rule = rule_from_decision(decision, command, args) if remember else None
+            if rule is not None:
+                CommandRuleStore(self._workspace_path).add(rule)
+        elif (decision.approve and decision.remember and escalation.kind == "allow_hosts"
+              and self._sandbox is not None):
+            for host in escalation.hosts:
+                self._sandbox.store.add_host(host)
         self._note_auto_ask(thread_id, auto_reason, decision.approve)
-        self._gate_breadcrumb(
-            thread_id, channel_id,
-            f"✓ Command approved: {command}" if decision.approve
-            else f"✗ Command rejected: {command}", child)
+        self._gate_breadcrumb(thread_id, channel_id,
+                              _decision_breadcrumb(command, escalation, decision.approve), child)
         return ApprovalOutcome.from_command(decision, denied_by=denied_by)
 
     async def _stdin_approval_cb(
@@ -2309,6 +2360,28 @@ class ChatController:
             return ApprovalOutcome.deny("policy")
         return await self._command_approval_cb(
             child.thread_id, f"chat:{child.thread_id}", command, args, cwd, child=child)
+
+    async def _child_escalation_approval_cb(
+        self, child: AgentHandle, escalation: Escalation, command: str, args: list[str],
+        cwd: str,
+    ) -> ApprovalOutcome:
+        if self._team_tool_refusal(child, "run_command"):
+            return ApprovalOutcome.deny("policy")
+        if child.context.no_ask and self._shell_policy != ShellPolicy.ALLOW_ALL:
+            if self._shell_policy == ShellPolicy.AUTO:
+                decision = await self._auto_gate.decide_escalation(
+                    escalation, command, args, self._judge_request(child.thread_id, child))
+                if self._shell_policy != ShellPolicy.AUTO:
+                    return await self._child_escalation_approval_cb(
+                        child, escalation, command, args, cwd)
+                if decision.kind == "run":
+                    return ApprovalOutcome.allow(note=decision.note)
+                return ApprovalOutcome.deny("policy", reason=decision.reason)
+            return ApprovalOutcome.deny(
+                "policy", reason="needs the user's approval to leave the sandbox")
+        return await self._escalation_approval_cb(
+            child.thread_id, f"chat:{child.thread_id}", escalation, command, args, cwd,
+            child=child)
 
     async def _child_mcp_approval_cb(
         self, child: AgentHandle, server: str, tool: str, args: dict[str, object],
@@ -4209,7 +4282,9 @@ class ChatController:
                     render_ctx=render_ctx,
                     read_observer=log.read_observer(workspace, ctx.agent_id),
                     command_guard=vcs_refusal,
-                    sandbox_runtime=self._sandbox),
+                    sandbox_runtime=self._sandbox,
+                    escalation_approval_callback=partial(
+                        self._child_escalation_approval_cb, handle)),
                 TodoToolSource(ledger, render_ctx=render_ctx),
             ]
             memory_source = self._memory_harness.memory_tool_source(

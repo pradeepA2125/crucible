@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 AutoDecisionKind = Literal["run", "ask", "deny"]
-PendingActionKind = Literal["command", "session_start", "stdin", "mcp", "web_search", "web_fetch"]
+PendingActionKind = Literal["command", "session_start", "stdin", "mcp", "web_search", "web_fetch",
+                            "sandbox_escalation"]
 ACTION_SUMMARY_MAX_CHARS = 2000
 AGENT_REASON_MAX_CHARS = 500
 

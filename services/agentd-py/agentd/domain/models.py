@@ -195,6 +195,15 @@ class CommandDecision(BaseModel):
     rule_value: str | None = None
 
 
+class Escalation(BaseModel):
+    """An agent's request to leave the command sandbox, or to reach hosts it blocks.
+    Never covered by a remembered command rule; only a user's allow_hosts approval is
+    ever remembered (as workspace hosts)."""
+    kind: Literal["outside_sandbox", "allow_hosts"]
+    hosts: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+
 class McpToolDecision(BaseModel):
     """User decision on an mcp_tool approval gate (chat controller). Remember
     persists the exact (server, tool) pair to the workspace McpRuleStore."""

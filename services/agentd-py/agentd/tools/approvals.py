@@ -8,12 +8,15 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from agentd.domain.models import ApprovalOutcome
+from agentd.domain.models import ApprovalOutcome, Escalation
 
 CommandApprovalCallback = Callable[[str, list[str], str], Awaitable[ApprovalOutcome]]
 McpApprovalCallback = Callable[[str, str, dict[str, object]], Awaitable[ApprovalOutcome]]
 # (session_id, the session's command line, chars) — Auto mode judges terminal input.
 StdinApprovalCallback = Callable[[str, str, str], Awaitable[ApprovalOutcome]]
+# (escalation, command, args, cwd) — leaving the sandbox or reaching hosts it blocks.
+EscalationApprovalCallback = Callable[[Escalation, str, list[str], str],
+                                      Awaitable[ApprovalOutcome]]
 
 _POLICY_TAIL = (
     " is not permitted for this agent (no remembered rule allows it); nobody was asked. "

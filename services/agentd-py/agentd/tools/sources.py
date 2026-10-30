@@ -42,6 +42,7 @@ class BuiltinToolSource:
         command_guard: Callable[[str], str | None] | None = None,
         retrieval_client: object | None = None,
         sandbox_runtime: object | None = None,
+        escalation_approval_callback: object | None = None,
     ) -> None:
         self._inner = ToolRegistry(
             shadow_root,
@@ -52,6 +53,7 @@ class BuiltinToolSource:
             command_guard=command_guard,
             retrieval_client=retrieval_client,
             sandbox_runtime=sandbox_runtime,  # type: ignore[arg-type]
+            escalation_approval_callback=escalation_approval_callback,  # type: ignore[arg-type]
         )
         self._phase = "explore"
         self._read_observer = read_observer

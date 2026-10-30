@@ -19,7 +19,13 @@ from agentd.exec_sessions.manager import (
     SessionSpawnError,
 )
 from agentd.sandbox.blocks import annotate_block
-from agentd.tools.approvals import CommandApprovalCallback, StdinApprovalCallback, denial_text
+from agentd.sandbox.escalation import ESCALATION_PROPERTIES, escalation_from_args
+from agentd.tools.approvals import (
+    CommandApprovalCallback,
+    EscalationApprovalCallback,
+    StdinApprovalCallback,
+    denial_text,
+)
 from agentd.tools.registry import ToolDefinition, ToolOutput
 
 if TYPE_CHECKING:
@@ -38,11 +44,14 @@ class ExecSessionToolSource:
     def __init__(self, manager: SessionManager, thread_id: str,
                  command_approval_callback: CommandApprovalCallback,
                  stdin_approval_callback: StdinApprovalCallback | None = None,
-                 sandbox_runtime: SandboxRuntime | None = None) -> None:
+                 sandbox_runtime: SandboxRuntime | None = None,
+                 escalation_approval_callback: EscalationApprovalCallback | None = None,
+                 ) -> None:
         self._manager = manager
         self._thread_id = thread_id
         self._approve = command_approval_callback
         self._sandbox = sandbox_runtime
+        self._approve_escalation = escalation_approval_callback
         # Per session: how many refused hosts were already reported to the agent.
         self._refused_seen: dict[str, int] = {}
         # (session_id, session command line, chars) → outcome; only Auto mode sets it.
@@ -74,6 +83,8 @@ class ExecSessionToolSource:
                         "cwd": {"type": "string", "description":
                                 "Workspace-relative working dir (default root)"},
                         "yield_time_ms": yield_prop,
+                        **(ESCALATION_PROPERTIES
+                           if self._sandbox is not None and self._sandbox.active() else {}),
                     },
                     "required": ["command"],
                 }),
@@ -169,7 +180,12 @@ class ExecSessionToolSource:
         raw_args = args.get("args")
         cmd_args = [str(a) for a in raw_args] if isinstance(raw_args, list) else []
         cwd = str(args.get("cwd") or "")
-        outcome = await self._approve(command, cmd_args, cwd)
+        active = self._sandbox is not None and self._sandbox.active()
+        escalation = escalation_from_args(args) if active else None
+        if escalation is not None and self._approve_escalation is not None:
+            outcome = await self._approve_escalation(escalation, command, cmd_args, cwd)
+        else:
+            outcome = await self._approve(command, cmd_args, cwd)
         if not outcome.approved:
             cmdline = f"{command} {' '.join(cmd_args)}".strip()
             return ToolOutput(
@@ -178,13 +194,17 @@ class ExecSessionToolSource:
                     user_text=(f"Command rejected by user: {command}. Do not retry the "
                                "same command — adapt or ask.")),
                 is_error=True)
-        launch = (self._sandbox.launch_for(shadow_root=None)
-                  if self._sandbox is not None else None)
+        outside = escalation is not None and escalation.kind == "outside_sandbox"
+        launch = (self._sandbox.launch_for(
+                      shadow_root=None,
+                      extra_hosts=escalation.hosts if escalation is not None else ())
+                  if self._sandbox is not None and not outside else None)
         read = await self._manager.start(
             self._thread_id, command, cmd_args, cwd or None,
             args.get("yield_time_ms"), sandbox=launch)
         output = self._render(read)
         self._annotate(output, read, launch)
+        output.outside_sandbox = outside
         output.approval_note = outcome.note
         return output
 

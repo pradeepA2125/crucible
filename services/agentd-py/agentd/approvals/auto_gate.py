@@ -15,6 +15,7 @@ from agentd.approvals.types import (
     PendingAction,
     PendingActionKind,
 )
+from agentd.domain.models import Escalation
 from agentd.tools.command_rules import CommandRuleStore
 
 PROTECTED_WRITE_REASON = "writes a protected file"
@@ -65,6 +66,22 @@ class AutoGate:
         if self.judge is None:
             return AutoDecision("ask", NO_JUDGE_REASON, None)
         action = PendingAction.build("command", f"run_command: {parsed.line}", agent_reason)
+        return await self.judge.judge(request, action)
+
+    async def decide_escalation(self, escalation: Escalation, command: str, args: list[str],
+                                request: JudgeRequest) -> AutoDecision:
+        """Leaving the sandbox, or reaching hosts it blocks: the deny list still denies,
+        then the judge always decides (no judge → ask)."""
+        parsed = parse_command(command, args, self._workspace)
+        reason = deny_reason(parsed, workspace=self._workspace, home=self._home)
+        if reason is not None:
+            return AutoDecision("deny", reason, None)
+        if self.judge is None:
+            return AutoDecision("ask", NO_JUDGE_REASON, None)
+        what = ("run outside the sandbox" if escalation.kind == "outside_sandbox"
+                else f"reach {', '.join(escalation.hosts)} from inside the sandbox")
+        action = PendingAction.build("sandbox_escalation",
+                                     f"{what}: run_command: {parsed.line}", escalation.reason)
         return await self.judge.judge(request, action)
 
     async def decide_stdin(self, session_command: str, chars: str,

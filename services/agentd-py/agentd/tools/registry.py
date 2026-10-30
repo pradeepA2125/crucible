@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from agentd.local_models import semantic_ready
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
-from agentd.tools.approvals import denial_text
+from agentd.tools.approvals import EscalationApprovalCallback, denial_text
 from agentd.tools.read_policy import adaptive_reads_enabled
 
 if TYPE_CHECKING:
@@ -101,10 +101,13 @@ class ToolRegistry:
         command_guard: Callable[[str], str | None] | None = None,
         retrieval_client: object | None = None,
         sandbox_runtime: SandboxRuntime | None = None,
+        escalation_approval_callback: EscalationApprovalCallback | None = None,
     ) -> None:
         self._shadow_root = shadow_root
         # Commands run inside the sandbox while it is on and available (None: never).
         self._sandbox = sandbox_runtime
+        # Approves outside_sandbox / allow_hosts; None (tests, task path) approves them.
+        self._escalation_approval_callback = escalation_approval_callback
         self._real_workspace_path = real_workspace_path
         self._semantic_index = semantic_index
         self._retrieval_client = retrieval_client
@@ -116,6 +119,16 @@ class ToolRegistry:
         self._command_approval_callback = command_approval_callback
         self._command_guard = command_guard
         self._render_ctx = render_ctx or RenderContext.main()
+
+    def _sandbox_active(self) -> bool:
+        return self._sandbox is not None and self._sandbox.active()
+
+    def _escalation_properties(self) -> dict[str, object]:
+        """outside_sandbox / allow_hosts / reason, only while commands run sandboxed."""
+        if not self._sandbox_active():
+            return {}
+        from agentd.sandbox.escalation import ESCALATION_PROPERTIES
+        return dict(ESCALATION_PROPERTIES)
 
     def use_shadow_for_reads(self) -> None:
         """Switch read_file, search_code, list_directory to read from the shadow workspace."""
@@ -239,6 +252,7 @@ class ToolRegistry:
                         "command": {"type": "string", "description": "Command name or full path"},
                         "args": {"type": "array", "items": {"type": "string"}, "description": "Command arguments — include shell operators (|, &&, ||, ;, >, >>, <) as standalone entries to compose a real pipeline/chain"},
                         "cwd": {"type": "string", "description": "Optional working directory, RELATIVE to the workspace root (e.g. 'services/agentd-py'). Empty/omitted = workspace root. Paths that escape the workspace are clamped to root."},
+                        **self._escalation_properties(),
                     },
                     "required": ["command"],
                 },
@@ -496,7 +510,10 @@ class ToolRegistry:
 
     async def prepare_command(self, args: dict[str, object]):
         """Validate/gate before taking scheduler resources; run the approved arguments only."""
+        from functools import partial
+
         from agentd.sandbox.blocks import annotate_block
+        from agentd.sandbox.escalation import escalation_from_args
         from agentd.tools.shell import run_command
         raw_args = args.get("args", [])
         cmd_args = [str(a) for a in raw_args] if isinstance(raw_args, list) else []
@@ -513,8 +530,14 @@ class ToolRegistry:
             if refusal is not None:
                 return ToolOutput(output=refusal, is_error=True)
         note: str | None = None
-        if self._command_approval_callback is not None:
-            outcome = await self._command_approval_callback(command, cmd_args, cwd)
+        # An escalation replaces the ordinary gate: leaving the sandbox or reaching a
+        # new host gets its own decision, which no remembered command rule covers.
+        escalation = escalation_from_args(args) if self._sandbox_active() else None
+        approve = (partial(self._escalation_approval_callback, escalation)
+                   if escalation is not None and self._escalation_approval_callback is not None
+                   else None if escalation is not None else self._command_approval_callback)
+        if approve is not None:
+            outcome = await approve(command, cmd_args, cwd)
             note = outcome.note
             if not outcome.approved:
                 cmdline = f"{command} {' '.join(cmd_args)}".strip()
@@ -531,8 +554,11 @@ class ToolRegistry:
                 refusal = self._command_guard(line)
                 if refusal is not None:
                     return ToolOutput(output=refusal, is_error=True)
-            launch = (self._sandbox.launch_for(shadow_root=self._shadow_root)
-                      if self._sandbox is not None else None)
+            outside = escalation is not None and escalation.kind == "outside_sandbox"
+            launch = (self._sandbox.launch_for(
+                          shadow_root=self._shadow_root,
+                          extra_hosts=escalation.hosts if escalation is not None else ())
+                      if self._sandbox is not None and not outside else None)
             try:
                 output = await run_command(
                     command=command,
@@ -548,6 +574,7 @@ class ToolRegistry:
                     launch.release()
             if launch is not None and output.is_error:
                 annotate_block(output, launch, "run_command")
+            output.outside_sandbox = outside
             output.approval_note = note
             return output
         return run
