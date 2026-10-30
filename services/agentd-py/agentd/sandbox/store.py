@@ -1,12 +1,15 @@
 """This workspace's sandbox settings: remembered hosts and extra writable folders.
 
-Both files are on Auto's always-ask list and read-only inside the sandbox, so a command
-can never widen its own sandbox.
+Kept per workspace under the home folder, outside the wall, never in the repository: a file
+in a cloned repo or written by a command must not be able to widen the sandbox.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 
 from agentd.sandbox.hosts import normalize_host
@@ -15,9 +18,11 @@ logger = logging.getLogger(__name__)
 
 
 class WorkspaceSandboxStore:
-    def __init__(self, workspace: Path) -> None:
-        self._hosts_path = workspace / ".crucible" / "approved-hosts.json"
-        self._config_path = workspace / ".crucible" / "sandbox.json"
+    def __init__(self, workspace: Path, home: Path) -> None:
+        key = hashlib.sha256(os.path.realpath(workspace).encode()).hexdigest()[:16]
+        root = home / ".crucible" / "sandbox" / key
+        self._hosts_path = root / "hosts.json"
+        self._config_path = root / "folders.json"
 
     def _read(self, path: Path, key: str) -> list[str]:
         try:
@@ -34,10 +39,11 @@ class WorkspaceSandboxStore:
         return [v for v in values if isinstance(v, str)]
 
     def _write(self, path: Path, key: str, values: list[str]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({key: values}, indent=2) + "\n")
-        tmp.replace(path)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name)
+        with os.fdopen(fd, "w") as stream:
+            stream.write(json.dumps({key: values}, indent=2) + "\n")
+        os.replace(tmp, path)
 
     def hosts(self) -> list[str]:
         result: list[str] = []

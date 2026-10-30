@@ -93,7 +93,8 @@ def test_no_runtime_reports_no_sandbox(tmp_path, monkeypatch):
 
 
 def test_store_round_trip_and_malformed_file(tmp_path):
-    store = WorkspaceSandboxStore(tmp_path)
+    home = tmp_path / "home"
+    store = WorkspaceSandboxStore(tmp_path, home)
     assert store.hosts() == [] and store.folders() == []
     store.add_host("Example.COM")
     store.add_host("example.com")
@@ -104,22 +105,23 @@ def test_store_round_trip_and_malformed_file(tmp_path):
     extra.mkdir()
     store.set_folders([extra])
     assert store.folders() == [extra.resolve()]
-    assert json.loads((tmp_path / ".crucible" / "sandbox.json").read_text()) == {
+    assert json.loads(next(home.rglob("folders.json")).read_text()) == {
         "writable": [str(extra.resolve())]}
-    (tmp_path / ".crucible" / "approved-hosts.json").write_text("{not json")
+    store.add_host("example.com")
+    next(home.rglob("hosts.json")).write_text("{not json")
     assert store.hosts() == []
 
 
 @pytest.mark.parametrize("bad", ["http://x.com", "x.com:443", "x.com/path", "", "a b"])
 def test_store_rejects_bad_hosts(tmp_path, bad):
     with pytest.raises(ValueError):
-        WorkspaceSandboxStore(tmp_path).set_hosts([bad])
+        WorkspaceSandboxStore(tmp_path, tmp_path / "home").set_hosts([bad])
 
 
 def _client(tmp_path) -> TestClient:
     app = FastAPI()
     app.include_router(build_sandbox_router(SandboxRuntime(tmp_path),
-                                            WorkspaceSandboxStore(tmp_path)))
+                                            WorkspaceSandboxStore(tmp_path, tmp_path / "home")))
     return TestClient(app)
 
 

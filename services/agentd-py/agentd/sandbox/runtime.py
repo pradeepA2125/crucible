@@ -44,7 +44,7 @@ class SandboxRuntime:
         self._available = False
         # available=False with no reason: the check has not finished yet.
         self._reason: str | None = None
-        self.store = WorkspaceSandboxStore(workspace)
+        self.store = WorkspaceSandboxStore(workspace, self.home)
         self.proxy: SandboxProxy | None = None
 
     def status(self) -> SandboxStatus:

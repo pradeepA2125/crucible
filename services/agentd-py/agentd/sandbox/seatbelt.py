@@ -2,15 +2,23 @@
 
 `sandbox-exec` is deprecated but still what Chrome, Codex, Cursor and Claude Code use; the
 profile constrains the whole process tree. Later rules override earlier ones, which is how
-read-only files carve holes in writable folders and how a shadow re-opens inside the
-read-only `.crucible/state`.
+read-only files carve holes in writable folders, how a shadow and git's everyday files
+re-open inside read-only folders, and why credential stores come last: a workspace that
+contains the home folder must not re-open them.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from pathlib import Path
 
-from agentd.sandbox.policy import SandboxPolicy
+from agentd.sandbox.policy import (
+    GIT_SHARED_DIRS,
+    GIT_SHARED_FILES,
+    GIT_WORKTREE_DIRS,
+    GIT_WORKTREE_FILES,
+    SandboxPolicy,
+)
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 
@@ -43,6 +51,9 @@ _KEYCHAIN = """(deny mach-lookup
   (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd.xpc")
   (global-name "com.apple.security.agent") (global-name "com.apple.secd"))
 """
+# The clipboard often holds what the file rules protect: tokens, passwords.
+_CLIPBOARD = """(deny mach-lookup (global-name "com.apple.pasteboard.1"))
+"""
 
 
 def _literal(path: Path) -> str:
@@ -58,14 +69,28 @@ def _filters(paths: Sequence[Path]) -> str:
         for p in paths)
 
 
+def _regex_literal(path: Path) -> str:
+    # re.escape would backslash spaces, which the profile's regex engine rejects.
+    return re.sub(r"([.^$*+?()\[\]{}|\\])", r"\\\1", str(path))
+
+
 def _inside(path: Path, parents: Sequence[Path]) -> bool:
     return any(path != parent and path.is_relative_to(parent) for parent in parents)
 
 
+def _git_rules(git_dir: Path, common: Path) -> str:
+    # A raw `#"..."` string cannot hold a quote; such a folder stays read-only.
+    if '"' in str(git_dir) or '"' in str(common):
+        return ""
+    dirs = [*(git_dir / d for d in GIT_WORKTREE_DIRS), *(common / d for d in GIT_SHARED_DIRS)]
+    subpaths = " ".join(f"(subpath {_literal(d)})" for d in dict.fromkeys(dirs))
+    return (f"(allow file-write* {subpaths}\n"
+            f'  (regex #"^{_regex_literal(git_dir)}/({GIT_WORKTREE_FILES})$")\n'
+            f'  (regex #"^{_regex_literal(common)}/{GIT_SHARED_FILES}$"))\n')
+
+
 def seatbelt_profile(policy: SandboxPolicy) -> str:
-    rules = [_BASE, _KEYCHAIN]
-    if policy.unreadable:
-        rules.append(f"(deny file-read* file-write* {_filters(policy.unreadable)})\n")
+    rules = [_BASE, _KEYCHAIN, _CLIPBOARD]
     if policy.writable:
         rules.append(f"(allow file-write* {_filters(policy.writable)})\n")
     if policy.read_only:
@@ -73,6 +98,13 @@ def seatbelt_profile(policy: SandboxPolicy) -> str:
         reopened = [p for p in policy.writable if _inside(p, policy.read_only)]
         if reopened:
             rules.append(f"(allow file-write* {_filters(reopened)})\n")
+    if policy.git_dir is not None and policy.git_common_dir is not None:
+        rules.append(_git_rules(policy.git_dir, policy.git_common_dir))
+    if policy.pinned:
+        literals = " ".join(f"(literal {_literal(p)})" for p in policy.pinned)
+        rules.append(f"(deny file-write* {literals})\n")
+    if policy.unreadable:
+        rules.append(f"(deny file-read* file-write* {_filters(policy.unreadable)})\n")
     return "".join(rules)
 
 

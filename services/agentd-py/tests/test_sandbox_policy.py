@@ -45,9 +45,9 @@ def test_policy_read_only_includes_always_ask_files(tmp_path):
     (ws / "app.code-workspace").write_text("{}")
     (policy, ws, _home) = _policy(tmp_path)
     read_only = set(policy.read_only)
-    for rel in ("AGENTS.md", ".crucible/approved-hosts.json", ".crucible/approved-commands.json",
-                ".crucible/sandbox.json", ".crucible/mcp.json", ".crucible/agents",
-                ".crucible/state", ".git/hooks", ".git/config", ".vscode/tasks.json",
+    for rel in ("AGENTS.md", ".crucible/approved-commands.json",
+                ".crucible/mcp.json", ".crucible/agents",
+                ".crucible/state", ".git", ".git/hooks", ".git/config", ".vscode/tasks.json",
                 ".zshrc", ".bashrc", ".gitconfig", "app.code-workspace"):
         assert ws.resolve() / rel in read_only, rel
 

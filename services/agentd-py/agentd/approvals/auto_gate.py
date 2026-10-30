@@ -102,6 +102,10 @@ class AutoGate:
         reason = deny_reason(parsed, workspace=self._workspace, home=self._home)
         if reason is not None:
             return AutoDecision("deny", reason, None)
+        # Outside the wall nothing else stops this write, and one wrong verdict persists.
+        if (escalation.kind == "outside_sandbox"
+                and writes_protected(parsed, workspace=self._workspace, home=self._home)):
+            return AutoDecision("ask", PROTECTED_WRITE_REASON, None)
         if self.judge is None:
             return AutoDecision("ask", NO_JUDGE_REASON, None)
         what = ("run outside the sandbox" if escalation.kind == "outside_sandbox"

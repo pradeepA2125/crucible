@@ -145,3 +145,14 @@ async def test_controller_skips_judge_for_sandboxed_routine_commands(tmp_path):
 def test_judge_policy_mentions_the_sandbox():
     from agentd.approvals.judge_policy import JUDGE_POLICY
     assert "outside the sandbox" in JUDGE_POLICY
+
+
+@pytest.mark.asyncio
+async def test_leaving_the_sandbox_to_write_a_protected_file_asks_the_user(tmp_path):
+    from agentd.domain.models import Escalation
+    gate, judge = _gate(tmp_path)
+    escalation = Escalation(kind="outside_sandbox", reason="r")
+    decision = await gate.decide_escalation(
+        escalation, "sh", ["-c", "echo x >> .crucible/approved-commands.json"], REQ)
+    assert decision.kind == "ask"
+    assert not judge.actions

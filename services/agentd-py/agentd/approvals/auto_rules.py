@@ -51,8 +51,7 @@ _WRITERS_LAST_ARG = frozenset({"cp", "mv", "ln", "install", "rsync"})
 # record in .crucible/state), or make tools run code later (VS Code tasks, git hooks).
 # One wrong verdict here would persist, so these always ask.
 ALWAYS_ASK_IN_WORKSPACE = (
-    "AGENTS.md", ".crucible/approved-*.json", ".crucible/mcp.json", ".crucible/sandbox.json",
-    ".crucible/agents/*",
+    "AGENTS.md", ".crucible/approved-*.json", ".crucible/mcp.json", ".crucible/agents/*",
     ".crucible/skills/*", ".crucible/prompts/*", ".crucible/state/*", ".claude/agents/*",
     ".claude/skills/*", ".vscode/settings.json", ".vscode/tasks.json", ".vscode/launch.json",
     "*.code-workspace", ".git/hooks/*", ".git/config",
