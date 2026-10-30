@@ -199,6 +199,7 @@ def select_chat_handler(
         from pathlib import Path as _Path
 
         from agentd.chat.rewind import RewindStore
+        from agentd.sandbox.runtime import SandboxRuntime
 
         rewind_store = RewindStore(thread_store, _Path(workspace_path))
         return ChatController(
@@ -219,6 +220,7 @@ def select_chat_handler(
             mcp_manager=mcp_manager,
             exec_session_manager=exec_manager,
             rewind_store=rewind_store,
+            sandbox_runtime=SandboxRuntime(_Path(workspace_path)),
         )
 
     from agentd.chat.agent import ChatAgent

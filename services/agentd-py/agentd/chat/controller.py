@@ -61,6 +61,7 @@ from agentd.chat.protected_paths import (
     is_protected,
 )
 from agentd.chat.rewind import RewindStore
+from agentd.sandbox.runtime import SandboxRuntime
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
 from agentd.chat.turn_control import ChatTurnControl
@@ -433,8 +434,11 @@ class ChatController:
         exec_session_manager: object | None = None,
         rewind_store: RewindStore | None = None,
         vision_capable: bool = False,
+        sandbox_runtime: SandboxRuntime | None = None,
     ) -> None:
         self._workspace_path = workspace_path
+        # The command sandbox (None in tests and legacy factories: commands run as before).
+        self._sandbox = sandbox_runtime
         self._reasoning = reasoning_engine
         self._vision_capable = vision_capable
         self._store = thread_store
@@ -1542,10 +1546,15 @@ class ChatController:
                     text += f" — {reason}"  # surface the user's reason in the record
             self._write_breadcrumb(thread_id, channel_id, text, edit_outcome=True)
 
+    @property
+    def sandbox_runtime(self) -> SandboxRuntime | None:
+        return self._sandbox
+
     def approval_state(self) -> ApprovalState:
         return ApprovalState(auto_accept=self._review_control.auto_accept_edits,
             shell_policy=self._shell_policy.value, version=self._approval_version,
-            owned=self._approval_owned, process_id=self.context_process_id())
+            owned=self._approval_owned, process_id=self.context_process_id(),
+            sandbox=self._sandbox.status() if self._sandbox is not None else None)
 
     def _set_legacy_review(self, auto_accept: bool) -> None:
         if self._review_control.auto_accept_edits != auto_accept:
@@ -1554,12 +1563,17 @@ class ChatController:
 
     def set_approval_mode(self, *, auto_accept: bool, shell_policy: ShellPolicy,
                           resolve_waiting: bool, expected_process_id: str,
-                          expected_version: int) -> ApprovalModeResult:
+                          expected_version: int,
+                          sandbox: bool | None = None) -> ApprovalModeResult:
         before = self.approval_state()
         if before.process_id != expected_process_id or before.version != expected_version:
             raise ApprovalConflict(before)
         # Single-process asyncio: no await between CAS, ownership and policy writes.
         changed = before.auto_accept != auto_accept or self._shell_policy != shell_policy
+        if sandbox is not None and self._sandbox is not None and self._sandbox.enabled != sandbox:
+            # Applies from the next command; a running session keeps the wall it started in.
+            self._sandbox.enabled = sandbox
+            changed = True
         self._approval_owned = True
         self._review_control.auto_accept_edits = auto_accept
         self._shell_policy = shell_policy

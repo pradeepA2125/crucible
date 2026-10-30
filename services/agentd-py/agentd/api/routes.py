@@ -1983,7 +1983,8 @@ def build_router(
                     shell_policy=ShellPolicy(request.shell_policy),
                     resolve_waiting=request.resolve_waiting,
                     expected_process_id=request.expected_process_id,
-                    expected_version=request.expected_version)
+                    expected_version=request.expected_version,
+                    sandbox=request.sandbox)
             except ApprovalConflict as exc:
                 raise HTTPException(status_code=409, detail=exc.state.model_dump()) from exc
             return result.model_dump()

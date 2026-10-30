@@ -501,6 +501,23 @@ app.include_router(
 app.include_router(build_agents_router(
     workspace=_chat_workspace_path,
     mcp_server_names=lambda: [s.name for s in _mcp_manager.statuses()] if _mcp_manager else []))
+# The command sandbox: probed in the background (it spawns a process), Settings routes
+# for this backend's workspace only.
+_sandbox_runtime = getattr(_chat_agent, "sandbox_runtime", None)
+if _sandbox_runtime is not None:
+    from agentd.api.sandbox_routes import build_sandbox_router  # noqa: E402
+    from agentd.sandbox.store import WorkspaceSandboxStore  # noqa: E402
+
+    async def _probe_sandbox() -> None:
+        try:
+            await _sandbox_runtime.probe()
+        except Exception:  # noqa: BLE001 — an unprobed sandbox reports "not checked yet"
+            _agentd_logger.warning("[sandbox] availability probe failed", exc_info=True)
+        _agentd_logger.info("[sandbox] %s", _sandbox_runtime.status().model_dump())
+
+    app.router.add_event_handler("startup", in_background(_probe_sandbox, "sandbox-probe"))
+    app.include_router(build_sandbox_router(
+        _sandbox_runtime, WorkspaceSandboxStore(_sandbox_runtime.workspace)))
 # Sign in with ChatGPT (spec 2026-10-06). The service is lazy: no network, no files
 # touched until a sign-in or a `chatgpt` transport first needs it.
 from agentd.api.chatgpt_auth_routes import build_chatgpt_auth_router  # noqa: E402

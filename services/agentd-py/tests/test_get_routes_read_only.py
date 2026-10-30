@@ -40,6 +40,7 @@ REVIEWED_READ_ONLY_GET_ROUTES = frozenset({
     ("api/routes.py", "/tasks/{task_id}/stream-patch"),
     ("api/routes.py", "/workspaces/env-profile"),
     ("api/agents_routes.py", "/agents"),  # reads the catalog; trust/writes are POST/PUT/DELETE
+    ("api/sandbox_routes.py", "/sandbox"),  # status and the workspace's two JSON files
     ("api/chatgpt_auth_routes.py", "/attempts/{attempt_id}"),  # in-memory status only
     # Reads records, returns summaries without tokens. Model listing (may refresh, i.e.
     # write) is deliberately POST.
