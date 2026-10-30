@@ -366,7 +366,10 @@ def test_a_rebase_inside_the_sandbox_is_a_named_block(repo: Path) -> None:
     (repo / "b.txt").write_text("b\n")
     _git(repo, "add", "b.txt")
     _git(repo, "commit", "-qm", "two")
+    before = (repo / ".git/refs/heads/main").read_text()
     done = _run(repo, f"git {identity} rebase --force-rebase HEAD~1")
-    assert done.returncode != 0
+    # Not the exit code: git 2.39 exits 1 here, while 2.53 and later print the error and exit 0.
+    assert not (repo / ".git/rebase-merge").exists()
+    assert (repo / ".git/refs/heads/main").read_text() == before
     block = classify_block(done.stderr + done.stdout, done.returncode, _policy(repo), [])
     assert block is not None and block.kind == "write", done.stderr
