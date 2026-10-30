@@ -61,18 +61,28 @@ ALWAYS_ASK_IN_WORKSPACE = (
 # judge because a token in a workspace file or an allowed host can carry them out.
 _GIT_OPTIONS_WITH_VALUE = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace"})
 _GH_OPTIONS_WITH_VALUE = frozenset({"-R", "--repo", "--hostname"})
-_GH_WRITES = {
-    "pr": frozenset({"create", "merge", "close", "edit", "comment", "review", "reopen",
-                     "ready"}),
-    "issue": frozenset({"create", "close", "edit", "comment", "reopen", "delete"}),
-    "release": frozenset({"create", "delete", "edit", "upload"}),
-    "repo": frozenset({"create", "delete", "edit", "fork", "rename", "archive"}),
+# gh is an allowlist of reads: it gains new write commands more often than new read ones.
+_GH_READS = {
+    "pr": frozenset({"list", "view", "status", "diff", "checks"}),
+    "issue": frozenset({"list", "view", "status"}),
+    "run": frozenset({"list", "view", "watch", "download"}),
+    "repo": frozenset({"list", "view"}),
+    "release": frozenset({"list", "view", "download"}),
+    "workflow": frozenset({"list", "view"}),
+    "gist": frozenset({"list", "view"}),
+    "label": frozenset({"list"}),
+    "cache": frozenset({"list"}),
+    "auth": frozenset({"status"}),
 }
-_GH_FIELD_FLAGS = frozenset({"-f", "-F", "--field", "--raw-field", "--input"})
-_OUTWARD_PAIRS = frozenset({
-    ("npm", "publish"), ("npm", "unpublish"), ("pnpm", "publish"), ("yarn", "publish"),
-    ("cargo", "publish"), ("twine", "upload"), ("uv", "publish"), ("docker", "push"),
-})
+_GH_READ_GROUPS = frozenset({"search", "status", "help", "version", "browse"})
+_GH_FIELD_FLAGS = ("-f", "-F", "--field", "--raw-field", "--input")
+# Any of these words anywhere after one of these tools. Global flags can sit before the
+# subcommand and each tool spells them differently; a false match only costs a judge call.
+_PUBLISHING_TOOLS = frozenset({"npm", "pnpm", "yarn", "bun", "cargo", "uv", "poetry", "twine",
+                               "hatch", "flit", "gem", "docker", "podman", "nerdctl"})
+_PUBLISHING_WORDS = frozenset({"publish", "unpublish", "push", "upload", "yank", "owner",
+                               "dist-tag", "deprecate", "--push"})
+_GIT_OUTWARD = frozenset({"push", "send-pack"})
 # ~/.crucible holds agent trust, backend tokens and sign-ins.
 _ALWAYS_ASK_IN_HOME = (".crucible/*", ".claude/agents/*", ".claude/skills/*")
 
@@ -291,19 +301,47 @@ def _subcommand(words: tuple[str, ...], options_with_value: frozenset[str]) -> t
     return words[i:]
 
 
+def _gh_api_writes(rest: tuple[str, ...]) -> bool:
+    for i, word in enumerate(rest):
+        name, _, value = word.partition("=")
+        if name in ("-X", "--method"):
+            method = value or (rest[i + 1] if i + 1 < len(rest) else "")
+            return method.upper() != "GET"
+        if word.startswith("-X"):  # -XPOST
+            return word[2:].upper() != "GET"
+    # gh api switches to POST when given fields, including the attached `-fa=b` form.
+    return any(w.startswith(_GH_FIELD_FLAGS) for w in rest)
+
+
 def _gh_writes(rest: tuple[str, ...]) -> bool:
     if not rest:
         return False
     group, action = rest[0], rest[1] if len(rest) > 1 else ""
     if group == "api":
-        for i, word in enumerate(rest):
-            name, _, value = word.partition("=")
-            if name in ("-X", "--method"):
-                method = value or (rest[i + 1] if i + 1 < len(rest) else "")
-                return method.upper() != "GET"
-        # gh api switches to POST when given fields.
-        return any(w.split("=", 1)[0] in _GH_FIELD_FLAGS for w in rest)
-    return action in _GH_WRITES.get(group, frozenset())
+        return _gh_api_writes(rest)
+    return group not in _GH_READ_GROUPS and action not in _GH_READS.get(group, frozenset())
+
+
+def _git_pushes(words: tuple[str, ...]) -> bool:
+    rest = _subcommand(words, _GIT_OPTIONS_WITH_VALUE)
+    if rest[:1] and rest[0] in _GIT_OUTWARD or rest[:2] == ("lfs", "push"):
+        return True
+    # `git -c alias.p=push p`: the subcommand can be anything once an alias is set inline.
+    return any(w.startswith("alias.") for w in words)
+
+
+def _runs_git_push(words: tuple[str, ...]) -> bool:
+    """`xargs git push`, `find . -exec git push`: a wrapper this parser doesn't unwrap."""
+    for i, word in enumerate(words[1:], start=1):
+        if Path(word).name == "git":
+            return _git_pushes(words[i:])
+    return False
+
+
+def _publishes(words: tuple[str, ...]) -> bool:
+    if _name(words).startswith("python") and "-m" in words:
+        words = words[words.index("-m") + 1:]
+    return _name(words) in _PUBLISHING_TOOLS and any(w in _PUBLISHING_WORDS for w in words[1:])
 
 
 def is_outward(parsed: ParsedCommand) -> bool:
@@ -316,13 +354,12 @@ def is_outward(parsed: ParsedCommand) -> bool:
         words = _command_words(segment)
         name = _name(words)
         if name == "git":
-            rest = _subcommand(words, _GIT_OPTIONS_WITH_VALUE)
-            if rest[:1] == ("push",):
+            if _git_pushes(words):
                 return True
         elif name == "gh":
             if _gh_writes(_subcommand(words, _GH_OPTIONS_WITH_VALUE)):
                 return True
-        elif len(words) > 1 and (name, words[1]) in _OUTWARD_PAIRS:
+        elif _publishes(words) or _runs_git_push(words):
             return True
     return False
 

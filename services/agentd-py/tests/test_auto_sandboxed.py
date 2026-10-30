@@ -40,6 +40,24 @@ def _gate(tmp_path: Path) -> tuple[AutoGate, _ScriptedJudge]:
     ("uv", ["publish"]),
     ("docker", ["push", "img"]),
     ("sh", ["-c", "make && git push"]),
+    # Global flags before the subcommand: the user's real token in ~/.npmrc is readable.
+    ("npm", ["--registry", "x", "publish"]), ("npm", ["-w", "a", "publish"]),
+    ("pnpm", ["-r", "publish"]), ("yarn", ["npm", "publish"]), ("npm", ["dist-tag", "add", "a"]),
+    ("npm", ["owner", "add", "a"]), ("cargo", ["--locked", "publish"]),
+    ("cargo", ["+stable", "publish"]), ("cargo", ["yank", "--vers", "1"]),
+    ("cargo", ["owner", "--add", "a"]), ("uv", ["--directory", "x", "publish"]),
+    ("poetry", ["publish"]), ("docker", ["--context", "c", "push", "i"]),
+    ("docker", ["image", "push", "i"]), ("docker", ["buildx", "build", "--push", "."]),
+    ("podman", ["push", "i"]), ("python", ["-m", "twine", "upload", "d"]),
+    ("python3", ["-m", "twine", "upload", "d"]),
+    # gh is an allowlist of reads: anything else changes something.
+    ("gh", ["api", "/x", "-XPOST"]), ("gh", ["api", "/x", "-fa=b"]), ("gh", ["gist", "create", "f"]),
+    ("gh", ["secret", "set", "S"]), ("gh", ["workflow", "run", "w"]), ("gh", ["repo", "sync"]),
+    ("gh", ["repo", "deploy-key", "add", "k"]), ("gh", ["release", "delete-asset", "v", "a"]),
+    ("gh", ["ssh-key", "add", "k"]), ("gh", ["newly-added-thing", "do"]),
+    # Other ways to reach a push.
+    ("git", ["-c", "alias.p=push", "p"]), ("git", ["send-pack", "o"]), ("git", ["lfs", "push", "o"]),
+    ("xargs", ["git", "push"]), ("find", [".", "-exec", "git", "push", ";"]),
 ])
 def test_outward_actions(tmp_path, cmd, args):
     assert is_outward(parse_command(cmd, args, tmp_path))
@@ -48,6 +66,14 @@ def test_outward_actions(tmp_path, cmd, args):
 @pytest.mark.parametrize("cmd,args", [
     ("git", ["fetch"]), ("git", ["commit", "-m", "x"]), ("gh", ["pr", "list"]),
     ("gh", ["api", "repos/o/r"]), ("npm", ["install"]), ("pytest", ["-q"]),
+    ("gh", ["pr", "view", "3"]), ("gh", ["pr", "diff", "3"]), ("gh", ["issue", "list"]),
+    ("gh", ["run", "view", "1"]), ("gh", ["repo", "view"]), ("gh", ["search", "code", "x"]),
+    ("gh", ["auth", "status"]), ("gh", ["--repo", "o/r", "pr", "list"]), ("gh", []),
+    ("gh", ["api", "repos/o/r", "-X", "GET"]), ("gh", ["api", "repos/o/r", "--jq", ".a"]),
+    ("npm", ["run", "build"]), ("npm", ["ci"]), ("cargo", ["build", "--locked"]),
+    ("docker", ["build", "-t", "x/push", "."]), ("docker", ["ps"]), ("uv", ["sync"]),
+    ("python", ["-m", "pytest"]), ("python3", ["script.py", "push"]), ("git", ["log", "push"]),
+    ("git", ["-c", "color.ui=always", "status"]), ("grep", ["-r", "push", "."]),
 ])
 def test_not_outward(tmp_path, cmd, args):
     assert not is_outward(parse_command(cmd, args, tmp_path))
