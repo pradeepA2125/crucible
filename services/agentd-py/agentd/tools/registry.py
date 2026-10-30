@@ -496,6 +496,7 @@ class ToolRegistry:
 
     async def prepare_command(self, args: dict[str, object]):
         """Validate/gate before taking scheduler resources; run the approved arguments only."""
+        from agentd.sandbox.blocks import annotate_block
         from agentd.tools.shell import run_command
         raw_args = args.get("args", [])
         cmd_args = [str(a) for a in raw_args] if isinstance(raw_args, list) else []
@@ -545,6 +546,8 @@ class ToolRegistry:
             finally:
                 if launch is not None:
                     launch.release()
+            if launch is not None and output.is_error:
+                annotate_block(output, launch, "run_command")
             output.approval_note = note
             return output
         return run

@@ -217,6 +217,11 @@ class SessionManager:
         exited = await proc.wait(clamp_yield_ms(yield_time_ms) / 1000)
         return self._read(sess, exited_hint=exited)
 
+    def session_sandbox(self, thread_id: str, session_id: str) -> SandboxLaunch | None:
+        """The wall a session runs in (None: unsandboxed or unknown session)."""
+        sess = self._sessions.get(session_id)
+        return sess.sandbox if sess is not None and sess.thread_id == thread_id else None
+
     async def write_stdin(self, thread_id: str, session_id: str, chars: str,
                           yield_time_ms: object) -> SessionRead:
         sess = self._get(thread_id, session_id)

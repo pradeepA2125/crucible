@@ -18,10 +18,12 @@ from agentd.exec_sessions.manager import (
     SessionRead,
     SessionSpawnError,
 )
+from agentd.sandbox.blocks import annotate_block
 from agentd.tools.approvals import CommandApprovalCallback, StdinApprovalCallback, denial_text
 from agentd.tools.registry import ToolDefinition, ToolOutput
 
 if TYPE_CHECKING:
+    from agentd.sandbox.launch import SandboxLaunch
     from agentd.sandbox.runtime import SandboxRuntime
 
 _TOOLS = ("start_session", "write_stdin", "kill_session", "list_sessions")
@@ -41,6 +43,8 @@ class ExecSessionToolSource:
         self._thread_id = thread_id
         self._approve = command_approval_callback
         self._sandbox = sandbox_runtime
+        # Per session: how many refused hosts were already reported to the agent.
+        self._refused_seen: dict[str, int] = {}
         # (session_id, session command line, chars) → outcome; only Auto mode sets it.
         self._approve_stdin = stdin_approval_callback
 
@@ -138,8 +142,11 @@ class ExecSessionToolSource:
                                           "Do not retry the same input — adapt or ask."),
                             is_error=True)
                     note = outcome.note
-                output = self._render(await self._manager.write_stdin(
-                    self._thread_id, session_id, chars, args.get("yield_time_ms")))
+                launch = self._manager.session_sandbox(self._thread_id, session_id)
+                read = await self._manager.write_stdin(
+                    self._thread_id, session_id, chars, args.get("yield_time_ms"))
+                output = self._render(read)
+                self._annotate(output, read, launch)
                 output.approval_note = note
                 return output
             if tool == "kill_session":
@@ -177,8 +184,23 @@ class ExecSessionToolSource:
             self._thread_id, command, cmd_args, cwd or None,
             args.get("yield_time_ms"), sandbox=launch)
         output = self._render(read)
+        self._annotate(output, read, launch)
         output.approval_note = outcome.note
         return output
+
+    def _annotate(self, output: ToolOutput, read: SessionRead,
+                  launch: SandboxLaunch | None) -> None:
+        """Name the sandbox when the new output shows it blocked something. Any input
+        typed into the session counts, so the retry is always a new start_session."""
+        if launch is None:
+            return
+        output.sandboxed = True
+        output.exit_code = None if read.still_running else read.exit_code
+        seen = self._refused_seen.get(read.session_id, 0)
+        annotate_block(output, launch, "start_session", text=read.new_output,
+                       refused_from=seen)
+        if launch.lease is not None:
+            self._refused_seen[read.session_id] = len(launch.lease.refused)
 
     def _render(self, read: SessionRead, killed: bool = False) -> ToolOutput:
         out = read.new_output[-result_max_chars():]
