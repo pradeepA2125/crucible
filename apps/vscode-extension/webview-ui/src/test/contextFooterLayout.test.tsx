@@ -1,9 +1,8 @@
 // Geometry is measured in installed Chrome, not jsdom (same approach as markdownWrapping).
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { chrome, dumpChromeDom } from "./chromeLayout";
 import { compile } from "@tailwindcss/node";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -12,10 +11,6 @@ import { InputArea } from "../components/InputArea";
 import { contextUsage } from "./contextUsageFixture";
 
 vi.mock("../vscodeApi", () => ({ vscode: { postMessage: vi.fn() } }));
-const chrome = process.env.CHROME_BIN ?? [
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome",
-].find(existsSync);
 
 describe.skipIf(!chrome)("context composer footer in a real browser", () => {
   const cases = (["send", "stop", "task"] as const).flatMap(mode =>
@@ -75,10 +70,7 @@ describe.skipIf(!chrome)("context composer footer in a real browser", () => {
             });
             document.body.innerHTML = '<pre id="result">' + JSON.stringify(results) + '</pre>';
           </script>`);
-        const output = execFileSync(chrome!, [
-          "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", "--disable-background-networking",
-          "--dump-dom", pathToFileURL(file).href,
-        ], { encoding: "utf8", timeout: 10000, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "ignore"] });
+        const output = dumpChromeDom(file);
         const encoded = output.match(/<pre id="result">([\s\S]*?)<\/pre>/)?.[1];
         expect(encoded, "browser executes geometry measurements").toBeTruthy();
         const results = JSON.parse(encoded!.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"));

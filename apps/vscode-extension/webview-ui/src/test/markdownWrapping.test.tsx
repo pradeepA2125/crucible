@@ -1,9 +1,8 @@
 // Layout measurements run in Chrome, not in jsdom.
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { chrome, dumpChromeDom } from "./chromeLayout";
 import { compile } from "@tailwindcss/node";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fireEvent, render } from "@testing-library/react";
@@ -16,11 +15,6 @@ import type { TeamPostView } from "../types";
 import { PostBody } from "../components/teams/PostBody";
 import { ResultCard } from "../components/teams/ResultCard";
 
-// No browser dependency/download: CI can point CHROME_BIN at installed Chromium.
-const chrome = process.env.CHROME_BIN ?? [
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome",
-].find(existsSync);
 const token = "long_path_or_identifier_".repeat(30);
 const code = `  command --argument=${token}\n    second line`;
 const message = [
@@ -109,10 +103,7 @@ describe.skipIf(!chrome)("markdown wrapping in a real browser", () => {
             }));
             document.body.innerHTML = '<pre id="result">' + JSON.stringify(result) + '</pre>';
           </script>`);
-        const output = execFileSync(chrome!, [
-          "--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", "--disable-background-networking",
-          "--dump-dom", pathToFileURL(file).href,
-        ], { encoding: "utf8", timeout: 10000, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "ignore"] });
+        const output = dumpChromeDom(file);
         const encoded = output.match(/<pre id="result">([\s\S]*?)<\/pre>/)?.[1];
         expect(encoded, "browser must execute measurement script").toBeTruthy();
         const results = JSON.parse(encoded!.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"));

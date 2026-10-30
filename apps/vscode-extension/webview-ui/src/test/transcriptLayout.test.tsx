@@ -1,9 +1,8 @@
 // Verify actual CSS layout and motion, rather than jsdom's class strings.
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { chrome, dumpChromeDom } from "./chromeLayout";
 import { compile } from "@tailwindcss/node";
 import { render, fireEvent } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -16,10 +15,6 @@ import { QAMessage } from "../components/messages/QAMessage";
 import { UserMessage } from "../components/messages/UserMessage";
 import { MarkdownContent } from "../components/shared/MarkdownContent";
 
-const chrome = process.env.CHROME_BIN ?? [
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome",
-].find(existsSync);
 const token = "long_unbroken_path_".repeat(40);
 const event = { id: 1, tool: "search_code", args: { pattern: token }, source: "explore" as const, done: false };
 
@@ -101,9 +96,7 @@ for (const theme of ["vscode", "dark", "light", "hc"] as const) {
           document.body.innerHTML = '<pre id="result">' + JSON.stringify(result) + '</pre>';
         </script></body></html>`);
         for (const reduced of [false, true]) {
-          const output = execFileSync(chrome!, ["--headless", "--no-sandbox", "--disable-gpu", "--no-first-run", "--disable-background-networking",
-            ...(reduced ? ["--force-prefers-reduced-motion"] : []), "--dump-dom", pathToFileURL(file).href],
-            { encoding: "utf8", timeout: 10000, killSignal: "SIGKILL", stdio: ["ignore", "pipe", "ignore"] });
+          const output = dumpChromeDom(file, reduced ? ["--force-prefers-reduced-motion"] : []);
           const encoded = output.match(/<pre id="result">([\s\S]*?)<\/pre>/)?.[1];
           expect(encoded).toBeTruthy();
           const results = JSON.parse(encoded!.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"));
