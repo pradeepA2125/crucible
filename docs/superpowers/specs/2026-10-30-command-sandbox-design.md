@@ -1,6 +1,6 @@
 # Command sandbox — design
 
-Date: 2026-10-30. Status: draft for review. Follows Auto approval mode
+Date: 2026-10-30. Status: implemented on `claude/command-sandbox`; the task path is not sandboxed yet. Follows Auto approval mode
 (`2026-10-29-auto-approval-mode-design.md`, PR pradeepA2125/crucible#3), which this
 design builds on.
 
