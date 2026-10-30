@@ -50,8 +50,9 @@ _WRITERS_LAST_ARG = frozenset({"cp", "mv", "ln", "install", "rsync"})
 # MCP servers, agent definitions), become your words (AGENTS.md, prompt files, the chat
 # record in .crucible/state), or make tools run code later (VS Code tasks, git hooks).
 # One wrong verdict here would persist, so these always ask.
-_ALWAYS_ASK_IN_WORKSPACE = (
-    "AGENTS.md", ".crucible/approved-*.json", ".crucible/mcp.json", ".crucible/agents/*",
+ALWAYS_ASK_IN_WORKSPACE = (
+    "AGENTS.md", ".crucible/approved-*.json", ".crucible/mcp.json", ".crucible/sandbox.json",
+    ".crucible/agents/*",
     ".crucible/skills/*", ".crucible/prompts/*", ".crucible/state/*", ".claude/agents/*",
     ".claude/skills/*", ".vscode/settings.json", ".vscode/tasks.json", ".vscode/launch.json",
     "*.code-workspace", ".git/hooks/*", ".git/config",
@@ -168,7 +169,7 @@ def _always_asks(raw: str, directory: str, *, workspace: Path, home: Path) -> bo
     target = _expand(_from_cwd(raw, directory), workspace=workspace, home=home)
     key = canonical_path(workspace, str(target))
     if key is not None:
-        return any(fnmatchcase(key, pattern) for pattern in _ALWAYS_ASK_IN_WORKSPACE)
+        return any(fnmatchcase(key, pattern) for pattern in ALWAYS_ASK_IN_WORKSPACE)
     try:
         relative = target.relative_to(home).as_posix()
     except ValueError:
