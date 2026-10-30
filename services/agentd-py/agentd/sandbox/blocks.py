@@ -23,14 +23,30 @@ if TYPE_CHECKING:
 BlockKind = Literal["write", "read", "network", "direct_network"]
 
 _DENIED = r"(?:Operation not permitted|Read-only file system)"
+# Go tools print the system error in lower case. Unquoted absolute paths may hold spaces
+# ("AI editor") and must start a word, or ".git/config" reads as "/config". Unquoted relative
+# paths are one word, so "could not write file x: ..." yields "x", not the whole phrase.
 _PATH_PATTERNS = (
-    re.compile(rf"'(?P<path>/[^'\n]+)': {_DENIED}"),
-    re.compile(rf"{_DENIED}: '(?P<path>/[^'\n]+)'"),
-    re.compile(rf"(?P<path>/[^:'\"\n]+): {_DENIED}"),
+    re.compile(rf"'(?P<path>[^'\n]+)': {_DENIED}", re.IGNORECASE),
+    re.compile(rf"{_DENIED}: '(?P<path>[^'\n]+)'", re.IGNORECASE),
+    re.compile(rf"(?<![^\s:'\"])(?P<path>/[^:'\"\n]+): {_DENIED}", re.IGNORECASE),
+    re.compile(rf"(?<!\S)(?P<path>[^\s:'\"/][^\s:'\"]*): {_DENIED}", re.IGNORECASE),
 )
 _DIRECT_NETWORK = (
     re.compile(r"connect to host \S+ port \d+: Operation not permitted"),
     re.compile(r"Could not resolve host: "),
+    # Only the proxy can resolve names inside the wall, so a tool that looks one up itself
+    # (a git push over SSH, a database driver) fails with one of these.
+    re.compile(r"Could not resolve hostname "),
+    re.compile(r"nodename nor servname provided"),
+    re.compile(r"Temporary failure in name resolution"),
+    re.compile(r"Name or service not known"),
+    re.compile(r"getaddrinfo (?:ENOTFOUND|EAI_AGAIN)"),
+    re.compile(r"lookup \S+.*: no such host"),
+    # Go's dial errors, libpq, and Linux's network namespace, which has no route out.
+    re.compile(r"connect: operation not permitted"),
+    re.compile(r"connection to server at .* failed: Operation not permitted"),
+    re.compile(r"network is unreachable", re.IGNORECASE),
 )
 _FAILED_CONNECT = re.compile(r"Failed to connect to (?P<host>\S+) port \d+")
 _SOCKET_EPERM = re.compile(r"PermissionError: \[Errno 1\] Operation not permitted\s*$",
@@ -49,7 +65,9 @@ def _inside(path: Path, roots: Sequence[Path]) -> bool:
 
 
 def _path_block(raw: str, policy: SandboxPolicy) -> SandboxBlock | None:
-    path = Path(os.path.realpath(raw))
+    # Relative to the workspace, where commands start; from a subfolder this lands inside the
+    # workspace at worst, which reads as an ordinary error rather than a false block.
+    path = Path(os.path.realpath(policy.workspace / raw))
     if _inside(path, policy.unreadable):
         return SandboxBlock("read", raw)
     reopened = [w for w in policy.writable

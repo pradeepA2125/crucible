@@ -102,6 +102,25 @@ def test_sandbox_env_keeps_loopback_direct():
         assert {"localhost", "127.0.0.1", "::1"} <= set(env[name].split(","))
 
 
+def test_sandbox_env_turns_on_nodes_proxy_support():
+    # Node's fetch ignores the proxy variables unless told; it would fail on every host.
+    assert sandbox_env({}, "http://t:x@127.0.0.1:9")["NODE_USE_ENV_PROXY"] == "1"
+    assert "NODE_USE_ENV_PROXY" not in sandbox_env({}, None)
+
+
+def test_sandbox_env_stops_node_reading_the_keychain_on_macos():
+    base = {"NODE_USE_SYSTEM_CA": "1", "NODE_OPTIONS": "--max-old-space-size=4096 --use-system-ca"}
+    env = sandbox_env(base, None, platform="darwin")
+    assert "NODE_USE_SYSTEM_CA" not in env
+    assert env["NODE_OPTIONS"] == "--max-old-space-size=4096"
+    assert "NODE_OPTIONS" not in sandbox_env({"NODE_OPTIONS": "--use-system-ca"}, None, platform="darwin")
+
+
+def test_sandbox_env_keeps_node_system_ca_on_linux():
+    base = {"NODE_USE_SYSTEM_CA": "1", "NODE_OPTIONS": "--use-system-ca"}
+    assert sandbox_env(base, None, platform="linux") == base
+
+
 def test_sandbox_env_drops_inherited_proxy_without_one():
     env = sandbox_env({"PATH": "/bin", "HTTPS_PROXY": "http://corp:8080"}, None)
     assert "HTTPS_PROXY" not in env

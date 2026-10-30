@@ -20,7 +20,7 @@ from agentd.tools.registry import ToolOutput, ToolRegistry
 WS = Path("/work/space")
 HOME = Path("/Users/u")
 POLICY = SandboxPolicy(
-    workspace=WS, writable=(WS, Path("/private/tmp")), read_only=(WS / "AGENTS.md",),
+    workspace=WS, writable=(WS, Path("/private/tmp")), read_only=(WS / "AGENTS.md", WS / ".git/config"),
     unreadable=(HOME / ".ssh",), proxy_port=9, proxy_socket=None)
 
 
@@ -69,6 +69,53 @@ def test_proxy_ignoring_tool_reported_as_direct_network():
                 "Couldn't connect to server",
                 "curl: (6) Could not resolve host: example.com",
                 "    sock.connect(sa)\nPermissionError: [Errno 1] Operation not permitted"):
+        assert _classify(out) == SandboxBlock("direct_network", ""), out
+
+
+def test_name_resolution_failure_reported_as_direct_network():
+    # Inside the wall only the proxy can resolve names, so a tool that looks one up itself
+    # (a git push over SSH, a database driver) always ends here.
+    for out in ("ssh: Could not resolve hostname github.com: "
+                "nodename nor servname provided, or not known\n"
+                "fatal: Could not read from remote repository.",
+                "ssh: Could not resolve hostname github.com: Temporary failure in name resolution",
+                'psql: error: could not translate host name "db.prod" to address: '
+                "Name or service not known",
+                "socket.gaierror: [Errno 8] nodename nor servname provided, or not known",
+                "Error: getaddrinfo ENOTFOUND db.prod",
+                "Error: getaddrinfo EAI_AGAIN db.prod"):
+        assert _classify(out) == SandboxBlock("direct_network", ""), out
+
+
+def test_relative_path_resolved_against_the_workspace():
+    # Fixtures from a real run: these once came back as a write to "/config".
+    for out, target in (
+            ("error: could not write config file .git/config: Operation not permitted", ".git/config"),
+            ("/bin/sh: AGENTS.md: Operation not permitted", "AGENTS.md"),
+            ("touch: cannot touch 'AGENTS.md': Read-only file system", "AGENTS.md"),
+            ("PermissionError: [Errno 1] Operation not permitted: 'AGENTS.md'", "AGENTS.md")):
+        assert _classify(out) == SandboxBlock("write", target), out
+
+
+def test_relative_path_inside_the_workspace_not_relabelled():
+    assert _classify("touch: a.txt: Operation not permitted") is None
+    assert _classify("error: could not write file src/a.txt: Operation not permitted") is None
+
+
+def test_go_tools_lowercase_errors_detected():
+    # Go prints the system error in lower case (gh, docker, kubectl, terraform).
+    out = ("failed to read configuration: open /Users/u/.ssh/gh.yml: operation not permitted")
+    assert _classify(out) == SandboxBlock("read", "/Users/u/.ssh/gh.yml")
+    assert _classify("open /Users/u/x: read-only file system") == SandboxBlock("write", "/Users/u/x")
+
+
+def test_more_direct_network_shapes():
+    for out in ("dial tcp 203.0.113.9:5432: connect: operation not permitted",
+                "dial tcp: lookup db.prod: no such host",
+                "dial tcp 203.0.113.9:5432: connect: network is unreachable",
+                "ssh: connect to host 203.0.113.9 port 22: Network is unreachable",
+                'psql: error: connection to server at "203.0.113.9", port 5432 failed: '
+                "Operation not permitted"):
         assert _classify(out) == SandboxBlock("direct_network", ""), out
 
 

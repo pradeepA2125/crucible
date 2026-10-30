@@ -7,6 +7,9 @@ so "outside" here is a probe file in the real home folder, always cleaned up.
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -120,3 +123,17 @@ async def test_session_keeps_wall_after_toggle_off(tmp_path, probe):
     await asyncio.sleep(0.2)
     assert probe.exists()
     await manager.shutdown()
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+@pytest.mark.asyncio
+async def test_node_set_to_use_the_system_ca_store_does_not_crash(tmp_path):
+    # The Keychain is denied, and Node segfaults when it can't read it (found with npm install).
+    runtime = SandboxRuntime(tmp_path)
+    await runtime.probe()
+    launch = runtime.launch_for(shadow_root=None)
+    connect = "require('tls').connect({host:'127.0.0.1',port:1}).on('error',()=>{})"
+    done = await asyncio.to_thread(
+        subprocess.run, launch.wrap(["node", "-e", connect]), capture_output=True, text=True,
+        timeout=30, env=launch.env({**os.environ, "NODE_USE_SYSTEM_CA": "1"}), cwd=tmp_path)
+    assert done.returncode == 0, done.stderr
