@@ -13,7 +13,9 @@ from agentd.approvals.auto_gate import AutoGate
 from agentd.approvals.types import AutoDecision, JudgeRequest, PendingAction
 from agentd.chat.storage import ChatThreadStore
 from agentd.domain.models import ApprovalOutcome, CommandDecision, McpToolDecision, ShellPolicy
+from agentd.exec_sessions.manager import SessionManager
 from agentd.exec_sessions.tool_source import ExecSessionToolSource
+from agentd.sandbox.runtime import SandboxRuntime
 from tests.gate_helpers import first_gate
 from tests.test_controller_command_gate import _controller
 
@@ -174,3 +176,52 @@ async def test_rejection_resets_the_streak(tmp_path):
     task = asyncio.create_task(ctrl._command_approval_cb(tid, f"chat:{tid}", "pytest", [], ""))
     assert "offer_switch" not in (await _gate(store, tid)).payload
     task.cancel()
+
+
+class _Sessions(SessionManager):
+    """Stands in for the manager's answer: was this session started inside the wall?"""
+    def __init__(self, sandboxed: bool) -> None:  # noqa: D107 — no real sessions here
+        self.sandboxed = sandboxed
+
+    def session_sandbox(self, thread_id: str, session_id: str) -> object | None:
+        return object() if self.sandboxed else None
+
+
+def _with_session(ctrl, sandboxed: bool, tmp_path: Path) -> None:
+    runtime = SandboxRuntime(tmp_path)
+    runtime._available = True  # noqa: SLF001
+    ctrl._sandbox = runtime  # noqa: SLF001
+    ctrl._exec_sessions = _Sessions(sandboxed)  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_typing_into_a_session_let_out_of_the_sandbox_asks_each_time(tmp_path):
+    # "Allow once" on a shell must not become a standing unsandboxed shell.
+    ctrl, store, tid, _judge = _setup(tmp_path, ASK)
+    ctrl._shell_policy = ShellPolicy.ASK  # noqa: SLF001
+    _with_session(ctrl, False, tmp_path)
+    task = asyncio.create_task(ctrl._stdin_approval_cb(tid, f"chat:{tid}", "s1", "bash", "curl x\n"))
+    await asyncio.sleep(0.01)
+    gates = store.get_thread(tid).pending_controller_gates
+    assert len(gates) == 1 and gates[0].kind == "command"
+    await ctrl.resolve_command(tid, CommandDecision(approve=False), gates[0].gate_id)
+    assert not (await task).approved
+
+
+@pytest.mark.asyncio
+async def test_control_keys_reach_a_session_outside_the_sandbox_without_a_card(tmp_path):
+    ctrl, store, tid, _judge = _setup(tmp_path, ASK)
+    ctrl._shell_policy = ShellPolicy.ASK  # noqa: SLF001
+    _with_session(ctrl, False, tmp_path)
+    assert (await ctrl._stdin_approval_cb(tid, f"chat:{tid}", "s1", "bash", "\x03")).approved
+    assert store.get_thread(tid).pending_controller_gates == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy,sandboxed", [(ShellPolicy.ASK, True), (ShellPolicy.ALLOW_ALL, False)])
+async def test_typing_stays_ungated_inside_the_wall_and_in_full_access(tmp_path, policy, sandboxed):
+    ctrl, store, tid, _judge = _setup(tmp_path, ASK)
+    ctrl._shell_policy = policy  # noqa: SLF001
+    _with_session(ctrl, sandboxed, tmp_path)
+    assert (await ctrl._stdin_approval_cb(tid, f"chat:{tid}", "s1", "bash", "ls\n")).approved
+    assert store.get_thread(tid).pending_controller_gates == []

@@ -61,6 +61,7 @@ from agentd.chat.protected_paths import (
     is_protected,
 )
 from agentd.chat.rewind import RewindStore
+from agentd.approvals.auto_gate import is_control_key
 from agentd.sandbox.runtime import SandboxRuntime
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
@@ -1883,15 +1884,20 @@ class ChatController:
         self, thread_id: str, channel_id: str, session_id: str, session_command: str,
         chars: str,
     ) -> ApprovalOutcome:
-        """Typing into a running terminal session. Ungated outside Auto (as before); in
-        Auto, short answers run and anything else is judged (spec §6.4)."""
-        if self._shell_policy != ShellPolicy.AUTO:
-            return ApprovalOutcome.allow()
+        """Typing into a running terminal session. Ungated outside Auto (as before), except
+        into a session let out of the sandbox: "Allow once" must not become a standing
+        unsandboxed shell. In Auto, short answers run and anything else is judged (spec §6.4)."""
         # The session's own wall decides, not today's switch: it keeps what it started in.
         from agentd.exec_sessions.manager import SessionManager
 
         in_sandbox = (isinstance(self._exec_sessions, SessionManager)
                       and self._exec_sessions.session_sandbox(thread_id, session_id) is not None)
+        if self._shell_policy != ShellPolicy.AUTO:
+            if (self._shell_policy == ShellPolicy.ASK and self._sandbox_active()
+                    and not in_sandbox and not is_control_key(chars)):
+                return await self._ask_command(
+                    thread_id, channel_id, "write_stdin", [session_id, chars], "", remember=False)
+            return ApprovalOutcome.allow()
         decision = await self._auto_gate.decide_stdin(
             session_command, chars, self._judge_request(thread_id, None), sandboxed=in_sandbox)
         if self._shell_policy != ShellPolicy.AUTO or decision.kind == "run":

@@ -1,0 +1,40 @@
+name: sandbox
+# The command sandbox behaves differently on each platform and its tests spawn real sandboxed
+# processes, so they run on both before a change merges, not first at a release tag.
+on:
+  pull_request:
+    paths:
+      - "services/agentd-py/agentd/sandbox/**"
+      - "services/agentd-py/agentd/approvals/**"
+      - "services/agentd-py/agentd/tools/**"
+      - "services/agentd-py/agentd/exec_sessions/**"
+      - "services/agentd-py/tests/test_sandbox_*"
+      - ".github/workflows/sandbox.yml"
+
+jobs:
+  sandbox:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/agentd-py/pyproject.toml
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor by default.
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap ripgrep
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Install
+        working-directory: services/agentd-py
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e '.[dev]'
+      - name: Sandbox tests
+        working-directory: services/agentd-py
+        run: .venv/bin/python -m pytest tests/test_sandbox_escapes.py tests/test_sandbox_bubblewrap.py tests/test_sandbox_seatbelt.py tests/test_sandbox_launch.py tests/test_sandbox_blocks.py tests/test_sandbox_proxy.py tests/test_sandbox_policy.py tests/test_sandbox_runtime.py tests/test_sandbox_escalation.py tests/test_auto_sandboxed.py --color=no --timeout 90

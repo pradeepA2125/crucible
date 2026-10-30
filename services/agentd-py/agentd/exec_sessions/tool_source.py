@@ -181,7 +181,10 @@ class ExecSessionToolSource:
         cmd_args = [str(a) for a in raw_args] if isinstance(raw_args, list) else []
         cwd = str(args.get("cwd") or "")
         active = self._sandbox is not None and self._sandbox.active()
-        escalation = escalation_from_args(args) if active else None
+        try:
+            escalation = escalation_from_args(args) if active else None
+        except ValueError as exc:
+            return ToolOutput(output=f"Error: {exc}", is_error=True)
         if escalation is not None and self._approve_escalation is not None:
             outcome = await self._approve_escalation(escalation, command, cmd_args, cwd)
         else:

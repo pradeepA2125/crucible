@@ -31,6 +31,9 @@ _PATH_PATTERNS = (
     re.compile(rf"{_DENIED}: '(?P<path>[^'\n]+)'", re.IGNORECASE),
     re.compile(rf"(?<![^\s:'\"])(?P<path>/[^:'\"\n]+): {_DENIED}", re.IGNORECASE),
     re.compile(rf"(?<!\S)(?P<path>[^\s:'\"/][^\s:'\"]*): {_DENIED}", re.IGNORECASE),
+    # Node: `EPERM: operation not permitted, open '/x'`. Ruby: `... @ rb_sysopen - /x`.
+    re.compile(r"E(?:PERM|ROFS): [^,\n]+, \w+ '(?P<path>[^'\n]+)'"),
+    re.compile(rf"{_DENIED} @ \w+ - (?P<path>/[^\n]+)", re.IGNORECASE),
 )
 _MISSING_FILE = re.compile(r"(?P<path>/[^:'\"\n]+): No such file or directory")
 _DIRECT_NETWORK = (
@@ -48,6 +51,8 @@ _DIRECT_NETWORK = (
     re.compile(r"connect: operation not permitted"),
     re.compile(r"connection to server at .* failed: Operation not permitted"),
     re.compile(r"network is unreachable", re.IGNORECASE),
+    re.compile(r"connect EPERM "),
+    re.compile(r"sendto: Operation not permitted"),
 )
 _FAILED_CONNECT = re.compile(r"Failed to connect to (?P<host>\S+) port \d+")
 _SOCKET_EPERM = re.compile(r"PermissionError: \[Errno 1\] Operation not permitted\s*$",
@@ -99,18 +104,21 @@ def _masked_read(output: str, policy: SandboxPolicy) -> SandboxBlock | None:
 
 def classify_block(output: str, exit_code: int | None, policy: SandboxPolicy,
                    refused_hosts: Sequence[str]) -> SandboxBlock | None:
-    if exit_code == 0:
-        return None
+    """A refused host or a denied path counts whatever the exit code: `curl http://x` exits 0
+    on the proxy's 403, and `touch ~/z; echo done` hides the failure. A missing file or a
+    network error in a command that succeeded isn't evidence of anything."""
     if refused_hosts:
         return SandboxBlock("network", refused_hosts[0])
-    masked = _masked_read(output, policy)
-    if masked is not None:
-        return masked
     for pattern in _PATH_PATTERNS:
         for match in pattern.finditer(output):
             block = _path_block(match["path"], policy)
             if block is not None:
                 return block
+    if exit_code == 0:
+        return None
+    masked = _masked_read(output, policy)
+    if masked is not None:
+        return masked
     if _direct_network(output):
         return SandboxBlock("direct_network", "")
     return None
@@ -126,7 +134,9 @@ def annotate_block(output: ToolOutput, launch: SandboxLaunch, tool: str,
                            launch.policy, refused)
     if block is None:
         return False
-    output.output = f"{annotate(block, tool)}\n\n{output.output}"
+    # A background call to a blocked host often doesn't matter; the agent can tell.
+    succeeded = " The command itself exited 0." if output.exit_code == 0 else ""
+    output.output = f"{annotate(block, tool)}{succeeded}\n\n{output.output}"
     output.status = "sandbox_blocked"
     return True
 

@@ -36,7 +36,6 @@ Resolver = Callable[[str], Awaitable[list[str]]]
 _HEAD_LIMIT = 64 * 1024
 _CHUNK = 65536
 _METADATA = frozenset({"169.254.169.254", "fd00:ec2::254"})
-_UNRESOLVED = ""
 
 
 @dataclass
@@ -150,22 +149,19 @@ class SandboxProxy:
         except ValueError:
             await self._reply(writer, 400, "Bad Request")
             return
-        address = await self._check(lease, host)
+        addresses = await self._check(lease, host)
         if lease.token and lease.token not in self._leases:
             # Released during the name lookup: its command is over.
             await self._reply(writer, 407, "Proxy Authentication Required")
             return
-        if address is None:
+        if addresses is None:
             await self._reply(writer, 403, "Forbidden")
             return
-        if address == _UNRESOLVED:
+        upstream = await self._connect(addresses, port)
+        if upstream is None:
             await self._reply(writer, 502, "Bad Gateway")
             return
-        try:
-            up_reader, up_writer = await asyncio.open_connection(address, port)
-        except (OSError, OverflowError):
-            await self._reply(writer, 502, "Bad Gateway")
-            return
+        up_reader, up_writer = upstream
         if first:
             up_writer.write(first)
         else:
@@ -174,6 +170,17 @@ class SandboxProxy:
         tracked.update((writer, up_writer))
         await asyncio.gather(self._pipe(reader, up_writer), self._pipe(up_reader, writer))
         tracked.difference_update((writer, up_writer))
+
+    @staticmethod
+    async def _connect(addresses: list[str],
+                       port: int) -> tuple[asyncio.StreamReader, asyncio.StreamWriter] | None:
+        # In order: a host's IPv6 address is often unreachable from an IPv4-only network.
+        for address in addresses:
+            try:
+                return await asyncio.open_connection(address, port)
+            except OSError:
+                continue
+        return None
 
     @staticmethod
     def _forward_request(method: str, target: str, version: str,
@@ -191,7 +198,8 @@ class SandboxProxy:
         authority = host if port == "80" else f"{host}:{port}"
         dropped = ("proxy-authorization:", "proxy-connection:", "connection:", "host:")
         kept = [h for h in headers if not h.lower().startswith(dropped)]
-        lines = [f"{method} {path} {version}", f"Host: {authority}", *kept, "Connection: close", "", ""]
+        lines = [f"{method} {path} {version}", f"Host: {authority}", *kept,
+                 "Connection: close", "", ""]
         return host, port, "\r\n".join(lines).encode("latin-1")
 
     def _lease_for(self, headers: list[str]) -> ProxyLease | None:
@@ -210,13 +218,12 @@ class SandboxProxy:
         return ProxyLease(token="", url="", extra_hosts=frozenset(),
                           workspace_hosts=frozenset(self._baseline_hosts()))
 
-    async def _check(self, lease: ProxyLease, host: str) -> str | None:
-        """The address to connect to, None when the host is refused (recorded), or
-        _UNRESOLVED for an allowed host with no address — an ordinary failure, not a
-        sandbox block."""
+    async def _check(self, lease: ProxyLease, host: str) -> list[str] | None:
+        """The addresses to try, None when the host is refused (recorded), or empty for an
+        allowed host with no address: an ordinary failure, not a sandbox block."""
         listed = host in lease.workspace_hosts or host in lease.extra_hosts
         allowed = lease.allow_any or listed or host in DEFAULT_HOSTS
-        address: str | None = None
+        usable: list[str] = []
         if allowed:
             try:
                 addresses = await self._resolve(host)
@@ -224,11 +231,8 @@ class SandboxProxy:
                 addresses = []
             usable = [a for a in addresses
                       if lease.allow_any or listed or not self._is_internal(a)]
-            address = usable[0] if usable else None
-            if address is None and addresses:
+            if not usable and addresses:
                 allowed = False
-            elif address is None:
-                return _UNRESOLVED
         if not allowed:
             recorded = lease
             # No token to name the command; with one running it can only be that one.
@@ -238,7 +242,7 @@ class SandboxProxy:
                 recorded.refused.append(host)
             logger.info("[sandbox] proxy refused %s", host)
             return None
-        return address
+        return usable
 
     async def _pipe(self, source: asyncio.StreamReader, sink: asyncio.StreamWriter) -> None:
         try:

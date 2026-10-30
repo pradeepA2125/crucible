@@ -113,7 +113,7 @@ Allowed:
 
 Read-only even inside the workspace — the same files Auto always asks about
 (`auto_rules._ALWAYS_ASK_IN_WORKSPACE`): `AGENTS.md`, `.crucible/approved-*.json`,
-`.crucible/mcp.json`, `.crucible/sandbox.json`, `.crucible/{agents,skills,prompts,state}/`,
+`.crucible/mcp.json`, `.crucible/{agents,skills,prompts,state}/`,
 `.claude/{agents,skills}/`, `.vscode/{settings,tasks,launch}.json`,
 `*.code-workspace`, `.git/hooks/`, `.git/config`. Plus shell startup files and
 `.gitconfig` if they exist in the workspace. One list, shared by Auto and the
@@ -164,8 +164,9 @@ it. The proxy checks each hostname (CONNECT for HTTPS; no TLS inspection) agains
    `static.crates.io`, `proxy.golang.org`, `sum.golang.org`, `repo.maven.apache.org`,
    `github.com`, `api.github.com`, `codeload.github.com`,
    `objects.githubusercontent.com`, `raw.githubusercontent.com`.
-2. **Remembered hosts for this workspace** — `.crucible/approved-hosts.json`
-   (matches the `approved-*.json` always-ask pattern, so no command can edit it).
+2. **Remembered hosts for this workspace** — `~/.crucible/sandbox/<workspace hash>/hosts.json`
+   (changed in the final review: a file in the repository could be committed, and a cloned
+   repo would widen its own wall).
 3. Anything else is blocked, and so is any hostname that resolves only to
    loopback, link-local or cloud-metadata addresses (`169.254.169.254`), unless
    listed explicitly.
@@ -216,7 +217,7 @@ Two ways to ask for an exception, both as new optional `run_command` arguments
 
 - **`allow_hosts`** — stay sandboxed, add hosts. Approved by:
   - Ask / Accept edits: a card "Allow network access to `<host>`?" with Allow once,
-    Allow for this workspace (writes `approved-hosts.json`), Reject.
+    Allow for this workspace (remembers the host), Reject.
   - Auto: the judge, with the host and reason in the pending action. A judge
     approval allows the host for that one command; only a user approval is
     remembered.
@@ -281,8 +282,8 @@ When the sandbox is off or unavailable, Auto behaves exactly as today.
 - **Settings → Sandbox** (*my call*): on/off (global, default on, like the approval
   mode), status (on / unavailable: reason), remembered hosts for this workspace
   (list with remove), extra writable folders for this workspace (add/remove).
-  Workspace values live in `.crucible/sandbox.json` (always-ask, read-only in the
-  sandbox); the remembered hosts in `.crucible/approved-hosts.json`.
+  Workspace values live under `~/.crucible/sandbox/<workspace hash>/`, outside the
+  repository and the wall.
 - **Approval menu footer**: one line with the sandbox state.
 - **Cards**: the two new escalation cards above, built from the existing command
   card (reuse components and tokens per `docs/design/desktop-2026-10-21/react-ui-guidelines.md`).

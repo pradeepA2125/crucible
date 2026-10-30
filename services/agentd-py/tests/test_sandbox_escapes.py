@@ -5,6 +5,7 @@ canary folder under the home folder: pytest's tmp_path is inside the writable te
 where "outside" would not be outside. Every proof here was first found by running it against
 the branch.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -24,16 +25,26 @@ from agentd.sandbox.blocks import classify_block
 from agentd.sandbox.runtime import SandboxRuntime
 
 MACOS = sys.platform == "darwin"
-pytestmark = pytest.mark.skipif(not MACOS and shutil.which("bwrap") is None,
-                                reason="needs Seatbelt or bubblewrap")
+pytestmark = pytest.mark.skipif(
+    not MACOS and shutil.which("bwrap") is None, reason="needs Seatbelt or bubblewrap"
+)
 macos_only = pytest.mark.skipif(not MACOS, reason="bubblewrap can't express this")
 linux_only = pytest.mark.skipif(MACOS, reason="the Linux form of this rule")
 
-_IDENTITY = ["-c", "user.name=a", "-c", "user.email=a@example.invalid", "-c", "core.hooksPath=/dev/null"]
+_IDENTITY = [
+    "-c",
+    "user.name=a",
+    "-c",
+    "user.email=a@example.invalid",
+    "-c",
+    "core.hooksPath=/dev/null",
+]
 
 
 def _git(cwd: Path, *args: str) -> None:
-    subprocess.run(["git", *_IDENTITY, *args], cwd=cwd, check=True, capture_output=True, env=child_env())
+    subprocess.run(
+        ["git", *_IDENTITY, *args], cwd=cwd, check=True, capture_output=True, env=child_env()
+    )
 
 
 @pytest.fixture
@@ -63,8 +74,15 @@ def _run(workspace: Path, line: str, home: Path | None = None) -> subprocess.Com
         launch = runtime.launch_for(shadow_root=None)
         assert launch is not None
         return await asyncio.to_thread(
-            subprocess.run, launch.wrap(["/bin/sh", "-c", line]), capture_output=True, text=True,
-            timeout=60, env=launch.env(child_env()), cwd=workspace)
+            subprocess.run,
+            launch.wrap(["/bin/sh", "-c", line]),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=launch.env(child_env()),
+            cwd=workspace,
+        )
+
     return asyncio.run(go())
 
 
@@ -73,6 +91,7 @@ def _policy(workspace: Path):
         runtime = SandboxRuntime(workspace)
         await runtime.probe()
         return runtime.launch_for(shadow_root=None).policy
+
     return asyncio.run(go())
 
 
@@ -85,13 +104,27 @@ def test_control_folders_cannot_be_moved_aside_and_rewritten(repo: Path) -> None
 
 def test_workspace_cannot_be_moved_to_reach_protected_files(repo: Path, base: Path) -> None:
     (repo / "AGENTS.md").write_text("original\n")
-    done = _run(repo, f"cd /; mv '{repo}' '{base}/moved' || mv '{repo}' /tmp/crucible-moved-{base.name}")
+    done = _run(
+        repo, f"cd /; mv '{repo}' '{base}/moved' || mv '{repo}' /tmp/crucible-moved-{base.name}"
+    )
     assert done.returncode != 0
     assert (repo / "AGENTS.md").read_text() == "original\n"
 
 
-@pytest.mark.parametrize("name", ["commondir", "gitdir", "config", "config.worktree", "hooks/pre-commit",
-                                  "info/x", "modules/a/config", "worktrees/a/commondir", "new-file"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "commondir",
+        "gitdir",
+        "config",
+        "config.worktree",
+        "hooks/pre-commit",
+        "info/x",
+        "modules/a/config",
+        "worktrees/a/commondir",
+        "new-file",
+    ],
+)
 def test_git_control_files_are_not_writable(repo: Path, name: str) -> None:
     done = _run(repo, f"mkdir -p .git/$(dirname {name}); echo /tmp/evil > .git/{name}")
     assert done.returncode != 0, name
@@ -109,11 +142,13 @@ def test_a_missing_control_folder_cannot_be_planted_as_a_symlink(repo: Path, nam
 @macos_only
 def test_everyday_git_still_works(repo: Path) -> None:
     identity = "-c user.name=a -c user.email=a@example.invalid -c core.hooksPath=/dev/null"
-    line = (f"echo b >> a.txt && git add a.txt && git {identity} commit -qm two && "
-            f"git checkout -q -b topic && echo c >> a.txt && git {identity} commit -qam three && "
-            f"git checkout -q main && git {identity} merge -q --no-edit topic && "
-            f"echo d >> a.txt && git {identity} stash -q && git {identity} stash pop -q && "
-            f"git {identity} tag v1 && git {identity} gc -q && git log --oneline | wc -l")
+    line = (
+        f"echo b >> a.txt && git add a.txt && git {identity} commit -qm two && "
+        f"git checkout -q -b topic && echo c >> a.txt && git {identity} commit -qam three && "
+        f"git checkout -q main && git {identity} merge -q --no-edit topic && "
+        f"echo d >> a.txt && git {identity} stash -q && git {identity} stash pop -q && "
+        f"git {identity} tag v1 && git {identity} gc -q && git log --oneline | wc -l"
+    )
     done = _run(repo, line)
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == "3"
@@ -133,7 +168,9 @@ def test_linux_git_reads_and_fetches_but_committing_is_a_named_block(repo: Path)
 
 
 def test_ordinary_workspace_writes_still_work(repo: Path) -> None:
-    done = _run(repo, "mkdir -p src/x && echo a > src/x/b && mv src/x src/y && rm -r src && touch ok.txt")
+    done = _run(
+        repo, "mkdir -p src/x && echo a > src/x/b && mv src/x src/y && rm -r src && touch ok.txt"
+    )
     assert done.returncode == 0, done.stderr
 
 
@@ -145,12 +182,17 @@ def test_scratch_files_in_crucible_stay_writable(repo: Path) -> None:
 def test_mcp_servers_and_rules_cannot_be_planted(repo: Path) -> None:
     # A new server here runs unsandboxed the next time the backend starts.
     for name in ("mcp.json", "approved-commands.json", "agents/x.md", "skills/x/SKILL.md"):
-        assert _run(repo, f"mkdir -p .crucible/$(dirname {name}); echo x > .crucible/{name}").returncode != 0, name
+        assert (
+            _run(
+                repo, f"mkdir -p .crucible/$(dirname {name}); echo x > .crucible/{name}"
+            ).returncode
+            != 0
+        ), name
         assert not (repo / ".crucible" / name).exists(), name
 
 
 def test_private_temp_folder_is_where_temp_files_go(repo: Path) -> None:
-    done = _run(repo, "python3 -c \"import tempfile; print(tempfile.gettempdir())\"")
+    done = _run(repo, 'python3 -c "import tempfile; print(tempfile.gettempdir())"')
     assert done.returncode == 0, done.stderr
     assert "crucible-sbx" in done.stdout or done.stdout.strip() == "/tmp"
     if not MACOS:
@@ -163,8 +205,10 @@ def test_private_temp_folder_is_where_temp_files_go(repo: Path) -> None:
 
 
 def test_unix_sockets_work_inside_the_sandbox(repo: Path) -> None:
-    line = ("python3 -c \"import multiprocessing as m\n"
-            "if __name__ == '__main__':\n    print(m.Manager().list([1])[0])\"")
+    line = (
+        'python3 -c "import multiprocessing as m\n'
+        "if __name__ == '__main__':\n    print(m.Manager().list([1])[0])\""
+    )
     done = _run(repo, line)
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == "1"
@@ -190,7 +234,11 @@ def test_linked_worktree_cannot_redirect_itself(repo: Path, base: Path) -> None:
     assert _run(linked, "git status --short").returncode == 0
     if MACOS:
         identity = "-c user.name=a -c user.email=a@example.invalid -c core.hooksPath=/dev/null"
-        done = _run(linked, f"echo b >> a.txt && git add a.txt && git {identity} commit -qm two && git log --oneline | wc -l")
+        done = _run(
+            linked,
+            f"echo b >> a.txt && git add a.txt && git {identity} commit -qm two && "
+            "git log --oneline | wc -l",
+        )
         assert done.returncode == 0, done.stderr
         assert done.stdout.strip() == "2"
     assert _run(linked, "echo 'gitdir: /tmp/evil' > .git").returncode != 0
@@ -265,3 +313,24 @@ def test_the_clipboard_is_out_of_reach(repo: Path) -> None:
     subprocess.run(["pbcopy"], input="crucible-clipboard-canary", text=True, check=True)
     done = _run(repo, "pbpaste")
     assert "crucible-clipboard-canary" not in done.stdout
+
+
+@pytest.mark.parametrize("name", [".mcp.json", ".envrc", ".claude/settings.json",
+                                  ".claude/settings.local.json"])
+def test_files_other_tools_run_automatically_are_protected(repo: Path, name: str) -> None:
+    (repo / name).parent.mkdir(exist_ok=True)
+    (repo / name).write_text("original\n")
+    assert _run(repo, f"echo evil >> {name}").returncode != 0
+    assert (repo / name).read_text() == "original\n"
+
+
+@pytest.mark.parametrize("name", [".cargo/credentials.toml", ".pgpass", ".my.cnf", ".vault-token",
+                                  ".config/git/credentials", ".codex/auth.json",
+                                  ".gemini/oauth.json", ".zsh_history", ".bash_history"])
+def test_more_credential_files_are_unreadable(base: Path, name: str) -> None:
+    home = base / "home"
+    (home / name).parent.mkdir(parents=True, exist_ok=True)
+    (home / name).write_text("secret\n")
+    workspace = base / "ws"
+    workspace.mkdir()
+    assert _run(workspace, f"cat '{home / name}'", home).stdout == ""

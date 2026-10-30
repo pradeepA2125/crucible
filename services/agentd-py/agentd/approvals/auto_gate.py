@@ -44,6 +44,10 @@ _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "fish", "tcsh", "csh", 
                      "powershell"})
 
 
+def is_control_key(chars: str) -> bool:
+    return chars in _CONTROL_KEYS
+
+
 def _session_program(session_command: str) -> str:
     words = [w for w in session_command.split() if not ASSIGNMENT.match(w)]
     if words and Path(words[0]).name == "env":

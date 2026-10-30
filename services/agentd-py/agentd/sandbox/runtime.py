@@ -94,7 +94,8 @@ class SandboxRuntime:
             proxy_socket=self.proxy.socket_path if self.proxy is not None else None,
             private_tmp=private_tmp)
         # Linux mounts the private folder at /tmp; macOS can only point TMPDIR at it.
-        tmpdir = None if private_tmp is None else ("/tmp" if self._linux else str(policy.private_tmp))
+        tmpdir = (None if private_tmp is None
+                  else "/tmp" if self._linux else str(policy.private_tmp))
         return SandboxLaunch(policy=policy, lease=lease, tmpdir=tmpdir,
                              _wrap=lambda argv, interactive: self.wrap_argv(
                                  argv, policy, interactive=interactive),

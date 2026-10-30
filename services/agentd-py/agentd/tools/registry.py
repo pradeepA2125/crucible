@@ -541,10 +541,15 @@ class ToolRegistry:
         note: str | None = None
         # An escalation replaces the ordinary gate: leaving the sandbox or reaching a
         # new host gets its own decision, which no remembered command rule covers.
-        escalation = escalation_from_args(args) if self._sandbox_active() else None
+        try:
+            escalation = escalation_from_args(args) if self._sandbox_active() else None
+        except ValueError as exc:
+            return ToolOutput(output=f"Error: {exc}", is_error=True)
+        if escalation is not None and self._escalation_approval_callback is None:
+            return ToolOutput(output="Error: nothing here can approve leaving the sandbox or "
+                                     "reaching a new host.", is_error=True, status="denied")
         approve = (partial(self._escalation_approval_callback, escalation)
-                   if escalation is not None and self._escalation_approval_callback is not None
-                   else None if escalation is not None else self._command_approval_callback)
+                   if escalation is not None else self._command_approval_callback)
         if approve is not None:
             outcome = await approve(command, cmd_args, cwd)
             note = outcome.note
@@ -581,7 +586,7 @@ class ToolRegistry:
             finally:
                 if launch is not None:
                     launch.release()
-            if launch is not None and output.is_error:
+            if launch is not None:
                 annotate_block(output, launch, "run_command")
             output.outside_sandbox = outside
             output.approval_note = note

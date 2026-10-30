@@ -150,3 +150,4 @@ async def test_ctrl_c_stops_a_command_in_a_sandboxed_session(tmp_path):
     await manager.write_stdin("t1", session.session_id, "\x03", 800)
     read = await manager.write_stdin("t1", session.session_id, "echo alive-$((1+1))\n", 1500)
     assert "alive-2" in read.new_output
+    await manager.shutdown()

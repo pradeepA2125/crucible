@@ -233,3 +233,39 @@ async def test_schema_offers_escalation_when_active(tmp_path):
     props = next(d for d in registry.definitions() if d.name == "run_command").parameters[
         "properties"]
     assert {"outside_sandbox", "allow_hosts", "reason"} <= set(props)
+
+
+@pytest.mark.asyncio
+async def test_escalation_with_no_one_to_approve_it_is_refused(tmp_path):
+    # A registry wired without the callback must not treat "no gate" as "allowed".
+    runtime = SandboxRuntime(tmp_path)
+    await runtime.probe()
+    registry = ToolRegistry(tmp_path, tmp_path, sandbox_runtime=runtime,
+                            command_approval_callback=_allow)
+    if not runtime.active():
+        pytest.skip("no sandbox here")
+    out = await registry.execute("run_command", {
+        "command": "touch", "args": ["outside.txt"], "outside_sandbox": True, "reason": "r"})
+    assert out.is_error and not out.outside_sandbox
+    assert not (tmp_path / "outside.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_a_bad_host_is_refused_before_anyone_is_asked(tmp_path):
+    asked: list[object] = []
+
+    async def approve(escalation, command, args, cwd):
+        asked.append(escalation)
+        return ApprovalOutcome.allow()
+
+    runtime = SandboxRuntime(tmp_path)
+    await runtime.probe()
+    if not runtime.active():
+        pytest.skip("no sandbox here")
+    registry = ToolRegistry(tmp_path, tmp_path, sandbox_runtime=runtime,
+                            command_approval_callback=_allow,
+                            escalation_approval_callback=approve)
+    out = await registry.execute("run_command", {
+        "command": "curl", "args": ["x"], "allow_hosts": ["https://x.example/a"], "reason": "r"})
+    assert out.is_error and "https://x.example/a" in out.output
+    assert asked == []

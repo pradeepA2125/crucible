@@ -12,7 +12,7 @@ import pytest
 from agentd.domain.models import ApprovalOutcome
 from agentd.exec_sessions.manager import SessionManager
 from agentd.exec_sessions.tool_source import ExecSessionToolSource
-from agentd.sandbox.blocks import SandboxBlock, annotate, classify_block, sandbox_marker
+from agentd.sandbox.blocks import SandboxBlock, annotate, annotate_block, classify_block, sandbox_marker
 from agentd.sandbox.policy import SandboxPolicy
 from agentd.sandbox.runtime import SandboxRuntime
 from agentd.tools.registry import ToolOutput, ToolRegistry
@@ -130,8 +130,35 @@ def test_local_connection_refused_not_relabelled():
     assert _classify(out) is None
 
 
-def test_success_never_relabelled():
-    assert _classify("touch: /Users/u/.zshrc: Operation not permitted", code=0) is None
+def test_a_block_is_named_even_when_the_command_exits_zero():
+    # `touch ~/z; echo done`, `curl http://x` (a 403 is still exit 0), `git checkout` leaving a
+    # protected file behind: the agent must not read these as clean successes.
+    out = "touch: /Users/u/.zshrc: Operation not permitted\ndone"
+    assert _classify(out, code=0) == SandboxBlock("write", "/Users/u/.zshrc")
+    assert _classify("", ["example.com"], code=0) == SandboxBlock("network", "example.com")
+    out = "error: unable to unlink old 'AGENTS.md': Operation not permitted"
+    assert _classify(out, code=0) == SandboxBlock("write", "AGENTS.md")
+
+
+def test_success_is_otherwise_never_relabelled():
+    assert _classify("touch: /work/space/a.txt: Operation not permitted", code=0) is None
+    assert _classify("curl: (6) Could not resolve host: example.com", code=0) is None
+    assert _classify("ping: sendto: Operation not permitted", code=0) is None
+    assert _classify("cat: /Users/u/.ssh/x: No such file or directory", code=0) is None
+
+
+def test_node_and_ruby_path_errors_detected():
+    for out, target in (
+            ("Error: EPERM: operation not permitted, open '/Users/u/x'", "/Users/u/x"),
+            ("Error: EROFS: read-only file system, mkdir '/Users/u/y'", "/Users/u/y"),
+            ("Errno::EPERM: Operation not permitted @ rb_sysopen - /Users/u/z", "/Users/u/z")):
+        assert _classify(out) == SandboxBlock("write", target), out
+
+
+def test_more_proxy_ignoring_tools_detected():
+    for out in ("Error: connect EPERM 1.1.1.1:80 - Local (0.0.0.0:0)",
+                "ping: sendto: Operation not permitted"):
+        assert _classify(out) == SandboxBlock("direct_network", ""), out
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="spawns Seatbelt processes")
@@ -208,3 +235,16 @@ def test_masked_credential_folder_reads_as_a_block():
     assert _classify(out) == SandboxBlock("read", "/Users/u/.ssh/id_rsa")
     assert _classify("cat: /work/space/nope: No such file or directory") is None
     assert _classify("cat: nope: No such file or directory") is None
+
+
+def _launch():
+    from agentd.sandbox.launch import SandboxLaunch
+    return SandboxLaunch(policy=POLICY, lease=None, _wrap=lambda a, i: a, _release=lambda _: None)
+
+
+def test_annotation_on_a_success_says_the_command_succeeded():
+    output = ToolOutput(output="touch: /Users/u/.zshrc: Operation not permitted\ndone", exit_code=0)
+    assert annotate_block(output, _launch(), "run_command")
+    assert output.output.startswith("Blocked by the sandbox: write to /Users/u/.zshrc")
+    assert "The command itself exited 0" in output.output
+    assert not output.is_error and output.status == "sandbox_blocked"

@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from agentd.domain.models import Escalation
+from agentd.sandbox.hosts import normalize_host
 
 ESCALATION_PROPERTIES: dict[str, object] = {
     "outside_sandbox": {
@@ -22,11 +23,13 @@ ESCALATION_PROPERTIES: dict[str, object] = {
 
 
 def escalation_from_args(args: Mapping[str, object]) -> Escalation | None:
-    """The escalation an agent asked for, or None. outside_sandbox wins over hosts."""
+    """The escalation an agent asked for, or None. outside_sandbox wins over hosts. Raises
+    ValueError for a host that isn't a bare name, before anyone is asked about it."""
     reason = str(args.get("reason") or "")
     if args.get("outside_sandbox") is True:
         return Escalation(kind="outside_sandbox", reason=reason)
     hosts = args.get("allow_hosts")
     if isinstance(hosts, list) and hosts:
-        return Escalation(kind="allow_hosts", hosts=[str(h) for h in hosts], reason=reason)
+        return Escalation(kind="allow_hosts", hosts=[normalize_host(str(h)) for h in hosts],
+                          reason=reason)
     return None

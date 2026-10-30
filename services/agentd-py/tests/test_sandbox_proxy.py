@@ -224,6 +224,22 @@ async def _upstream_capture() -> tuple[asyncio.AbstractServer, int, list[bytes]]
 
 
 @pytest.mark.asyncio
+async def test_an_unreachable_first_address_falls_through_to_the_next():
+    # A host with an IPv6 address on an IPv4-only network answers on its second address.
+    server, port = await _echo_server()  # listens on 127.0.0.1 only, so ::1 refuses
+
+    async def resolve(_host: str) -> list[str]:
+        return ["::1", "127.0.0.1"]
+
+    proxy = SandboxProxy(resolver=resolve, is_internal=lambda ip: False, unix_socket=False)
+    await proxy.start()
+    head, _ = await _connect(proxy, f"pypi.org:{port}", proxy.lease([]).token)
+    assert head.startswith(b"HTTP/1.1 200")
+    await proxy.close()
+    server.close()
+
+
+@pytest.mark.asyncio
 async def test_forwarded_request_cannot_smuggle_another_host():
     server, port, seen = await _upstream_capture()
     proxy = await _proxy({"pypi.org": "127.0.0.1"})

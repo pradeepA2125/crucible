@@ -54,7 +54,8 @@ ALWAYS_ASK_IN_WORKSPACE = (
     "AGENTS.md", ".crucible/approved-*.json", ".crucible/mcp.json", ".crucible/agents/*",
     ".crucible/skills/*", ".crucible/prompts/*", ".crucible/state/*", ".claude/agents/*",
     ".claude/skills/*", ".vscode/settings.json", ".vscode/tasks.json", ".vscode/launch.json",
-    "*.code-workspace", ".git/hooks/*", ".git/config",
+    "*.code-workspace", ".git/hooks/*", ".git/config", ".mcp.json", ".envrc",
+    ".claude/settings.json", ".claude/settings.local.json",
 )
 # Outward actions: publishing or changing something remote (spec 2026-10-30 "Auto with
 # the sandbox"). Inside the sandbox most lack credentials anyway; these still go to the
