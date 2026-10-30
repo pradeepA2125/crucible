@@ -10,14 +10,17 @@ import asyncio
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
 from pydantic import BaseModel
 
 from agentd.sandbox.bubblewrap import bwrap_argv
-from agentd.sandbox.policy import SandboxPolicy
+from agentd.sandbox.launch import SandboxLaunch
+from agentd.sandbox.policy import SandboxPolicy, build_policy
+from agentd.sandbox.proxy import SandboxProxy
 from agentd.sandbox.seatbelt import seatbelt_argv
+from agentd.sandbox.store import WorkspaceSandboxStore
 
 _PROBE_TIMEOUT_SEC = 10
 
@@ -39,6 +42,8 @@ class SandboxRuntime:
         self._which = which
         self._available = False
         self._reason: str | None = "not checked yet"
+        self.store = WorkspaceSandboxStore(workspace)
+        self.proxy: SandboxProxy | None = None
 
     def status(self) -> SandboxStatus:
         return SandboxStatus(enabled=self.enabled, available=self._available,
@@ -46,6 +51,44 @@ class SandboxRuntime:
 
     def active(self) -> bool:
         return self.enabled and self._available
+
+    async def start(self) -> None:
+        """Probe, then start the proxy when the sandbox can run."""
+        await self.probe()
+        if self._available and self.proxy is None:
+            proxy = SandboxProxy()
+            await proxy.start()
+            self.proxy = proxy
+
+    async def close(self) -> None:
+        if self.proxy is not None:
+            await self.proxy.close()
+            self.proxy = None
+
+    def launch_for(self, *, shadow_root: Path | None, extra_hosts: Iterable[str] = (),
+                   allow_any: bool = False) -> SandboxLaunch | None:
+        """Everything one command needs to run inside the wall; None when commands run
+        unsandboxed (switched off, unavailable)."""
+        if not self.active():
+            return None
+        lease = (self.proxy.lease(self.store.hosts(), extra_hosts, allow_any)
+                 if self.proxy is not None else None)
+        policy = build_policy(
+            workspace=self.workspace, home=self.home, shadow_root=shadow_root,
+            extra_writable=self.store.folders(),
+            proxy_port=self.proxy.port if self.proxy is not None else None,
+            proxy_socket=self.proxy.socket_path if self.proxy is not None else None)
+        return SandboxLaunch(policy=policy, lease=lease,
+                             _wrap=lambda argv: self.wrap_argv(argv, policy),
+                             _release=self._release_lease)
+
+    def release(self, launch: SandboxLaunch | None) -> None:
+        if launch is not None:
+            launch.release()
+
+    def _release_lease(self, launch: SandboxLaunch) -> None:
+        if launch.lease is not None and self.proxy is not None:
+            self.proxy.release(launch.lease)
 
     def wrap_argv(self, argv: Sequence[str], policy: SandboxPolicy) -> list[str]:
         if self._platform == "darwin":

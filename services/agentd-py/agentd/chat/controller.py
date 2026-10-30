@@ -649,6 +649,7 @@ class ChatController:
             retrieval_client=self._retrieval,
             command_approval_callback=command_approval_callback,
             read_observer=read_observer,
+            sandbox_runtime=self._sandbox,
         )]
         from agentd.web.config import is_web_search_enabled
         from agentd.web.exa import ExaSearchClient
@@ -994,7 +995,8 @@ class ChatController:
             assert isinstance(self._exec_sessions, SessionManager)
             exec_source = ExecSessionToolSource(
                 self._exec_sessions, thread_id, command_cb,
-                stdin_approval_callback=partial(self._stdin_approval_cb, thread_id, channel_id))
+                stdin_approval_callback=partial(self._stdin_approval_cb, thread_id, channel_id),
+                sandbox_runtime=self._sandbox)
         # Shared active-skills map: SkillToolSource (in the registry) writes activated bodies
         # here, the loop re-injects them into the dynamic tail each iteration. Rehydrated
         # from the thread's persisted single active skill (survives every turn boundary —
@@ -4206,7 +4208,8 @@ class ChatController:
                     command_approval_callback=partial(self._child_command_approval_cb, handle),
                     render_ctx=render_ctx,
                     read_observer=log.read_observer(workspace, ctx.agent_id),
-                    command_guard=vcs_refusal),
+                    command_guard=vcs_refusal,
+                    sandbox_runtime=self._sandbox),
                 TodoToolSource(ledger, render_ctx=render_ctx),
             ]
             memory_source = self._memory_harness.memory_tool_source(

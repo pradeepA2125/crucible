@@ -7,6 +7,8 @@ process). Everything returns ToolOutput; is_error for unknown ids / cap /
 spawn failures — the loop adapts, never crashes."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from agentd.exec_sessions.config import result_max_chars
 from agentd.exec_sessions.manager import (
     STDIN_MAX_CHARS,
@@ -19,6 +21,9 @@ from agentd.exec_sessions.manager import (
 from agentd.tools.approvals import CommandApprovalCallback, StdinApprovalCallback, denial_text
 from agentd.tools.registry import ToolDefinition, ToolOutput
 
+if TYPE_CHECKING:
+    from agentd.sandbox.runtime import SandboxRuntime
+
 _TOOLS = ("start_session", "write_stdin", "kill_session", "list_sessions")
 
 _STILL_RUNNING_GUIDE = (
@@ -30,10 +35,12 @@ class ExecSessionToolSource:
 
     def __init__(self, manager: SessionManager, thread_id: str,
                  command_approval_callback: CommandApprovalCallback,
-                 stdin_approval_callback: StdinApprovalCallback | None = None) -> None:
+                 stdin_approval_callback: StdinApprovalCallback | None = None,
+                 sandbox_runtime: SandboxRuntime | None = None) -> None:
         self._manager = manager
         self._thread_id = thread_id
         self._approve = command_approval_callback
+        self._sandbox = sandbox_runtime
         # (session_id, session command line, chars) → outcome; only Auto mode sets it.
         self._approve_stdin = stdin_approval_callback
 
@@ -164,9 +171,11 @@ class ExecSessionToolSource:
                     user_text=(f"Command rejected by user: {command}. Do not retry the "
                                "same command — adapt or ask.")),
                 is_error=True)
+        launch = (self._sandbox.launch_for(shadow_root=None)
+                  if self._sandbox is not None else None)
         read = await self._manager.start(
             self._thread_id, command, cmd_args, cwd or None,
-            args.get("yield_time_ms"))
+            args.get("yield_time_ms"), sandbox=launch)
         output = self._render(read)
         output.approval_note = outcome.note
         return output

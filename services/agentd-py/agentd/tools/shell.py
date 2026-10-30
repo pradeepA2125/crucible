@@ -5,6 +5,7 @@ import asyncio
 import shlex
 from asyncio.subprocess import PIPE, STDOUT
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from agentd.child_env import child_env
 from agentd.tools._paths import (
@@ -13,6 +14,9 @@ from agentd.tools._paths import (
     shadow_pythonpath_extras,
 )
 from agentd.tools.registry import ToolOutput
+
+if TYPE_CHECKING:
+    from agentd.sandbox.launch import SandboxLaunch
 
 _MAX_OUTPUT_CHARS = 8000
 _DEFAULT_TIMEOUT_SEC = 60
@@ -116,6 +120,7 @@ async def run_command(
     cwd: str | None = None,
     timeout_sec: int = _DEFAULT_TIMEOUT_SEC,
     binary_name_override: str | None = None,
+    sandbox: SandboxLaunch | None = None,
 ) -> ToolOutput:
     if not command:
         return ToolOutput(output="Error: command is required", is_error=True)
@@ -172,20 +177,28 @@ async def run_command(
     resolved_cwd = _resolve_workspace_cwd(shadow_root, cwd)
     shell_command_line = _build_shell_command_line(command, args)
     try:
-        proc = await asyncio.create_subprocess_shell(
-            shell_command_line,
-            cwd=str(resolved_cwd),
-            env=env,
-            stdout=PIPE,
-            stderr=STDOUT,
-            # Own process group (setsid) so a timeout can kill the WHOLE pipeline,
-            # not just the shell wrapper. A real pipeline (`cmd1 | cmd2`) forks a
-            # child per stage; killing only the tracked shell PID (proc.kill(),
-            # sufficient for a single command under create_subprocess_exec) would
-            # leave those children orphaned and still running — the exact class of
-            # leak Fix #7 (this same session) closed for the simple case.
-            start_new_session=True,
-        )
+        if sandbox is not None:
+            # The same shell line, run by /bin/sh inside the wall. No preexec_fn, so
+            # create_subprocess_exec is safe under uvloop.
+            proc = await asyncio.create_subprocess_exec(
+                *sandbox.wrap(["/bin/sh", "-c", shell_command_line]),
+                cwd=str(resolved_cwd), env=sandbox.env(env), stdout=PIPE, stderr=STDOUT,
+                start_new_session=True)
+        else:
+            proc = await asyncio.create_subprocess_shell(
+                shell_command_line,
+                cwd=str(resolved_cwd),
+                env=env,
+                stdout=PIPE,
+                stderr=STDOUT,
+                # Own process group (setsid) so a timeout can kill the WHOLE pipeline,
+                # not just the shell wrapper. A real pipeline (`cmd1 | cmd2`) forks a
+                # child per stage; killing only the tracked shell PID (proc.kill(),
+                # sufficient for a single command under create_subprocess_exec) would
+                # leave those children orphaned and still running — the exact class of
+                # leak Fix #7 (this same session) closed for the simple case.
+                start_new_session=True,
+            )
     except FileNotFoundError:
         # The shell binary itself (/bin/sh) is missing — vanishingly rare. A
         # naked unresolvable command name instead surfaces as a normal non-zero
@@ -240,4 +253,5 @@ async def run_command(
         full = header + f"... (output truncated, showing last {keep} chars)\n" + output[-keep:]
 
     is_error = exit_code != 0
-    return ToolOutput(output=full, is_error=is_error, exit_code=exit_code)
+    return ToolOutput(output=full, is_error=is_error, exit_code=exit_code,
+                      sandboxed=sandbox is not None)

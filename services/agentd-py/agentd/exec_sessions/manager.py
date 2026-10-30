@@ -12,7 +12,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
 from agentd.child_env import child_env
@@ -26,6 +26,9 @@ from agentd.exec_sessions.registry_file import SessionRegistryFile
 from agentd.exec_sessions.terminal_text import plain_terminal_text, unfinished_tail_length
 from agentd.tools._paths import resolve_workspace_bin
 from agentd.tools.shell import _split_command
+
+if TYPE_CHECKING:
+    from agentd.sandbox.launch import SandboxLaunch
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +152,9 @@ class _Session:
     started_at: float
     model_cursor: int = 0
     stdin_history: list[dict[str, object]] = field(default_factory=list)
+    # The wall the session started in; it keeps it (and its proxy lease) until it ends,
+    # even if the user switches the sandbox off meanwhile.
+    sandbox: SandboxLaunch | None = None
 
 
 class SessionManager:
@@ -162,7 +168,8 @@ class SessionManager:
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     async def start(self, thread_id: str, command: str, args: list[str],
-                    cwd: str | None, yield_time_ms: object) -> SessionRead:
+                    cwd: str | None, yield_time_ms: object, *,
+                    sandbox: SandboxLaunch | None = None) -> SessionRead:
         if len(self._sessions) >= max_session_count():
             raise SessionCapError(
                 f"Session cap ({max_session_count()}) reached backend-wide — "
@@ -185,17 +192,24 @@ class SessionManager:
         env["VIRTUAL_ENV"] = str(workspace_venv)
         target_cwd = self._resolve_cwd(cwd)
         buf = RingBuffer(buffer_bytes())
+        argv = [command, *args]
+        if sandbox is not None:
+            argv, env = sandbox.wrap(argv), sandbox.env(env)
         try:
             proc = await self._pty_cls.spawn(
-                command, args, cwd=target_cwd, env=env, on_output=buf.append)
+                argv[0], argv[1:], cwd=target_cwd, env=env, on_output=buf.append)
         except FileNotFoundError as exc:
+            if sandbox is not None:
+                sandbox.release()
             raise SessionSpawnError(f"'{command}' not found on PATH") from exc
         except Exception as exc:
+            if sandbox is not None:
+                sandbox.release()
             raise SessionSpawnError(f"spawn failed: {exc}") from exc
         sess = _Session(
             session_id=f"sess-{uuid4().hex[:8]}", thread_id=thread_id,
             command_line=" ".join([command, *args]), executable=command,
-            proc=proc, buffer=buf, started_at=time.time())
+            proc=proc, buffer=buf, started_at=time.time(), sandbox=sandbox)
         self._sessions[sess.session_id] = sess
         self._registry.record(self._sessions.values())
         # wait()==True implies the final output was already drained (PtyProcess
@@ -231,6 +245,9 @@ class SessionManager:
             except Exception:
                 logger.warning("[exec-sessions] shutdown kill failed for %s",
                                sess.session_id, exc_info=True)
+            finally:
+                if sess.sandbox is not None:
+                    sess.sandbox.release()
 
         # Concurrent: a serial sweep would stall shutdown ~4s per stubborn session.
         await asyncio.gather(*(_kill_one(s) for s in list(self._sessions.values())))
@@ -311,6 +328,8 @@ class SessionManager:
 
     def _remove(self, sess: _Session) -> None:
         sess.proc.close()
+        if sess.sandbox is not None:
+            sess.sandbox.release()
         self._sessions.pop(sess.session_id, None)
         self._registry.record(self._sessions.values())
 

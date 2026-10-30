@@ -5,6 +5,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
@@ -12,6 +13,9 @@ from agentd.local_models import semantic_ready
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 from agentd.tools.approvals import denial_text
 from agentd.tools.read_policy import adaptive_reads_enabled
+
+if TYPE_CHECKING:
+    from agentd.sandbox.runtime import SandboxRuntime
 
 
 class ToolDefinition(BaseModel):
@@ -36,6 +40,9 @@ class ToolOutput:
     whole: bool = False
     # Why Auto mode let this call run (shown under the tool pill); None otherwise.
     approval_note: str | None = None
+    # The command ran inside the sandbox / was let out of it (shown on the tool pill).
+    sandboxed: bool = False
+    outside_sandbox: bool = False
 
 
 # Tagged (spec §4.6.3). Main renders today's text byte-for-byte; a child is told it runs in
@@ -93,8 +100,11 @@ class ToolRegistry:
         render_ctx: RenderContext | None = None,
         command_guard: Callable[[str], str | None] | None = None,
         retrieval_client: object | None = None,
+        sandbox_runtime: SandboxRuntime | None = None,
     ) -> None:
         self._shadow_root = shadow_root
+        # Commands run inside the sandbox while it is on and available (None: never).
+        self._sandbox = sandbox_runtime
         self._real_workspace_path = real_workspace_path
         self._semantic_index = semantic_index
         self._retrieval_client = retrieval_client
@@ -520,14 +530,21 @@ class ToolRegistry:
                 refusal = self._command_guard(line)
                 if refusal is not None:
                     return ToolOutput(output=refusal, is_error=True)
-            output = await run_command(
-                command=command,
-                args=cmd_args,
-                shadow_root=self._shadow_root,
-                real_workspace_path=self._real_workspace_path,
-                cwd=cwd or None,
-                binary_name_override=binary_name,
-            )
+            launch = (self._sandbox.launch_for(shadow_root=self._shadow_root)
+                      if self._sandbox is not None else None)
+            try:
+                output = await run_command(
+                    command=command,
+                    args=cmd_args,
+                    shadow_root=self._shadow_root,
+                    real_workspace_path=self._real_workspace_path,
+                    cwd=cwd or None,
+                    binary_name_override=binary_name,
+                    sandbox=launch,
+                )
+            finally:
+                if launch is not None:
+                    launch.release()
             output.approval_note = note
             return output
         return run
