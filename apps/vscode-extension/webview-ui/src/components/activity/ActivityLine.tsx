@@ -5,6 +5,11 @@ import { Icon } from "../Icon";
 import { ToolDetailPanel } from "../shared/ToolDetailPanel";
 import { toolIcon } from "../shared/tool-icon";
 
+/** The block's first sentence names what was stopped; the rest is guidance for the agent. */
+function blockedLine(output: string | undefined): string {
+  return (output ?? "").split(/(?<=\.)\s/, 1)[0] ?? "";
+}
+
 /** One tool step as one line (spec §2): icon, verb, muted target. A native button, so the
  * step's input/output opens from the keyboard as well as the mouse. While the step runs,
  * only the verb shimmers (static under reduced motion — see .shimmer-text). */
@@ -20,8 +25,10 @@ export function ActivityLine({ event }: { event: ToolEventView }) {
         <span className={event.done ? "shrink-0" : "shrink-0 shimmer-text"}>{verb}</span>
         {target && <span className="min-w-0 truncate text-text-3">{target}</span>}
         {event.isError && <span className="shrink-0" style={{ color: "var(--danger)" }}>failed</span>}
+        {event.sandbox === "outside" && <span className="shrink-0 text-caption text-text-3">outside sandbox</span>}
       </button>
       {event.approvalNote && <p className="min-w-0 pl-[21px] text-caption text-text-3">{event.approvalNote}</p>}
+      {event.sandbox === "blocked" && <p className="min-w-0 pl-[21px] text-caption text-text-3 [overflow-wrap:anywhere]">{blockedLine(event.output)}</p>}
       {open && <div id={panelId} className="min-w-0"><ToolDetailPanel event={event} /></div>}
     </div>
   );

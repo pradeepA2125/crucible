@@ -74,6 +74,7 @@ export interface ToolEventView {
   output?: string;            // filled by the matching toolResult
   isError?: boolean;
   approvalNote?: string;      // why Auto approval let this step run
+  sandbox?: "blocked" | "outside"; // the sandbox stopped it, or it ran outside the sandbox
   done: boolean;
 }
 
@@ -427,7 +428,7 @@ export type ExtensionMessage =
   | { type: "appendThinkingEntry"; text: string }
   | { type: "appendThinkingChunk"; chunk: string }
   | { type: "appendToolEvent"; event: Omit<ToolEventView, "output" | "isError" | "done"> }
-  | { type: "appendToolResult"; id: number; output: string; isError: boolean; approvalNote?: string }
+  | { type: "appendToolResult"; id: number; output: string; isError: boolean; approvalNote?: string; sandbox?: "blocked" | "outside" }
   | { type: "updateWorkbar"; info: WorkbarInfo | null }
   | { type: "updateRetryStatus"; status: RetryStatusView | null }
   | { type: "updateTokenProgress"; progress: TokenProgressView | null }
@@ -570,7 +571,8 @@ export interface StreamingBubble {
 export type ApprovalMode = "ask" | "accept_edits" | "auto" | "full_access";
 export interface ApprovalModeView {
   tier: "unknown" | "supported" | "older" | "legacy";
-  snapshot: { supported: true; autoAccept: boolean; shellPolicy: "ask" | "allow_all" | "auto"; shellPolicies?: string[]; version: number; owned: boolean; processId: string } | null;
+  snapshot: { supported: true; autoAccept: boolean; shellPolicy: "ask" | "allow_all" | "auto"; shellPolicies?: string[];
+    sandbox?: { enabled: boolean; available: boolean; reason: string | null }; version: number; owned: boolean; processId: string } | null;
   mode: ApprovalMode | null; confirmed: boolean; pending: boolean; warningDismissed: boolean;
   trusted: boolean;
   error: string | null; notice: string | null;

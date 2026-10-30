@@ -49,6 +49,14 @@ function modeAvailability(mode: (typeof APPROVAL_MODES)[number], approval: Appro
   if (!backendOffers) return { disabled: true, note: mode.id === "auto" ? "Needs a newer backend." : mode.description };
   return { disabled: false, note: mode.description };
 }
+/** Null on a backend without a sandbox and while its startup check runs. */
+function sandboxLine(approval: ApprovalModeView): string | null {
+  const sandbox = approval.snapshot?.sandbox;
+  if (!sandbox) return null;
+  if (!sandbox.enabled) return "Sandbox: off";
+  if (sandbox.available) return "Sandbox: on";
+  return sandbox.reason ? "Sandbox unavailable — commands run unprotected" : null;
+}
 export function ApprovalMenu({ approval }: { approval: ApprovalModeView }) {
   const root = useRef<HTMLDivElement>(null);
   const chip = useRef<HTMLButtonElement>(null);
@@ -66,6 +74,7 @@ export function ApprovalMenu({ approval }: { approval: ApprovalModeView }) {
   }, [approval]);
   useEffect(() => { if (open) root.current?.querySelector<HTMLButtonElement>('button[role="menuitemradio"][aria-checked="true"]:not(:disabled), button[role="menuitemradio"]:not(:disabled)')?.focus(); }, [open]);
   const selected = APPROVAL_MODES.find(mode => mode.id === approval.mode);
+  const sandbox = sandboxLine(approval);
   const connecting = approval.tier === "unknown" || approval.tier === "supported" && !approval.confirmed;
   const label = connecting ? "Connecting…" : approval.tier === "legacy" ? "Approval unavailable" : (selected?.label ?? "Custom policy") + (approval.tier === "older" && !approval.confirmed ? " · unconfirmed" : "");
   function choose(mode: ApprovalMode, confirmedFullAccess = false, dontShowAgain = false) {
@@ -113,6 +122,7 @@ export function ApprovalMenu({ approval }: { approval: ApprovalModeView }) {
           <p>{approval.snapshot?.shellPolicy === "auto"
             ? "MCP tools and input to running terminal sessions are checked the same way."
             : "MCP tools keep their own approval. Input to an already-running terminal session isn’t gated."}</p>
+          {sandbox && <p className="text-text-2">{sandbox}</p>}
         </div>
       </div>}
       {warning && <FullAccessWarning returnTo={chip} onCancel={() => setWarning(false)} onConfirm={remember => { setWarning(false); choose("full_access", true, remember); }} />}

@@ -12,10 +12,10 @@ import pytest
 from agentd.domain.models import ApprovalOutcome
 from agentd.exec_sessions.manager import SessionManager
 from agentd.exec_sessions.tool_source import ExecSessionToolSource
-from agentd.sandbox.blocks import SandboxBlock, annotate, classify_block
+from agentd.sandbox.blocks import SandboxBlock, annotate, classify_block, sandbox_marker
 from agentd.sandbox.policy import SandboxPolicy
 from agentd.sandbox.runtime import SandboxRuntime
-from agentd.tools.registry import ToolRegistry
+from agentd.tools.registry import ToolOutput, ToolRegistry
 
 WS = Path("/work/space")
 HOME = Path("/Users/u")
@@ -147,3 +147,9 @@ def test_annotation_text_exact():
         "Blocked by the sandbox: this command connected to the network directly instead of "
         "through the sandbox's proxy. To run it outside the sandbox, call run_command again "
         "with outside_sandbox: true and a short reason.")
+
+
+def test_sandbox_marker_names_a_block_or_a_command_let_out() -> None:
+    assert sandbox_marker(ToolOutput(output="", status="sandbox_blocked")) == "blocked"
+    assert sandbox_marker(ToolOutput(output="", outside_sandbox=True)) == "outside"
+    assert sandbox_marker(ToolOutput(output="", sandboxed=True)) is None

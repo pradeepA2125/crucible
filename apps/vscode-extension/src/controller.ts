@@ -106,7 +106,7 @@ export interface ControllerUI {
   renderLivePlan(plan: LivePlanView): void;
   clearLivePlan(): void;
   appendToolEvent(event: { id: number; tool: string; args: Record<string, unknown>; thought?: string; source: "explore" | "execution" | "planning" }): void;
-  appendToolResult(id: number, output: string, isError: boolean, approvalNote?: string): void;
+  appendToolResult(id: number, output: string, isError: boolean, approvalNote?: string, sandbox?: "blocked" | "outside"): void;
   updateWorkbar(info: { stepIndex?: number; totalSteps?: number; stepTitle?: string; phaseLabel?: string } | null): void;
   updateRetryStatus(status: { attempt: number; max_attempts: number; reason: string; message: string } | null): void;
   updateTokenProgress(
@@ -2020,7 +2020,10 @@ export class CrucibleController {
     if (this.openToolEvent[source] === id) delete this.openToolEvent[source];
     const output = (payload["output"] as string) ?? "";
     const note = payload["approval_note"];
-    if (typeof note === "string" && note) {
+    const marker = payload["sandbox"];
+    if (marker === "blocked" || marker === "outside") {
+      this.ui.appendToolResult(id, output, payload["is_error"] === true, typeof note === "string" && note ? note : undefined, marker);
+    } else if (typeof note === "string" && note) {
       this.ui.appendToolResult(id, output, payload["is_error"] === true, note);
     } else {
       this.ui.appendToolResult(id, output, payload["is_error"] === true);

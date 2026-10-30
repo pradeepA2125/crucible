@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApprovalMenu, ApprovalNotice } from "./ApprovalMenu";
 import type { ApprovalModeView } from "../types";
@@ -94,5 +94,31 @@ describe("ApprovalMenu", () => {
     open({ ...approval, tier: "unknown", confirmed: false });
     expect(screen.getByRole("button", { name: /Connecting/ })).toBeInTheDocument();
     expect(screen.getByRole("menuitemradio", { name: /^Accept edits/ })).toBeDisabled();
+  });
+});
+
+describe("ApprovalMenu sandbox status", () => {
+  const base: ApprovalModeView = { tier: "supported", mode: "ask", confirmed: true, pending: false, warningDismissed: false,
+    trusted: true, error: null, notice: null, snapshot: { supported: true, autoAccept: false, shellPolicy: "ask", version: 1, owned: true, processId: "p" } };
+  const withSandbox = (sandbox: NonNullable<ApprovalModeView["snapshot"]>["sandbox"]): ApprovalModeView =>
+    ({ ...base, snapshot: { ...base.snapshot!, ...(sandbox ? { sandbox } : {}) } });
+  const open = (view: ApprovalModeView) => {
+    render(<ApprovalMenu approval={view} />);
+    fireEvent.click(screen.getByRole("button", { name: /Approval mode/ }));
+  };
+  it.each([
+    [{ enabled: true, available: true, reason: null }, "Sandbox: on"],
+    [{ enabled: false, available: true, reason: null }, "Sandbox: off"],
+    [{ enabled: true, available: false, reason: "no bwrap" }, "Sandbox unavailable — commands run unprotected"],
+  ])("states the status %#", (sandbox, text) => {
+    open(withSandbox(sandbox));
+    expect(screen.getByText(text)).toBeInTheDocument();
+  });
+  it("says nothing on a backend without a sandbox or while checking", () => {
+    open(withSandbox(undefined));
+    expect(screen.queryByText(/Sandbox/)).toBeNull();
+    cleanup();
+    open(withSandbox({ enabled: true, available: false, reason: null }));
+    expect(screen.queryByText(/Sandbox/)).toBeNull();
   });
 });

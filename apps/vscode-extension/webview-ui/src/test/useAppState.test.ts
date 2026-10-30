@@ -173,6 +173,10 @@ describe("useAppState", () => {
       fireMessage({ type: "appendToolResult", id: 1, output: "ok", isError: false, approvalNote: "Auto: you asked" });
     });
     expect(result.current.state.streaming?.toolEvents[0].approvalNote).toBe("Auto: you asked");
+    act(() => {
+      fireMessage({ type: "appendToolResult", id: 1, output: "blocked", isError: true, sandbox: "blocked" });
+    });
+    expect(result.current.state.streaming?.toolEvents[0].sandbox).toBe("blocked");
   });
 
   // 7. tool event pairing

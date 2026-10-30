@@ -99,6 +99,8 @@ class ToolResult(BaseModel):
     is_error: bool = False
     status: str | None = None
     approval_note: str | None = None
+    # The sandbox stopped this call, or it ran outside the sandbox (shown on the tool pill).
+    sandbox: Literal["blocked", "outside"] | None = None
 
 
 class AgentToolTrace(BaseModel):

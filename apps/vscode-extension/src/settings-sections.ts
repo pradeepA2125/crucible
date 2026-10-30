@@ -13,6 +13,7 @@ export type SettingsSectionId =
   | "agents"
   | "instructions"
   | "policies"
+  | "sandbox"
   | "runtime";
 
 export interface SettingsSection {
@@ -30,6 +31,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "agents", label: "Agents" },
   { id: "instructions", label: "Instructions" },
   { id: "policies", label: "Policies & Memory" },
+  { id: "sandbox", label: "Sandbox" },
   { id: "runtime", label: "Runtime" },
 ];
 

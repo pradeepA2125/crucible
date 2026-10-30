@@ -38,3 +38,17 @@ test("legacy results still pair by source and orphan results are ignored", () =>
   instance.forwardToolResult("explore", { output: "orphan" });
   expect(ui.appendToolResult.mock.calls).toEqual([[1, "source", false]]);
 });
+
+test("the sandbox marker rides along with its tool result", () => {
+  const { instance, ui } = router();
+  instance.forwardToolCall("execution", { call_index: 0, tool: "run_command", args: {} });
+  instance.forwardToolResult("execution", { call_index: 0, output: "blocked", is_error: true, sandbox: "blocked" });
+  expect(ui.appendToolResult.mock.calls).toEqual([[0, "blocked", true, undefined, "blocked"]]);
+});
+
+test("an unknown sandbox marker is dropped", () => {
+  const { instance, ui } = router();
+  instance.forwardToolCall("execution", { call_index: 0, tool: "run_command", args: {} });
+  instance.forwardToolResult("execution", { call_index: 0, output: "ok", sandbox: "sideways" });
+  expect(ui.appendToolResult.mock.calls).toEqual([[0, "ok", false]]);
+});

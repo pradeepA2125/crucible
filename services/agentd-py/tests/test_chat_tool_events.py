@@ -243,3 +243,16 @@ async def test_inline_change_diff_card_carries_tool_events(tmp_path: Path) -> No
     assert "execution" in sources, f"expected execution pills, got {sources}"
     # ids re-sequenced so they stay unique within the message
     assert [e["id"] for e in events] == list(range(len(events)))
+
+
+@pytest.mark.parametrize("marker", ["blocked", "outside"])
+def test_pill_keeps_the_sandbox_marker(marker: str) -> None:
+    call = ToolCall(call_id="c1", tool_name="run_command", arguments={})
+    result = ToolResult(call_id="c1", tool_name="run_command", output="x", sandbox=marker)
+    assert trace_to_tool_events(_trace((call, result)), "execution")[0]["sandbox"] == marker
+
+
+def test_pill_without_a_marker_carries_no_field() -> None:
+    call = ToolCall(call_id="c1", tool_name="run_command", arguments={})
+    result = ToolResult(call_id="c1", tool_name="run_command", output="x")
+    assert "sandbox" not in trace_to_tool_events(_trace((call, result)), "execution")[0]

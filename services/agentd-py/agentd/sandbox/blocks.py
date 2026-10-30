@@ -101,6 +101,13 @@ def annotate_block(output: ToolOutput, launch: SandboxLaunch, tool: str,
     return True
 
 
+def sandbox_marker(output: ToolOutput) -> Literal["blocked", "outside"] | None:
+    """What the tool pill shows about this result; ordinary sandboxed runs show nothing."""
+    if getattr(output, "status", None) == "sandbox_blocked":
+        return "blocked"
+    return "outside" if getattr(output, "outside_sandbox", False) else None
+
+
 def annotate(block: SandboxBlock, tool: str) -> str:
     outside = (f"To run this command outside the sandbox, call {tool} again with "
                "outside_sandbox: true and a short reason.")

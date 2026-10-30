@@ -667,3 +667,48 @@ describe("TeamPlanGate", () => {
     expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ decision: "reject" }));
   });
 });
+
+describe("sandbox escalation cards", () => {
+  const hosts = { command: "curl", args: ["https://example.com"], cwd: "/ws",
+    escalation: { kind: "allow_hosts", hosts: ["example.com", "cdn.example.com"], reason: "needs the docs" } };
+  const outside = { command: "git", args: ["push"], cwd: "/ws",
+    escalation: { kind: "outside_sandbox", hosts: [], reason: "pushes over ssh" } };
+
+  it("asks about network access with host chips and three buttons", () => {
+    render(<CommandGate gateId="g1" taskId="t1" payload={hosts} />);
+    expect(screen.getByText("Allow network access?")).toBeInTheDocument();
+    expect(screen.getByText("example.com")).toBeInTheDocument();
+    expect(screen.getByText("cdn.example.com")).toBeInTheDocument();
+    expect(screen.getByText("needs the docs")).toBeInTheDocument();
+    expect(screen.getAllByRole("button").map(b => b.textContent)).toEqual(["Allow once", "Allow for this workspace", "Reject"]);
+  });
+  it("Allow once does not remember", () => {
+    render(<CommandGate gateId="g1" taskId="t1" payload={hosts} />);
+    fireEvent.click(screen.getByRole("button", { name: "Allow once" }));
+    expect(postMessage).toHaveBeenCalledWith({ type: "commandDecision", taskId: "t1", gateId: "g1", approve: true, remember: false, scope: "exact" });
+  });
+  it("Allow for this workspace remembers", () => {
+    render(<CommandGate gateId="g1" taskId="t1" payload={hosts} />);
+    fireEvent.click(screen.getByRole("button", { name: "Allow for this workspace" }));
+    expect(postMessage).toHaveBeenCalledWith({ type: "commandDecision", taskId: "t1", gateId: "g1", approve: true, remember: true, scope: "exact" });
+  });
+  it("asks about leaving the sandbox with no way to remember it", () => {
+    render(<CommandGate gateId="g1" taskId="t1" payload={outside} />);
+    expect(screen.getByText("Run outside the sandbox?")).toBeInTheDocument();
+    expect(screen.getByText("pushes over ssh")).toBeInTheDocument();
+    expect(screen.getByText("git push")).toBeInTheDocument();
+    expect(screen.getAllByRole("button").map(b => b.textContent)).toEqual(["Allow once", "Reject"]);
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+  });
+  it("Reject sends a plain rejection and then shows what happened", () => {
+    render(<CommandGate gateId="g1" taskId="t1" payload={outside} />);
+    fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+    expect(postMessage).toHaveBeenCalledWith({ type: "commandDecision", taskId: "t1", gateId: "g1", approve: false });
+    expect(screen.getByText("Rejected")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+  it("still shows why Auto asked", () => {
+    render(<CommandGate gateId="g1" taskId="t1" payload={{ ...outside, auto_reason: "you didn't ask for a push" }} />);
+    expect(screen.getByText("Auto: you didn't ask for a push")).toBeInTheDocument();
+  });
+});

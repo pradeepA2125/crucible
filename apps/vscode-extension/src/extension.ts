@@ -502,8 +502,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     appendToolEvent: (event) => {
       chatPanel.appendToolEvent(event);
     },
-    appendToolResult: (id, output, isError, approvalNote) => {
-      chatPanel.appendToolResult(id, output, isError, approvalNote);
+    appendToolResult: (id, output, isError, approvalNote, sandbox) => {
+      chatPanel.appendToolResult(id, output, isError, approvalNote, sandbox);
     },
     updateWorkbar: (info) => {
       chatPanel.updateWorkbar(info);

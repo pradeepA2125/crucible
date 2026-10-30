@@ -46,5 +46,7 @@ def trace_to_tool_events(
             event["isError"] = result.is_error
             if result.approval_note:
                 event["approvalNote"] = result.approval_note
+            if result.sandbox:
+                event["sandbox"] = result.sandbox
         events.append(event)
     return events

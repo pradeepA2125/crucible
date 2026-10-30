@@ -62,7 +62,13 @@ function defaultPrefixCount(tokens: string[], basename: string): number {
  * or reject. Mirrors the legacy chat.js command_card with custom radio group
  * and shlexJoin-based preview.
  */
-export function CommandGate({ gateId, taskId, payload }: Props) {
+export function CommandGate(props: Props) {
+  return props.payload.escalation
+    ? <SandboxEscalationGate {...props} />
+    : <CommandRuleGate {...props} />;
+}
+
+function CommandRuleGate({ gateId, taskId, payload }: Props) {
   const command = String(payload.command ?? "");
   const args = Array.isArray(payload.args) ? payload.args.map(String) : [];
   const stepId = String(payload.step_id ?? "");
@@ -211,6 +217,72 @@ export function CommandGate({ gateId, taskId, payload }: Props) {
               Allow &amp; remember
             </BtnGhost>
             <BtnDanger onClick={handleReject}>
+              Reject
+            </BtnDanger>
+          </>
+        ) : (
+          <ResolvedRow resolved={resolved} />
+        )}
+      </div>
+    </CardShell>
+  );
+}
+
+/**
+ * An agent's request to reach hosts the sandbox blocks, or to run outside it. Only hosts
+ * can be remembered, and as workspace hosts rather than a command rule; leaving the
+ * sandbox is decided every time.
+ */
+function SandboxEscalationGate({ gateId, taskId, payload }: Props) {
+  const escalation = payload.escalation as { kind?: unknown; hosts?: unknown; reason?: unknown };
+  const isHosts = escalation.kind === "allow_hosts";
+  const hosts = Array.isArray(escalation.hosts) ? escalation.hosts.map(String) : [];
+  const reason = typeof escalation.reason === "string" ? escalation.reason : "";
+  const args = Array.isArray(payload.args) ? payload.args.map(String) : [];
+  const tokens = [String(payload.command ?? ""), ...args].filter(Boolean);
+  const [resolved, setResolved] = useState<string | null>(null);
+
+  function decide(label: string, decision: { approve: boolean; remember?: boolean; scope?: ScopeKind }) {
+    if (resolved !== null) return; // one-shot guard
+    setResolved(label);
+    vscode.postMessage({ type: "commandDecision", taskId, gateId, ...decision });
+  }
+
+  return (
+    <CardShell
+      icon="term"
+      title={isHosts ? "Allow network access?" : "Run outside the sandbox?"}
+      borderColor="var(--accent-brd)"
+      headerTint="var(--accent-bg)"
+    >
+      <AutoReason payload={payload} className="mx-3 mb-2" />
+      {reason && <p className="mx-3 mb-2 text-meta text-text-2 [overflow-wrap:anywhere]">{reason}</p>}
+      {isHosts && (
+        <ul className="mx-3 mb-2 flex flex-wrap gap-1.5">
+          {hosts.map((host) => (
+            <li key={host} className="rounded-control border border-border bg-surface-2 px-1.5 py-0.5 font-mono text-caption text-text [overflow-wrap:anywhere]">{host}</li>
+          ))}
+        </ul>
+      )}
+      <div
+        className="mx-3 mb-2.5 px-[11px] py-2 rounded-control font-mono text-caption text-text-2 overflow-x-auto whitespace-nowrap"
+        style={{ background: "var(--color-panel)", border: "1px solid var(--color-border)" }}
+      >
+        <span className="select-none" style={{ color: "var(--color-accent)" }}>$ </span>
+        <span>{shlexJoin(tokens)}</span>
+      </div>
+      <div className="flex flex-wrap gap-1.5 px-2.5 py-2 border-t border-border">
+        {resolved === null ? (
+          <>
+            <BtnPrimary flex onClick={() => decide("Allowed once", { approve: true, remember: false, scope: "exact" })}>
+              Allow once
+            </BtnPrimary>
+            {isHosts && (
+              <BtnGhost onClick={() => decide("Allowed for this workspace", { approve: true, remember: true, scope: "exact" })}>
+                Allow for this workspace
+              </BtnGhost>
+            )}
+            <BtnDanger onClick={() => decide("Rejected", { approve: false })}>
               Reject
             </BtnDanger>
           </>

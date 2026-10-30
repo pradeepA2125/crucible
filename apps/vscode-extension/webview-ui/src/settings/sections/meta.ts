@@ -2,7 +2,7 @@ import type { IconName } from "../../components/Icon";
 import type { SettingsInMsg, SettingsState } from "../types";
 
 export type SectionId =
-  | "overview" | "appearance" | "provider" | "mcp" | "skills" | "agents" | "instructions" | "policies" | "runtime";
+  | "overview" | "appearance" | "provider" | "mcp" | "skills" | "agents" | "instructions" | "policies" | "sandbox" | "runtime";
 
 export interface SectionMeta {
   id: Exclude<SectionId, "overview">;
@@ -23,6 +23,7 @@ export const SECTIONS: SectionMeta[] = [
   { id: "agents", label: "Agents", icon: "fork", blurb: "Sub-agents the main agent can dispatch: tools, permissions and trust.", tint: "var(--color-accent-ink)" },
   { id: "instructions", label: "Instructions", icon: "book", blurb: "Project instructions (AGENTS.md) injected into every turn.", tint: "var(--color-accent-ink)" },
   { id: "policies", label: "Policies & Memory", icon: "shield", blurb: "Shell & scope approval policies, memory harness flags.", tint: "var(--color-red)" },
+  { id: "sandbox", label: "Sandbox", icon: "term", blurb: "OS limits on what agent commands can write and reach.", tint: "var(--color-green)" },
   { id: "runtime", label: "Runtime", icon: "chip", blurb: "Installed runtime components, versions, and backend restart.", tint: "var(--color-accent)" },
 ];
 

@@ -47,3 +47,20 @@ it("opens details with missing arguments without crashing", () => {
   fireEvent.click(screen.getByRole("button", { name: /^Ran/ }));
   expect(screen.getByText("3 passed")).toBeInTheDocument();
 });
+
+describe("ActivityLine sandbox markers", () => {
+  it("marks a command that ran outside the sandbox", () => {
+    render(<ActivityLine event={{ ...done, sandbox: "outside" }} />);
+    expect(screen.getByText("outside sandbox")).toBeInTheDocument();
+  });
+  it("shows the first sentence of a block on its own line", () => {
+    const output = "Blocked by the sandbox: write to /etc/a.conf is outside the allowed folders. To run this command outside the sandbox, call run_command again.\n\ntouch: failed";
+    render(<ActivityLine event={{ ...done, sandbox: "blocked", isError: true, output }} />);
+    expect(screen.getByText("Blocked by the sandbox: write to /etc/a.conf is outside the allowed folders.")).toBeInTheDocument();
+  });
+  it("adds nothing to an ordinary sandboxed command", () => {
+    render(<ActivityLine event={done} />);
+    expect(screen.queryByText("outside sandbox")).toBeNull();
+    expect(screen.queryByText(/Blocked by the sandbox/)).toBeNull();
+  });
+});

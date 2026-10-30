@@ -7,6 +7,7 @@ import { McpSection } from "./sections/McpSection";
 import { SkillsSection } from "./sections/SkillsSection";
 import { AgentsSection } from "./sections/AgentsSection";
 import { InstructionsSection } from "./sections/InstructionsSection";
+import { SandboxSection } from "./sections/SandboxSection";
 import { PoliciesSection } from "./sections/PoliciesSection";
 import { RuntimeSection } from "./sections/RuntimeSection";
 import { AppearanceSection } from "./sections/AppearanceSection";
@@ -153,6 +154,7 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
               <InstructionsSection instructions={instructions} busy={busy} send={send} />
             )}
             {props && section === "policies" && <PoliciesSection {...props} />}
+            {props && section === "sandbox" && <SandboxSection {...props} />}
             {props && section === "runtime" && <RuntimeSection {...props} />}
           </div>
         </div>

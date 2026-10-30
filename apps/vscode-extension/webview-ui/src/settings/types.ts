@@ -4,6 +4,14 @@ import type { SectionId } from "./sections/meta";
 import type { ClaudeInMsg, ClaudeOutMsg } from "./claude-types";
 import type { Accent, Appearance } from "../theme";
 
+// Mirror of editor-client's SandboxConfig. available=false with no reason: still checking.
+export interface SandboxConfig {
+  status: { enabled: boolean; available: boolean; reason: string | null };
+  defaultHosts: string[];
+  hosts: string[];
+  folders: string[];
+}
+
 // Mirror of editor-client's AgentDefinitionView / AgentCatalog / AgentDefinitionInput.
 // tools: null = all tools, distinct from [] (no tools).
 export interface AgentView {
@@ -102,6 +110,10 @@ export type SettingsInMsg =
   | { type: "settings/saveInstructions"; content: string }
   | { type: "settings/restartBackend" }
   | { type: "settings/listAgents" }
+  | { type: "settings/sandbox" }
+  | { type: "settings/setSandboxEnabled"; enabled: boolean }
+  | { type: "settings/setSandboxHosts"; hosts: string[] }
+  | { type: "settings/setSandboxFolders"; folders: string[] }
   | { type: "settings/saveAgent"; name: string; input: AgentInput }
   | { type: "settings/deleteAgent"; name: string }
   | { type: "settings/trustAgent"; path: string; sha256: string }
@@ -156,6 +168,8 @@ export type SettingsOutMsg =
   | { type: "settings/contextTestResult"; result: { ok: boolean; recalled: boolean; promptTokens?: number | undefined; exact?: boolean | undefined; error?: string | undefined } }
   | { type: "settings/agents"; catalog: AgentCatalog }
   | { type: "settings/agentsError"; message: string }
+  | { type: "settings/sandboxState"; config: SandboxConfig }
+  | { type: "settings/sandboxError"; message: string }
   | { type: "settings/models"; models: string[] }
   | { type: "settings/chatgpt"; accounts: ChatGPTAccount[]; activeRegistrationId: string | null }
   | { type: "settings/chatgptError"; message: string; kind?: string }
