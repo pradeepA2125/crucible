@@ -1569,6 +1569,9 @@ class ChatController:
     def sandbox_runtime(self) -> SandboxRuntime | None:
         return self._sandbox
 
+    def _sandbox_active(self) -> bool:
+        return self._sandbox is not None and self._sandbox.active()
+
     def approval_state(self) -> ApprovalState:
         return ApprovalState(auto_accept=self._review_control.auto_accept_edits,
             shell_policy=self._shell_policy.value, version=self._approval_version,
@@ -1741,7 +1744,7 @@ class ChatController:
         if self._shell_policy == ShellPolicy.AUTO:
             decision = await self._auto_gate.decide_command(
                 command, args, self._judge_request(thread_id, child), agent_reason=reason,
-                cwd=cwd)
+                cwd=cwd, sandboxed=self._sandbox_active())
             if self._shell_policy != ShellPolicy.AUTO:
                 # The user switched modes while the judge was deciding: the new mode rules.
                 return await self._command_approval_cb(
@@ -1874,8 +1877,13 @@ class ChatController:
         Auto, short answers run and anything else is judged (spec §6.4)."""
         if self._shell_policy != ShellPolicy.AUTO:
             return ApprovalOutcome.allow()
+        # The session's own wall decides, not today's switch: it keeps what it started in.
+        from agentd.exec_sessions.manager import SessionManager
+
+        in_sandbox = (isinstance(self._exec_sessions, SessionManager)
+                      and self._exec_sessions.session_sandbox(thread_id, session_id) is not None)
         decision = await self._auto_gate.decide_stdin(
-            session_command, chars, self._judge_request(thread_id, None))
+            session_command, chars, self._judge_request(thread_id, None), sandboxed=in_sandbox)
         if self._shell_policy != ShellPolicy.AUTO or decision.kind == "run":
             if decision.note:
                 self._auto_ask_streak.pop(thread_id, None)
@@ -2344,7 +2352,8 @@ class ChatController:
         if self._shell_policy == ShellPolicy.AUTO and child.context.no_ask:
             # dontAsk: nobody is asked, so what Auto would ask about is denied instead.
             decision = await self._auto_gate.decide_command(
-                command, args, self._judge_request(child.thread_id, child), cwd=cwd)
+                command, args, self._judge_request(child.thread_id, child), cwd=cwd,
+                sandboxed=self._sandbox_active())
             if self._shell_policy != ShellPolicy.AUTO:
                 # The mode changed while the judge decided: apply the new mode's rules.
                 return await self._child_command_approval_cb(child, command, args, cwd)

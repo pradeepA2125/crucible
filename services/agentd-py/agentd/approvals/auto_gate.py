@@ -6,7 +6,13 @@ import json
 import re
 from pathlib import Path
 
-from agentd.approvals.auto_rules import deny_reason, is_safe, rules_cover, writes_protected
+from agentd.approvals.auto_rules import (
+    deny_reason,
+    is_outward,
+    is_safe,
+    rules_cover,
+    writes_protected,
+)
 from agentd.approvals.command_parse import ASSIGNMENT, parse_command
 from agentd.approvals.types import (
     AutoDecision,
@@ -34,6 +40,21 @@ _COMMAND_SESSIONS = frozenset({
 })
 
 
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "fish", "tcsh", "csh", "pwsh",
+                     "powershell"})
+
+
+def _session_program(session_command: str) -> str:
+    words = [w for w in session_command.split() if not ASSIGNMENT.match(w)]
+    if words and Path(words[0]).name == "env":
+        words = words[1:]
+    return Path(words[0]).name if words else ""
+
+
+def _is_shell(session_command: str) -> bool:
+    return _session_program(session_command) in _SHELLS
+
+
 def _runs_commands(session_command: str) -> bool:
     words = [w for w in session_command.split() if not ASSIGNMENT.match(w)]
     if words and Path(words[0]).name == "env":
@@ -51,7 +72,10 @@ class AutoGate:
         self.judge = judge
 
     async def decide_command(self, command: str, args: list[str], request: JudgeRequest,
-                             agent_reason: str = "", cwd: str = "") -> AutoDecision:
+                             agent_reason: str = "", cwd: str = "",
+                             sandboxed: bool = False) -> AutoDecision:
+        """With `sandboxed`, the wall contains the command, so only outward actions
+        (pushes, publishing) still need the judge — how Codex and Claude Code use theirs."""
         parsed = parse_command(command, args, self._workspace)
         reason = deny_reason(parsed, workspace=self._workspace, home=self._home)
         if reason is not None:
@@ -61,7 +85,9 @@ class AutoGate:
             return AutoDecision("ask", PROTECTED_WRITE_REASON, None)
         if rules_cover(CommandRuleStore(self._workspace).load(), command, args, self._workspace):
             return AutoDecision("run", "", None)
-        if is_safe(parsed, workspace=self._workspace, cwd=cwd):
+        if sandboxed and not is_outward(parsed):
+            return AutoDecision("run", "", None)
+        if not sandboxed and is_safe(parsed, workspace=self._workspace, cwd=cwd):
             return AutoDecision("run", "", None)
         if self.judge is None:
             return AutoDecision("ask", NO_JUDGE_REASON, None)
@@ -85,12 +111,19 @@ class AutoGate:
         return await self.judge.judge(request, action)
 
     async def decide_stdin(self, session_command: str, chars: str,
-                           request: JudgeRequest) -> AutoDecision:
+                           request: JudgeRequest, sandboxed: bool = False) -> AutoDecision:
         """Input to a running session. Control keys always run. In a shell or REPL every
         line is a command, so it is judged; elsewhere a one-word answer to a prompt (y, a
-        number, a choice) runs and anything longer is judged."""
+        number, a choice) runs and anything longer is judged. Inside the sandbox a line
+        typed into a shell gets the same checks as a sandboxed command, and other input
+        runs (the process is inside the wall)."""
         if chars in _CONTROL_KEYS:
             return AutoDecision("run", "", None)
+        if sandboxed:
+            if not _is_shell(session_command):
+                return AutoDecision("run", "", None)
+            return await self.decide_command("sh", ["-c", chars.strip()], request,
+                                             sandboxed=True)
         if not _runs_commands(session_command) and _SIMPLE_ANSWER.fullmatch(chars):
             return AutoDecision("run", "", None)
         if self.judge is None:

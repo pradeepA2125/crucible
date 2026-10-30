@@ -57,6 +57,23 @@ ALWAYS_ASK_IN_WORKSPACE = (
     ".claude/skills/*", ".vscode/settings.json", ".vscode/tasks.json", ".vscode/launch.json",
     "*.code-workspace", ".git/hooks/*", ".git/config",
 )
+# Outward actions: publishing or changing something remote (spec 2026-10-30 "Auto with
+# the sandbox"). Inside the sandbox most lack credentials anyway; these still go to the
+# judge because a token in a workspace file or an allowed host can carry them out.
+_GIT_OPTIONS_WITH_VALUE = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace"})
+_GH_OPTIONS_WITH_VALUE = frozenset({"-R", "--repo", "--hostname"})
+_GH_WRITES = {
+    "pr": frozenset({"create", "merge", "close", "edit", "comment", "review", "reopen",
+                     "ready"}),
+    "issue": frozenset({"create", "close", "edit", "comment", "reopen", "delete"}),
+    "release": frozenset({"create", "delete", "edit", "upload"}),
+    "repo": frozenset({"create", "delete", "edit", "fork", "rename", "archive"}),
+}
+_GH_FIELD_FLAGS = frozenset({"-f", "-F", "--field", "--raw-field", "--input"})
+_OUTWARD_PAIRS = frozenset({
+    ("npm", "publish"), ("npm", "unpublish"), ("pnpm", "publish"), ("yarn", "publish"),
+    ("cargo", "publish"), ("twine", "upload"), ("uv", "publish"), ("docker", "push"),
+})
 # ~/.crucible holds agent trust, backend tokens and sign-ins.
 _ALWAYS_ASK_IN_HOME = (".crucible/*", ".claude/agents/*", ".claude/skills/*")
 
@@ -265,6 +282,50 @@ def _segment_is_safe(words: tuple[str, ...], workspace: Path, cwd: str = "") -> 
         return False
     return all(_inside(w, workspace, cwd) for w in words[1:]
                if not w.startswith("-") and _looks_like_path(w))
+
+
+def _subcommand(words: tuple[str, ...], options_with_value: frozenset[str]) -> tuple[str, ...]:
+    """The words from the subcommand on: `git -C dir push` → ("push",)."""
+    i = 1
+    while i < len(words) and words[i].startswith("-"):
+        i += 2 if words[i] in options_with_value else 1
+    return words[i:]
+
+
+def _gh_writes(rest: tuple[str, ...]) -> bool:
+    if not rest:
+        return False
+    group, action = rest[0], rest[1] if len(rest) > 1 else ""
+    if group == "api":
+        for i, word in enumerate(rest):
+            name, _, value = word.partition("=")
+            if name in ("-X", "--method"):
+                method = value or (rest[i + 1] if i + 1 < len(rest) else "")
+                return method.upper() != "GET"
+        # gh api switches to POST when given fields.
+        return any(w.split("=", 1)[0] in _GH_FIELD_FLAGS for w in rest)
+    return action in _GH_WRITES.get(group, frozenset())
+
+
+def is_outward(parsed: ParsedCommand) -> bool:
+    """A command that publishes or changes something remote through a host the sandbox
+    allows (pushes, releases, package uploads). With the sandbox on, these still go to
+    the judge. A line the parser cannot read counts as outward (fail closed)."""
+    if parsed.parse_failed or parsed.has_substitution:
+        return True
+    for segment in parsed.segments:
+        words = _command_words(segment)
+        name = _name(words)
+        if name == "git":
+            rest = _subcommand(words, _GIT_OPTIONS_WITH_VALUE)
+            if rest[:1] == ("push",):
+                return True
+        elif name == "gh":
+            if _gh_writes(_subcommand(words, _GH_OPTIONS_WITH_VALUE)):
+                return True
+        elif len(words) > 1 and (name, words[1]) in _OUTWARD_PAIRS:
+            return True
+    return False
 
 
 def is_safe(parsed: ParsedCommand, *, workspace: Path, cwd: str = "") -> bool:
