@@ -224,6 +224,23 @@ async def _upstream_capture() -> tuple[asyncio.AbstractServer, int, list[bytes]]
 
 
 @pytest.mark.asyncio
+async def test_a_folded_header_is_refused_so_it_cannot_carry_the_token_upstream():
+    server, port, seen = await _upstream_capture()
+    proxy = await _proxy({"pypi.org": "127.0.0.1"})
+    lease = proxy.lease([])
+    reader, writer = await asyncio.open_connection("127.0.0.1", proxy.port)
+    writer.write((f"GET http://pypi.org:{port}/a HTTP/1.1\r\n Host: evil.example\r\n"
+                  f" Proxy-Authorization: {_auth(lease.token)}\r\n\r\n").encode())
+    await writer.drain()
+    head = await asyncio.wait_for(reader.read(), 5)
+    assert head.startswith(b"HTTP/1.1 400")
+    assert seen == []
+    writer.close()
+    await proxy.close()
+    server.close()
+
+
+@pytest.mark.asyncio
 async def test_an_unreachable_first_address_falls_through_to_the_next():
     # A host with an IPv6 address on an IPv4-only network answers on its second address.
     server, port = await _echo_server()  # listens on 127.0.0.1 only, so ::1 refuses

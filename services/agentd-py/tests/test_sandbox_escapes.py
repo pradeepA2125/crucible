@@ -334,3 +334,39 @@ def test_more_credential_files_are_unreadable(base: Path, name: str) -> None:
     workspace = base / "ws"
     workspace.mkdir()
     assert _run(workspace, f"cat '{home / name}'", home).stdout == ""
+
+
+@macos_only
+@pytest.mark.parametrize("name", ["rebase-merge/git-rebase-todo", "rebase-apply/x", "sequencer/todo",
+                                  "rr-cache/x", "BISECT_RUN", "objects/info/alternates",
+                                  "objects/info/http-alternates"])
+def test_files_git_acts_on_later_are_not_writable(repo: Path, name: str) -> None:
+    # `exec` lines in a rebase todo run outside the wall on `git rebase --continue`.
+    done = _run(repo, f"mkdir -p .git/$(dirname {name}); echo 'exec touch /tmp/evil' > .git/{name}")
+    assert done.returncode != 0, name
+    assert not (repo / ".git" / name).exists()
+
+
+@macos_only
+def test_a_paused_rebase_cannot_be_given_commands(repo: Path) -> None:
+    (repo / "b.txt").write_text("b\n")
+    _git(repo, "add", "b.txt")
+    _git(repo, "commit", "-qm", "two")
+    subprocess.run(["git", *_IDENTITY, "rebase", "-i", "HEAD~1"], cwd=repo, check=True,
+                   capture_output=True, env={**child_env(), "GIT_SEQUENCE_EDITOR": "sed -i '' '1i\\\nbreak\n'"})
+    todo = repo / ".git/rebase-merge/git-rebase-todo"
+    before = todo.read_text()
+    assert _run(repo, "echo 'exec touch /tmp/evil' >> .git/rebase-merge/git-rebase-todo").returncode != 0
+    assert todo.read_text() == before
+
+
+@macos_only
+def test_a_rebase_inside_the_sandbox_is_a_named_block(repo: Path) -> None:
+    identity = "-c user.name=a -c user.email=a@example.invalid -c core.hooksPath=/dev/null"
+    (repo / "b.txt").write_text("b\n")
+    _git(repo, "add", "b.txt")
+    _git(repo, "commit", "-qm", "two")
+    done = _run(repo, f"git {identity} rebase --force-rebase HEAD~1")
+    assert done.returncode != 0
+    block = classify_block(done.stderr + done.stdout, done.returncode, _policy(repo), [])
+    assert block is not None and block.kind == "write", done.stderr

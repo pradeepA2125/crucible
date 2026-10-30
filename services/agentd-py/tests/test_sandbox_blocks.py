@@ -131,16 +131,19 @@ def test_local_connection_refused_not_relabelled():
 
 
 def test_a_block_is_named_even_when_the_command_exits_zero():
-    # `touch ~/z; echo done`, `curl http://x` (a 403 is still exit 0), `git checkout` leaving a
-    # protected file behind: the agent must not read these as clean successes.
-    out = "touch: /Users/u/.zshrc: Operation not permitted\ndone"
-    assert _classify(out, code=0) == SandboxBlock("write", "/Users/u/.zshrc")
+    # `curl http://x` (a 403 is still exit 0), `git checkout` leaving a protected file behind:
+    # the agent must not read these as clean successes.
     assert _classify("", ["example.com"], code=0) == SandboxBlock("network", "example.com")
     out = "error: unable to unlink old 'AGENTS.md': Operation not permitted"
     assert _classify(out, code=0) == SandboxBlock("write", "AGENTS.md")
 
 
 def test_success_is_otherwise_never_relabelled():
+    # A passing grep or test run often prints text like this about something else.
+    for out in ("server.log:42:failed /etc/secret.conf: Operation not permitted",
+                "'/var/db/locked': Operation not permitted",
+                "touch: /Users/u/.zshrc: Operation not permitted"):
+        assert _classify(out, code=0) is None, out
     assert _classify("touch: /work/space/a.txt: Operation not permitted", code=0) is None
     assert _classify("curl: (6) Could not resolve host: example.com", code=0) is None
     assert _classify("ping: sendto: Operation not permitted", code=0) is None
@@ -243,8 +246,9 @@ def _launch():
 
 
 def test_annotation_on_a_success_says_the_command_succeeded():
-    output = ToolOutput(output="touch: /Users/u/.zshrc: Operation not permitted\ndone", exit_code=0)
+    output = ToolOutput(output="error: unable to unlink old 'AGENTS.md': Operation not permitted",
+                        exit_code=0)
     assert annotate_block(output, _launch(), "run_command")
-    assert output.output.startswith("Blocked by the sandbox: write to /Users/u/.zshrc")
+    assert output.output.startswith("Blocked by the sandbox: write to AGENTS.md")
     assert "The command itself exited 0" in output.output
     assert not output.is_error and output.status == "sandbox_blocked"

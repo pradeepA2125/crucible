@@ -59,7 +59,8 @@ def bwrap_argv(policy: SandboxPolicy, argv: Sequence[str], *, bwrap: str,
     # setsid would drop the controlling terminal a terminal session needs for Ctrl-C.
     session = [] if interactive else ["--new-session"]
     args = [bwrap, "--die-with-parent", "--unshare-net", "--unshare-pid", *session,
-            "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/run"]
+            "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/run",
+            "--tmpfs", "/var/tmp"]
     if not Path("/var/run").is_symlink():
         args += ["--tmpfs", "/var/run"]
     if policy.private_tmp is not None:

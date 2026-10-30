@@ -84,9 +84,13 @@ def _git_rules(git_dir: Path, common: Path) -> str:
         return ""
     dirs = [*(git_dir / d for d in GIT_WORKTREE_DIRS), *(common / d for d in GIT_SHARED_DIRS)]
     subpaths = " ".join(f"(subpath {_literal(d)})" for d in dict.fromkeys(dirs))
+    # Alternates point git's object store at other folders, inside an otherwise open `objects`.
+    alternates = " ".join(f"(literal {_literal(common / 'objects/info' / name)})"
+                          for name in ("alternates", "http-alternates"))
     return (f"(allow file-write* {subpaths}\n"
             f'  (regex #"^{_regex_literal(git_dir)}/({GIT_WORKTREE_FILES})$")\n'
-            f'  (regex #"^{_regex_literal(common)}/{GIT_SHARED_FILES}$"))\n')
+            f'  (regex #"^{_regex_literal(common)}/{GIT_SHARED_FILES}$"))\n'
+            f"(deny file-write* {alternates})\n")
 
 
 def seatbelt_profile(policy: SandboxPolicy) -> str:

@@ -202,3 +202,9 @@ def test_argv_creates_a_missing_cache_folder_so_it_can_be_bound(tmp_path):
     argv = bwrap_argv(replace(policy, writable=(*policy.writable, cache)), ["true"],
                       bwrap=BWRAP, python=sys.executable)
     assert cache.is_dir() and (str(cache), str(cache)) in _pairs(argv, "--bind")
+
+
+def test_argv_keeps_host_sockets_in_var_tmp_out_of_reach(tmp_path):
+    policy, _ws, _home = _policy(tmp_path)
+    argv = bwrap_argv(policy, ["true"], bwrap=BWRAP, python=sys.executable)
+    assert "/var/tmp" in [argv[i + 1] for i, a in enumerate(argv) if a == "--tmpfs"]

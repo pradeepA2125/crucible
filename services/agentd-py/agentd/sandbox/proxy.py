@@ -131,6 +131,10 @@ class SandboxProxy:
             await self._reply(writer, 400, "Bad Request")
             return
         headers = [line for line in lines[1:] if line]
+        # A folded line would pass as a header to the upstream and as nothing to our checks.
+        if any(line[0] in " \t" for line in headers):
+            await self._reply(writer, 400, "Bad Request")
+            return
         lease = self._lease_for(headers)
         if lease is None:
             await self._reply(writer, 407, "Proxy Authentication Required",

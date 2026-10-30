@@ -70,6 +70,10 @@ def _inside(path: Path, roots: Sequence[Path]) -> bool:
     return any(path == root or path.is_relative_to(root) for root in roots)
 
 
+def _protected_write(raw: str, policy: SandboxPolicy) -> bool:
+    return _inside(Path(os.path.realpath(policy.workspace / raw)), policy.read_only)
+
+
 def _path_block(raw: str, policy: SandboxPolicy) -> SandboxBlock | None:
     # Relative to the workspace, where commands start; from a subfolder this lands inside the
     # workspace at worst, which reads as an ordinary error rather than a false block.
@@ -104,13 +108,16 @@ def _masked_read(output: str, policy: SandboxPolicy) -> SandboxBlock | None:
 
 def classify_block(output: str, exit_code: int | None, policy: SandboxPolicy,
                    refused_hosts: Sequence[str]) -> SandboxBlock | None:
-    """A refused host or a denied path counts whatever the exit code: `curl http://x` exits 0
-    on the proxy's 403, and `touch ~/z; echo done` hides the failure. A missing file or a
-    network error in a command that succeeded isn't evidence of anything."""
+    """A refused host counts whatever the exit code: `curl http://x` exits 0 on the proxy's
+    403. So does a denied write to a protected file: `git checkout` exits 0 and leaves it
+    stale. Anything else in the output of a command that succeeded may be text about
+    something else (a grep hit, a test's captured log), not evidence of a block."""
     if refused_hosts:
         return SandboxBlock("network", refused_hosts[0])
     for pattern in _PATH_PATTERNS:
         for match in pattern.finditer(output):
+            if exit_code == 0 and not _protected_write(match["path"], policy):
+                continue
             block = _path_block(match["path"], policy)
             if block is not None:
                 return block

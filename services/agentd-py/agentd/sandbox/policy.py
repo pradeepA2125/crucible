@@ -45,12 +45,13 @@ APPROVAL_FILES = (
     "approved-web-search.json",
 )
 # What git writes in everyday work, by where it lives in a linked worktree. Everything else
-# in a git directory stays read-only, including control files git may add later.
-GIT_WORKTREE_DIRS = ("logs", "refs", "rebase-merge", "rebase-apply", "sequencer", "rr-cache")
+# in a git directory stays read-only, including control files git may add later. Not rebase
+# or bisect state: a rebase todo holds `exec` lines git runs on `--continue`, outside the
+# wall, so rebases need an escalation.
+GIT_WORKTREE_DIRS = ("logs", "refs")
 GIT_WORKTREE_FILES = (
     r"(index|HEAD|ORIG_HEAD|FETCH_HEAD|MERGE_HEAD|MERGE_MSG|MERGE_MODE|MERGE_RR|SQUASH_MSG"
-    r"|COMMIT_EDITMSG|TAG_EDITMSG|NOTES_EDITMSG|CHERRY_PICK_HEAD|REVERT_HEAD|REBASE_HEAD"
-    r"|AUTO_MERGE|BISECT_[A-Z_]+)(\.lock)?"
+    r"|COMMIT_EDITMSG|TAG_EDITMSG|NOTES_EDITMSG|CHERRY_PICK_HEAD|REVERT_HEAD|AUTO_MERGE)(\.lock)?"
     r"|next-index-[0-9]+\.lock|index\.stash\.[0-9]+(\.lock)?|sharedindex\.[0-9a-f]+"
 )
 GIT_SHARED_DIRS = ("objects", "refs", "logs", "lfs")
