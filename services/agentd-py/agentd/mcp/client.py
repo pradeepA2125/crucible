@@ -107,6 +107,9 @@ class McpConnectionManager:
         self._loader = loader
         self._session_factory = session_factory
         self._handles: dict[str, _ServerHandle] = {}
+        # The user-local disabled list arrives with each settings call; a reconnect the
+        # backend starts itself (trusting mcp.json) reuses the last one it was given.
+        self.last_disabled: frozenset[str] = frozenset()
 
     @property
     def loader(self) -> McpConfigLoader:
@@ -122,6 +125,7 @@ class McpConnectionManager:
         configs: list[McpServerConfig],
         disabled: frozenset[str] = frozenset(),
     ) -> None:
+        self.last_disabled = disabled
         desired = {c.name: c for c in configs if c.name not in disabled}
         for name in list(self._handles):
             handle = self._handles[name]

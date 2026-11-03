@@ -501,6 +501,20 @@ app.include_router(
 app.include_router(build_agents_router(
     workspace=_chat_workspace_path,
     mcp_server_names=lambda: [s.name for s in _mcp_manager.statuses()] if _mcp_manager else []))
+# Trust for repository files that change Crucible's behavior (prompt-injection Phase 1).
+from agentd.api.project_trust_routes import build_project_trust_router  # noqa: E402
+from agentd.trust.project_trust import TrustKind, project_trust_for  # noqa: E402
+
+
+async def _on_project_file_trusted(kind: TrustKind) -> None:
+    # A newly trusted mcp.json connects its servers now; the other kinds are read per turn.
+    if kind == "mcp" and _mcp_manager is not None:
+        await _mcp_manager.reconcile(
+            _mcp_manager.loader.load(), disabled=_mcp_manager.last_disabled)
+
+
+app.include_router(build_project_trust_router(
+    project_trust_for(Path(_chat_workspace_path)), _on_project_file_trusted))
 # The command sandbox: probed in the background (it spawns a process), Settings routes
 # for this backend's workspace only.
 _sandbox_runtime = getattr(_chat_agent, "sandbox_runtime", None)

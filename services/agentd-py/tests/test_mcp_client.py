@@ -263,3 +263,15 @@ async def test_keeps_each_connected_servers_instructions():
     assert mgr.server_instructions() == {"a": "Drives a headless browser.\nMore detail."}
     await mgr.shutdown()
     assert mgr.server_instructions() == {}
+
+
+@pytest.mark.asyncio
+async def test_reconcile_remembers_the_disabled_set():
+    # Trusting mcp.json reconnects with the user's last disabled list, not an empty one.
+    sessions = {"a": _FakeSession(["t"]), "b": _FakeSession(["t"])}
+    mgr = McpConnectionManager(
+        _StaticLoader([_cfg("a"), _cfg("b")]), session_factory=_factory(sessions))
+    assert mgr.last_disabled == frozenset()
+    await mgr.reconcile([_cfg("a"), _cfg("b")], disabled=frozenset({"b"}))
+    assert mgr.last_disabled == frozenset({"b"})
+    await mgr.shutdown()

@@ -316,6 +316,7 @@ def build_router(
             is_teams_enabled,
         )
         from agentd.exec_sessions.config import is_exec_sessions_enabled
+        from agentd.trust.config import is_injection_defense_enabled
 
         return {
             "approval": approval_report(),
@@ -334,6 +335,7 @@ def build_router(
             "exec_sessions_enabled": is_exec_sessions_enabled(),
             "subagents_enabled": is_subagents_enabled(),
             "teams_enabled": is_teams_enabled() and is_subagents_enabled(),
+            "injection_defense": is_injection_defense_enabled(),
             "provider": (
                 {
                     "backend": provider_runtime.backend,  # type: ignore[attr-defined]
