@@ -51,7 +51,10 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
         }
         return;
       }
-      if (!["settings/state", "settings/instructions", "settings/error", "settings/localState", "settings/navigate"].includes(msg.type)) return;
+      if (!["settings/state", "settings/instructions", "settings/error", "settings/localState", "settings/navigate",
+        // Sections read these themselves, but each one still answers a send() that marked the panel busy.
+        "settings/sandboxState", "settings/sandboxError", "settings/agents", "settings/agentsError", "settings/models",
+        "settings/contextTestResult", "settings/claudeModels"].includes(msg.type)) return;
       setBusy(false);
       if (msg.type === "settings/state") {
         setState(msg.state);

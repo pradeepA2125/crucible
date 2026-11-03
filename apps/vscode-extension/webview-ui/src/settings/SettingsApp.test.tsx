@@ -173,3 +173,47 @@ it("desktop update progress never acknowledges an unrelated pending Settings mut
   deliver({type:"settings/state",state});
   expect(restart).not.toBeDisabled();
 });
+
+// send() marks the whole panel busy until a host reply clears it. A section whose reply isn't
+// recognised here leaves every control in Settings disabled until the next snapshot.
+describe("replies that aren't a settings snapshot release the panel", () => {
+  beforeEach(() => vi.clearAllMocks());
+  const sandbox = { status: { enabled: true, available: true, reason: null }, defaultHosts: ["github.com"], hosts: [], folders: [] };
+  const catalog = { agents: [], skipped: [], availableTools: [] };
+
+  it("enables Settings › Sandbox once its state arrives", () => {
+    render(<SettingsApp />);
+    deliver({ type: "settings/state", state });
+    navClick(/Sandbox/);
+    expect(vscode.postMessage).toHaveBeenCalledWith({ type: "settings/sandbox" });
+    deliver({ type: "settings/sandboxState", config: sandbox });
+    expect(screen.getByRole("switch", { name: "Run agent commands in a sandbox" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Restart backend" })).not.toBeDisabled();
+  });
+
+  it.each([
+    ["sandbox failure", /Sandbox/, { type: "settings/sandboxError", message: "no route" }],
+    ["agents catalog", /Agents/, { type: "settings/agents", catalog }],
+    ["agents failure", /Agents/, { type: "settings/agentsError", message: "no route" }],
+    ["model list", /Agents/, { type: "settings/models", models: [] }],
+  ])("releases the panel on a %s", (_name, section, reply) => {
+    render(<SettingsApp />);
+    deliver({ type: "settings/state", state });
+    navClick(section);
+    expect(screen.getByRole("button", { name: "Restart backend" })).toBeDisabled();
+    deliver(reply);
+    expect(screen.getByRole("button", { name: "Restart backend" })).not.toBeDisabled();
+  });
+
+  it.each([
+    ["context window verdict", { type: "settings/contextTestResult", result: { ok: true, recalled: true } }],
+    ["Claude model list", { type: "settings/claudeModels", registrationId: "r", models: [] }],
+  ])("releases the panel on a %s", (_name, reply) => {
+    render(<SettingsApp />);
+    deliver({ type: "settings/state", state });
+    fireEvent.click(screen.getByRole("button", { name: "Restart backend" }));
+    expect(screen.getByRole("button", { name: "Restart backend" })).toBeDisabled();
+    deliver(reply);
+    expect(screen.getByRole("button", { name: "Restart backend" })).not.toBeDisabled();
+  });
+});
