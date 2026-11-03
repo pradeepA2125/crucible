@@ -153,30 +153,30 @@ footer { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line);
 <pre class="mermaid">
 sequenceDiagram
     autonumber
-    participant Loop as ControllerLoop
+    participant CL as ControllerLoop
     participant Reg as ToolRegistry.prepare_command
-    participant Ctl as ChatController (approval)
+    participant Ctl as ChatController approval
     participant RT as SandboxRuntime.launch_for
     participant Sh as tools/shell.run_command
     participant OS as sandbox-exec / bwrap
     participant Px as SandboxProxy
-    Loop->>Reg: run_command {command, args}
-    Reg->>Reg: escalation_from_args(args) → None
-    Reg->>Ctl: _command_approval_cb (Ask / Auto / Full access)
-    Ctl-->>Reg: ApprovalOutcome(approved)
+    CL->>Reg: run_command(command, args)
+    Reg->>Reg: escalation_from_args(args) returns None
+    Reg->>Ctl: _command_approval_cb for Ask, Auto or Full access
+    Ctl-->>Reg: ApprovalOutcome approved
     Reg->>RT: launch_for(shadow_root, extra_hosts)
-    RT->>Px: lease(remembered hosts, extras)
+    RT->>Px: lease with remembered hosts and extras
     RT->>RT: build_policy(...)
-    RT-->>Reg: SandboxLaunch(policy, lease, tmpdir)
+    RT-->>Reg: SandboxLaunch with policy, lease, tmpdir
     Reg->>Sh: run_command(..., sandbox=launch)
-    Sh->>OS: launch.wrap(["/bin/sh","-c", line]) + launch.env(env)
-    OS->>Px: HTTPS via HTTPS_PROXY (token in URL)
-    Px-->>OS: allowed host → tunnel / other → 403
+    Sh->>OS: launch.wrap(sh -c line) and launch.env(env)
+    OS->>Px: HTTPS via HTTPS_PROXY, token in URL
+    Px-->>OS: allowed host tunnels, other hosts get 403
     Sh-->>Reg: ToolOutput(exit_code, output)
-    Reg->>Px: launch.release() (closes the lease)
+    Reg->>Px: launch.release() closes the lease
     Reg->>Reg: annotate_block(output, launch, "run_command")
-    Reg-->>Loop: ToolOutput (status, outside_sandbox)
-    Loop->>Loop: sandbox_marker(out) → pill "blocked"/"outside"/none
+    Reg-->>CL: ToolOutput with status
+    CL->>CL: sandbox_marker(out) sets the pill label
 </pre>
 </div>
 
