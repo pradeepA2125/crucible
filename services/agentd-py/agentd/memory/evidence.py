@@ -10,7 +10,7 @@ from typing import Literal
 
 from agentd.history_metadata import message_sequence
 from agentd.memory.models import CompactionSegment
-from agentd.subagents.framing import FRAME_END, strip_frames
+from agentd.subagents.framing import FRAME_END, memory_text
 
 _RESULT_ROLES = {"tool_result", "tool"}
 _COMMAND_TOOLS = {"run_command", "start_session", "write_stdin", "kill_session"}
@@ -188,7 +188,7 @@ def render_evidence(
         ):
             continue
         if purpose == "curation":
-            content = strip_frames(content)
+            content = memory_text(content)
         action = _action(content, role)
         if role not in _RESULT_ROLES:
             calls = _calls(action) if action else []

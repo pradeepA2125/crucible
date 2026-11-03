@@ -9,7 +9,7 @@ from uuid import uuid4
 from agentd.memory.embedder import Embedder
 from agentd.memory.models import CandidateMemory, Memory
 from agentd.memory.store import MemoryStore
-from agentd.subagents.framing import strip_frames
+from agentd.subagents.framing import memory_text
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ def _parse_candidate(item: object) -> CandidateMemory | None:
 def transcript_for_distill(transcript: str) -> str:
     """Memories are formed only from the user's and the agent's own words (spec §3.10): a
     planted instruction in another agent's report must never become a durable memory."""
-    return strip_frames(transcript)
+    return memory_text(transcript)
 
 
 def make_engine_consolidator(transport: object, model: str) -> DistillFn:

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from agentd.history_metadata import message_sequence
 from agentd.memory.evidence import EvidenceRow, capped, evidence_text, render_evidence
 from agentd.memory.models import CompactionSegment
-from agentd.subagents.framing import strip_frames
+from agentd.subagents.framing import MENTION_KIND, memory_text, strip_frames
 
 # Leave room in the 24k-token call for system/schema, 20 catalog lines and JSON
 # escaping. The complete assembled request is measured again before every call.
@@ -66,9 +66,11 @@ def collect_sources(
 def _sanitize(original: Mapping[str, object]) -> dict[str, object]:
     message = dict(original)
     content = str(message.get("content", ""))
-    message["content"] = strip_frames(content)
-    if message.get("role") == "user" and "<<<agent-content " in content:
-        # A system-generated notice has role=user but is not a user assertion.
+    message["content"] = memory_text(content)
+    framed = "<<<agent-content " in strip_frames(content, {MENTION_KIND})
+    if message.get("role") == "user" and framed:
+        # A system-generated notice has role=user but is not a user assertion. A mentioned
+        # file rides the user's own message, so it does not make the message a notice.
         message["_curator_notice"] = True
     if message.get("role") == "assistant":
         try:
@@ -80,7 +82,7 @@ def _sanitize(original: Mapping[str, object]) -> dict[str, object]:
             # the decoded fields, not only the serialized action envelope.
             def strip_nested(value: object) -> object:
                 if isinstance(value, str):
-                    return strip_frames(value)
+                    return memory_text(value)
                 if isinstance(value, list):
                     return [strip_nested(item) for item in value]
                 if isinstance(value, dict):
@@ -93,7 +95,7 @@ def _sanitize(original: Mapping[str, object]) -> dict[str, object]:
     if isinstance(private, dict):
         private = dict(private)
         if isinstance(private.get("thought"), str):
-            private["thought"] = strip_frames(private["thought"])
+            private["thought"] = memory_text(private["thought"])
         message["_evidence"] = private
     return message
 
