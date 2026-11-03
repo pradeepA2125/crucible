@@ -1,6 +1,40 @@
+import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { parsePayload } from "../src/contract.js";
 import { refusalMessages } from "../src/refusal.js";
+
+const isKnownCommand = (type: string) => {
+  try { parsePayload({ type }); return true; }
+  catch (error) { return !String(error).includes("Unsupported desktop command"); }
+};
+
+it("admits every approval mode the shared menu can pick", () => {
+  for (const mode of ["ask", "accept_edits", "auto", "full_access"]) {
+    expect(parsePayload({ type: "setApprovalMode", mode })).toMatchObject({ mode });
+  }
+  expect(() => parsePayload({ type: "setApprovalMode", mode: "yolo" })).toThrow();
+});
+
+it("admits the sandbox settings with their exact fields", () => {
+  expect(parsePayload({ type: "settings/sandbox" })).toEqual({ type: "settings/sandbox" });
+  expect(parsePayload({ type: "settings/setSandboxEnabled", enabled: false })).toMatchObject({ enabled: false });
+  expect(parsePayload({ type: "settings/setSandboxHosts", hosts: ["example.com"] })).toMatchObject({ hosts: ["example.com"] });
+  expect(parsePayload({ type: "settings/setSandboxFolders", folders: ["/tmp/x"] })).toMatchObject({ folders: ["/tmp/x"] });
+  expect(() => parsePayload({ type: "settings/setSandboxEnabled", enabled: "no" })).toThrow();
+  expect(() => parsePayload({ type: "settings/setSandboxHosts", hosts: "example.com" })).toThrow();
+  expect(() => parsePayload({ type: "settings/setSandboxFolders", folders: ["/tmp/x"], extra: true })).toThrow();
+});
+
+// The contract matches on runtime strings, so a message added to the shared Settings
+// handler type-checks and passes its own tests while the desktop app refuses it.
+it("admits every message the shared Settings handler accepts", () => {
+  const source = readFileSync(new URL("../../vscode-extension/src/settings-data.ts", import.meta.url), "utf8");
+  const inbound = source.slice(source.indexOf("export type SettingsInMsg"), source.indexOf("export type SettingsOutMsg"));
+  const types = [...inbound.matchAll(/type: "(settings\/[^"]+)"/g)].map(match => match[1]!);
+  expect(types.length).toBeGreaterThan(20);
+  expect(types.filter(type => !isKnownCommand(type))).toEqual([]);
+});
+
 it("validates the exact card boundary and returns only gate-specific refusal", () => {
   const action = { type: "gateDecision", threadId: "a", gateId: "g", kind: "feedback", value: "refine", draft: { revision: 1, version: 0 } };
   expect(parsePayload(action)).toEqual(action);
