@@ -262,6 +262,10 @@ services/agentd-py      Python       Chat, tools, providers, memory, agents and 
 services/indexer-rs     Rust         Repository indexing and symbol graph
 ```
 
+### Code guides
+
+To learn how a major subsystem works and where it is wired in, read the guides in [docs/code-guides](docs/code-guides/README.md). The first covers the [command sandbox](docs/code-guides/command-sandbox.html).
+
 ### Developing on it
 
 ```bash
