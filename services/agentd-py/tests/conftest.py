@@ -55,6 +55,11 @@ def _teams_off_unless_a_test_opts_in(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _injection_defense_off_unless_a_test_opts_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CRUCIBLE_INJECTION_DEFENSE", "0")
+
+
+@pytest.fixture(autouse=True)
 def _capability_loading_off_unless_a_test_opts_in(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CRUCIBLE_CAPABILITY_LOADING_ENABLED", "0")
 

@@ -34,7 +34,7 @@ UNREADABLE_IN_HOME = (
     ".crucible/trust.json", ".claude", "Library/Keychains", ".docker/run", ".docker/desktop",
     ".cargo/credentials", ".cargo/credentials.toml", ".pgpass", ".my.cnf", ".vault-token",
     ".config/git/credentials", ".config/op", ".terraform.d", ".codex", ".gemini",
-    ".zsh_history", ".bash_history",
+    ".zsh_history", ".bash_history", ".crucible/trusted-files",
 )
 # Shell startup files and git config that something unsandboxed would run or read later.
 STARTUP_FILES = (".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile",

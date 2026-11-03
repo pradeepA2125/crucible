@@ -60,6 +60,11 @@ def test_shadow_is_writable_not_read_only(tmp_path):
     assert shadow.resolve() not in policy.read_only
 
 
+def test_trusted_files_are_unreadable(tmp_path):
+    (policy, _ws, home) = _policy(tmp_path)
+    assert (home / ".crucible/trusted-files").resolve() in set(policy.unreadable)
+
+
 def test_unreadable_credentials(tmp_path):
     (policy, _ws, home) = _policy(tmp_path)
     unreadable = set(policy.unreadable)
