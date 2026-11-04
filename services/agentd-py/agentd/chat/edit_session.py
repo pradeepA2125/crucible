@@ -19,6 +19,7 @@ from agentd.patch.diffing import compute_diff_entries
 from agentd.patch.engine import PatchEngine, PatchPreflightFailed
 from agentd.patch.inline_apply import apply_ops
 from agentd.subagents.write_log import WriteGuard, canonical_path, file_digest
+from agentd.trust.project_trust import TrustKind, kind_for_path, project_trust_for
 from agentd.workspace.promote import promote_files
 from agentd.workspace.shadow import ShadowWorkspaceManager
 
@@ -136,6 +137,10 @@ class TurnEditSession:
         self._write_guard = write_guard
         # Control-plane files (spec §3.9): an agent is refused, the main agent must review.
         self._protection = protection or MainProtection()
+        # Trust-gated files this edit changes, with their fingerprint before it
+        # (prompt-injection Phase 1): accepting a reviewed edit is the user's own change.
+        self._trust = project_trust_for(real_path)
+        self._trust_before: dict[TrustKind, str | None] = {}
 
     def _raise_if_stale(self, paths: list[str]) -> None:
         """Refuse the first path another agent promoted after this agent last saw it.
@@ -214,6 +219,12 @@ class TurnEditSession:
                 code=PatchFailureCode.NO_OP, file=applied[0] if applied else None,
                 message=message)])
         self._pending_touched = changed
+        self._trust_before = {}
+        if self.requires_review:  # only a change the user sees on a review card counts
+            for rel in changed:
+                kind = kind_for_path(self._real, self._real / rel)
+                if kind is not None and kind not in self._trust_before:
+                    self._trust_before[kind] = self._trust.fingerprint(kind)
         return compute_diff_entries(self._real, shadow, changed, self._turn_id)
 
     @property
@@ -247,10 +258,14 @@ class TurnEditSession:
                     if k is not None]
             guard.log.note_promote(guard.agent_id, guard.label, guard.name, keys,
                                    {k: file_digest(self._real / k) for k in keys})
+        for kind, before in self._trust_before.items():
+            self._trust.record_own_write(kind, before)
+        self._trust_before = {}
         self._pending_touched = []
 
     async def reject(self) -> None:
         assert self._shadow is not None
+        self._trust_before = {}
         for rel in self._pending_touched:
             real_f, shadow_f = self._real / rel, self._shadow / rel
             if real_f.exists():
