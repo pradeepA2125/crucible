@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -50,6 +50,24 @@ describe("project trust saves", () => {
     await saves.willSave(other);
     await saves.didSave(other);
     expect(report).not.toHaveBeenCalled();
+  });
+
+  it("an unreadable file before the save is never reported as new", async () => {
+    const ws = workspace();
+    const file = join(ws, "AGENTS.md");
+    writeFileSync(file, "planted");
+    chmodSync(file, 0);
+    const report = vi.fn(async () => true);
+    const saves = new ProjectTrustSaves(ws, report, async () => {});
+    try {
+      await saves.willSave(file);
+      chmodSync(file, 0o644);
+      writeFileSync(file, "planted + mine");
+      await saves.didSave(file);
+      expect(report).not.toHaveBeenCalled();
+    } finally {
+      chmodSync(file, 0o644);
+    }
   });
 
   it("a skill's before hash is the whole set's fingerprint", async () => {

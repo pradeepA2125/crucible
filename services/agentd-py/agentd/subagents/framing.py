@@ -34,7 +34,10 @@ def frame(author: str, kind: str, body: str, *, seq: int | None = None,
         header += f' seq="{seq}"'
     if source is not None:
         header += f' source="{_attr(source)}"'
-    lines = [f"| {line}" if line else "|" for line in body.splitlines()] or ["|"]
+    # split("\n"), not splitlines(): that also breaks on \f, \v, \x1c-\x1e, \x85 and
+    # U+2028/9, which would change the file text an agent edits from.
+    raw = body.removesuffix("\n").split("\n") if body else [""]
+    lines = [f"| {line}" if line else "|" for line in raw]
     return "\n".join([header + ">>>", *lines, FRAME_END])
 
 
@@ -52,7 +55,7 @@ def strip_frames(text: str, kinds: Collection[str] | None = None) -> str:
 
 
 def _body(match: re.Match[str]) -> str:
-    lines = match.group(2).splitlines()
+    lines = match.group(2).removesuffix("\n").split("\n") if match.group(2) else []
     return "\n".join(line[2:] if line.startswith("| ") else line[1:] for line in lines)
 
 

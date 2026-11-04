@@ -15,6 +15,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from agentd.mcp.models import McpServerConfig
+from agentd.trust.config import is_injection_defense_enabled
 from agentd.trust.project_trust import project_trust_for
 
 logger = logging.getLogger(__name__)
@@ -97,8 +98,15 @@ class McpConfigLoader:
         """The servers to connect: none while mcp.json is untrusted. A stdio entry runs a
         command outside the sandbox, so a cloned repository's file must not start it
         (prompt-injection Phase 1, spec §4.1)."""
-        if not self.is_trusted():
-            return []
+        if is_injection_defense_enabled():
+            data, trusted = self._trust.read_checked("mcp")
+            if not trusted or data is None:
+                return []
+            text_sig = (hash(data), len(data))
+            if text_sig != self._sig:
+                self._cached = self._parse(data.decode("utf-8", errors="replace"))
+                self._sig = text_sig
+            return self._cached
         try:
             stat = self._path.stat()
         except OSError:
@@ -111,9 +119,9 @@ class McpConfigLoader:
         self._sig = sig
         return self._cached
 
-    def _parse(self) -> list[McpServerConfig]:
+    def _parse(self, text: str | None = None) -> list[McpServerConfig]:
         try:
-            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            raw = json.loads(self._path.read_text(encoding="utf-8") if text is None else text)
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("[mcp] unreadable %s: %s — no servers", self._path, exc)
             return []

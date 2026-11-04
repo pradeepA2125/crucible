@@ -79,10 +79,20 @@ describe("project trust", () => {
     expect(screen.getByRole("heading", { name: "mcp.json" })).toBeInTheDocument();
   });
 
+  it("a diff too large to compute falls back to the full file", () => {
+    const base = Array.from({ length: 3000 }, (_, i) => `line ${i}`).join("\n");
+    const current = Array.from({ length: 3000 }, (_, i) => `other ${i}`).join("\n");
+    expect(lineDiff(base, current)).toBeNull();
+    render(<ProjectTrustDialog files={[{ ...AGENTS, content: current, diffBase: base }]} onTrust={() => {}} onClose={() => {}} />);
+    const section = screen.getByRole("region", { name: "AGENTS.md" });
+    expect(section).toHaveTextContent("other 2999");
+    expect(section).not.toHaveTextContent("Changed since you trusted it");
+  });
+
   it("names and diffs are plain", () => {
     expect(trustNames([AGENTS])).toBe("AGENTS.md isn't trusted yet");
     expect(trustNames([AGENTS, MCP, { ...SKILLS, state: "untrusted" }]))
       .toBe("AGENTS.md, mcp.json and this project's skills aren't trusted yet");
-    expect(lineDiff("a\nb", "a\nc").map(l => l.kind)).toEqual(["ctx", "del", "add"]);
+    expect(lineDiff("a\nb", "a\nc")?.map(l => l.kind)).toEqual(["ctx", "del", "add"]);
   });
 });

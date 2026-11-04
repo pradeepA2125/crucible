@@ -57,10 +57,15 @@ export function trustNames(files: TrustFile[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} aren't trusted yet`;
 }
 
-/** Line diff of the last trusted copy against the current file (LCS; files are ≤ 64 KB). */
-export function lineDiff(base: string, current: string): DiffLine[] {
+// Above this many table cells the LCS diff would stall the webview; show the full file.
+const MAX_DIFF_CELLS = 2_000_000;
+
+/** Line diff of the last trusted copy against the current file (LCS), or null when the
+ * files are too large to diff here. */
+export function lineDiff(base: string, current: string): DiffLine[] | null {
   const a = base.split("\n"), b = current.split("\n");
   const n = a.length, m = b.length;
+  if ((n + 1) * (m + 1) > MAX_DIFF_CELLS) return null;
   const table: Uint32Array[] = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {

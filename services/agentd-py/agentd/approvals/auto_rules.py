@@ -349,13 +349,21 @@ def _publishes(words: tuple[str, ...]) -> bool:
 _SAFE_METHODS = frozenset({"GET", "HEAD"})
 # curl options that send data or credentials. `--data*` covers --data-binary, --data-raw…
 # `-K`/`--config` reads arbitrary options from a file, so it counts too.
-_CURL_SENDS_SHORT = frozenset("dFTuK")
+# -n/-U/-E and the netrc, proxy-user and certificate options send stored credentials.
+_CURL_SENDS_SHORT = frozenset("dFTuKnUE")
 _CURL_SENDS_LONG = frozenset({"--json", "--form", "--form-string", "--upload-file", "--user",
-                              "--oauth2-bearer", "--config"})
+                              "--oauth2-bearer", "--config", "--url-query", "--netrc",
+                              "--netrc-file", "--netrc-optional", "--proxy-user", "--cert"})
+_CURL_SENDS_PREFIXES = ("--data", "--expand-")
 # curl short options that take a value: the rest of a `-sSo` cluster is that value.
 _CURL_VALUE_SHORT = frozenset("AbcCDeEhHmoPQrtwxXyYz")
 _WGET_SENDS = frozenset({"--post-data", "--post-file", "--body-data", "--body-file", "--user",
-                         "--password", "--http-user", "--http-password"})
+                         "--password", "--http-user", "--http-password", "--execute", "-e",
+                         "--config"})
+_HTTP_CLIENTS = frozenset({"curl", "wget", "http", "https", "xh", "xhs"})
+# Variables that point these tools at a config file (.curlrc, .wgetrc, .netrc) that can add data.
+_CONFIG_VARIABLES = frozenset({"CURL_HOME", "HOME", "XDG_CONFIG_HOME", "WGETRC", "SYSTEMWGETRC",
+                               "HTTPIE_CONFIG_DIR", "NETRC"})
 _HTTPIE = frozenset({"http", "https", "xh", "xhs"})
 _HTTP_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -366,7 +374,9 @@ def _long(word: str) -> tuple[str, str | None]:
 
 
 def _is_auth_header(value: str | None) -> bool:
-    return value is not None and value.strip().lower().startswith("authorization:")
+    # "@file" reads headers from a file, which can hold credentials.
+    return value is not None and (value.strip().lower().startswith("authorization:")
+                                  or value.startswith("@"))
 
 
 def _curl_sends(args: tuple[str, ...]) -> bool:
@@ -376,7 +386,7 @@ def _curl_sends(args: tuple[str, ...]) -> bool:
         following = args[index + 1] if index + 1 < len(args) else None
         if word.startswith("--"):
             name, value = _long(word)
-            if name.startswith("--data") or name in _CURL_SENDS_LONG:
+            if name.startswith(_CURL_SENDS_PREFIXES) or name in _CURL_SENDS_LONG:
                 return True
             if name == "--request":
                 method = value if value is not None else following
@@ -434,17 +444,28 @@ def _httpie_sends(args: tuple[str, ...]) -> bool:
     return any("=" in item or item.startswith("@") or _is_auth_header(item) for item in items)
 
 
+def _http_client(words: tuple[str, ...]) -> tuple[str, tuple[str, ...]] | None:
+    """The curl/wget/httpie call in a segment, past wrappers this parser doesn't unwrap
+    (`timeout 5 curl`, `xargs curl`, `find -exec curl`, `nice -n 10 curl`)."""
+    for index, word in enumerate(words):
+        name = Path(word).name
+        if name in _HTTP_CLIENTS:
+            return name, words[index + 1:]
+    return None
+
+
 def _sends_data(words: tuple[str, ...]) -> bool:
     """curl, wget and httpie requests that upload data or carry credentials. Plain downloads
     stay inside: the sandbox's allowed hosts are where uploads would go (spec §4.5)."""
-    name, args = _name(words), words[1:]
+    found = _http_client(words)
+    if found is None:
+        return False
+    name, args = found
     if name == "curl":
         return _curl_sends(args)
     if name == "wget":
         return _wget_sends(args)
-    if name in _HTTPIE:
-        return _httpie_sends(args)
-    return False
+    return _httpie_sends(args)
 
 
 def is_outward(parsed: ParsedCommand) -> bool:
@@ -455,11 +476,17 @@ def is_outward(parsed: ParsedCommand) -> bool:
     if parsed.parse_failed or parsed.has_substitution:
         return True
     defense_on = is_injection_defense_enabled()
-    for segment in parsed.segments:
+    for index, segment in enumerate(parsed.segments):
         words = _command_words(segment)
         name = _name(words)
-        if defense_on and _sends_data(words):
-            return True
+        if defense_on:
+            client = _http_client(words)
+            if client is not None and (
+                    _sends_data(words) or _CONFIG_VARIABLES.intersection(parsed.assignments)
+                    # `cat .env | http host` sends stdin as the request body.
+                    or (client[0] in _HTTPIE and index > 0 and index - 1 < len(parsed.piped)
+                        and parsed.piped[index - 1])):
+                return True
         if name == "git":
             if _git_pushes(words):
                 return True

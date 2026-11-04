@@ -1071,9 +1071,10 @@ class ControllerLoop:
                     content, hidden = out.output, False
                     # Unknown tools default to untrusted: a forgotten one fails safe.
                     trust = output_trust.get(outcome.call.tool, "untrusted")
+                    # Self-framed results (agents' reports, team posts) are model text too.
+                    if defense_on and trust != "trusted" and self._taint is not None:
+                        self._taint.mark()
                     if defense_on and trust == "untrusted":
-                        if self._taint is not None:
-                            self._taint.mark()
                         framed = frame_tool_output(
                             outcome.call.tool, outcome.call.args, out.output)
                         content, hidden = framed.content, framed.hidden_chars

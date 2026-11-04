@@ -31,7 +31,7 @@ CACHE_DIRS = (
 UNREADABLE_IN_HOME = (
     ".ssh", ".aws", ".gnupg", ".config/gcloud", ".azure", ".kube", ".docker/config.json",
     ".netrc", ".git-credentials", ".config/gh", ".crucible/run", ".crucible/auth",
-    ".crucible/trust.json", ".claude", "Library/Keychains", ".docker/run", ".docker/desktop",
+    ".crucible/trust.json", ".crucible/trust.json.lock", ".claude", "Library/Keychains", ".docker/run", ".docker/desktop",
     ".cargo/credentials", ".cargo/credentials.toml", ".pgpass", ".my.cnf", ".vault-token",
     ".config/git/credentials", ".config/op", ".terraform.d", ".codex", ".gemini",
     ".zsh_history", ".bash_history", ".crucible/trusted-files",

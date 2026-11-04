@@ -14,6 +14,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -41,6 +42,10 @@ ALL_KINDS: tuple[TrustKind, ...] = get_args(TrustKind)
 
 # Larger files can't be reviewed in the trust dialog, so they are never trusted.
 MAX_REVIEW_BYTES = 64 * 1024
+# Every SKILL.md together, as the dialog shows them.
+MAX_SKILLS_REVIEW_BYTES = 256 * 1024
+# A sandboxed command can't open the lock (policy.py), but stay bounded regardless.
+_LOCK_TIMEOUT_SEC = 5.0
 _PROJECT_KEY = "project"
 
 
@@ -107,14 +112,18 @@ class ProjectTrust:
 
     def _read_bytes(self, kind: TrustKind) -> bytes | None:
         """The content the fingerprint covers, or None when absent. A symlinked file reads as
-        its target, which is why trust() refuses it."""
+        its target, which is why state() and trust() refuse symlinks."""
         if kind == "skills":
             files = self._skill_files()
             if not files:
                 return None
-            return b"".join(
-                f"--- {rel}\n".encode() + path.read_bytes() + b"\n" for rel, path in files
-            )
+            parts = []
+            for rel, path in files:
+                try:
+                    parts.append(f"--- {rel}\n".encode() + path.read_bytes() + b"\n")
+                except OSError:
+                    parts.append(f"--- {rel}\n(unreadable)\n".encode())
+            return b"".join(parts)
         path = self._workspace / KIND_PATHS[kind]
         try:
             return path.read_bytes() if path.is_file() else None
@@ -126,29 +135,55 @@ class ProjectTrust:
             files = self._skill_files()
             if not files:
                 return None
-            pairs = [f"{rel}\0{_sha(path.read_bytes())}" for rel, path in files]
+            pairs = []
+            for rel, path in files:
+                try:
+                    pairs.append(f"{rel}\0{_sha(path.read_bytes())}")
+                except OSError:
+                    # Never a trusted fingerprint, so an unreadable skill keeps the set untrusted.
+                    pairs.append(f"{rel}\0unreadable")
             return _sha("\n".join(pairs).encode())
         data = self._read_bytes(kind)
         return None if data is None else _sha(data)
 
-    def _check_reviewable(self, kind: TrustKind) -> None:
+    def _covered_paths(self, kind: TrustKind) -> list[Path]:
+        """Every path on the way to the covered files, so a symlinked folder counts too."""
         if kind == "skills":
-            paths = [path for _rel, path in self._skill_files()]
-        else:
-            paths = [self._workspace / KIND_PATHS[kind]]
+            root = self._workspace / KIND_PATHS["skills"]
+            paths = [root.parent, root]
+            for _rel, path in self._skill_files():
+                paths += [path.parent, path]
+            return paths
+        path = self._workspace / KIND_PATHS[kind]
+        parents = [p for p in path.parents if p != self._workspace and self._workspace in p.parents]
+        return [*reversed(parents), path]
+
+    def _symlinked(self, kind: TrustKind) -> Path | None:
+        return next((p for p in self._covered_paths(kind) if p.is_symlink()), None)
+
+    def _check_reviewable(self, kind: TrustKind) -> None:
+        link = self._symlinked(kind)
+        if link is not None:
+            raise TrustRefused(
+                f"{link.relative_to(self._workspace)} is a symlink; replace it with a "
+                "regular file or folder before trusting it.")
+        paths = ([path for _rel, path in self._skill_files()] if kind == "skills"
+                 else [self._workspace / KIND_PATHS[kind]])
+        total = 0
         for path in paths:
-            if path.is_symlink():
-                raise TrustRefused(
-                    f"{path.relative_to(self._workspace)} is a symlink; replace it with a "
-                    "regular file before trusting it.")
             try:
                 size = path.stat().st_size
             except OSError:
                 continue
+            total += size
             if size > MAX_REVIEW_BYTES:
                 raise TrustRefused(
                     f"{path.relative_to(self._workspace)} is too large to review "
                     f"({size} bytes, limit {MAX_REVIEW_BYTES}); shorten it first.")
+        if kind == "skills" and total > MAX_SKILLS_REVIEW_BYTES:
+            raise TrustRefused(
+                f"This project's skills are too large to review together ({total} bytes, "
+                f"limit {MAX_SKILLS_REVIEW_BYTES}).")
 
     # -- the store -------------------------------------------------------------------------
 
@@ -172,7 +207,16 @@ class ProjectTrust:
         # lock covers threads in this process, since flock is per open file description.
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
         with self._thread_lock, open(self._lock_path, "a") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            deadline = time.monotonic() + _LOCK_TIMEOUT_SEC
+            while True:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() > deadline:
+                        raise TrustRefused(
+                            "Another Crucible process is updating trust; try again.") from None
+                    time.sleep(0.02)
             try:
                 yield
             finally:
@@ -210,7 +254,27 @@ class ProjectTrust:
         sha = self.fingerprint(kind)
         if sha is None:
             return "absent"
+        if self._symlinked(kind) is not None:
+            return "untrusted"
         return "trusted" if sha in self._trusted_shas(kind) else "untrusted"
+
+    def fingerprint_trusted(self, kind: TrustKind, sha: str | None) -> bool:
+        """Whether this fingerprint (taken by the caller, once) counts right now."""
+        if not is_injection_defense_enabled():
+            return True
+        return (sha is not None and self._symlinked(kind) is None
+                and sha in self._trusted_shas(kind))
+
+    def read_checked(self, kind: TrustKind) -> tuple[bytes | None, bool]:
+        """One read of a single-file kind and whether those exact bytes count, so a caller
+        never checks one version of the file and uses another."""
+        data = self._read_bytes(kind)
+        if data is None:
+            return None, False
+        if not is_injection_defense_enabled():
+            return data, True
+        ok = self._symlinked(kind) is None and _sha(data) in self._trusted_shas(kind)
+        return data, ok
 
     def is_effective(self, kind: TrustKind) -> bool:
         return not is_injection_defense_enabled() or self.state(kind) == "trusted"
@@ -242,15 +306,19 @@ class ProjectTrust:
             return False
         try:
             self._check_reviewable(kind)
+            self._add_trusted(kind, current, content)
         except TrustRefused:
             return False
-        self._add_trusted(kind, current, content)
         return True
 
     def view(self, kind: TrustKind) -> TrustView:
         sha = self.fingerprint(kind)
         state = self.state(kind)
         content = self._read_bytes(kind)
+        try:
+            self._check_reviewable(kind)
+        except TrustRefused:
+            content = None  # the dialog says it can't be reviewed; Trust would only 409
         try:
             base = (self._copies / kind).read_bytes().decode("utf-8", errors="replace")
         except OSError:

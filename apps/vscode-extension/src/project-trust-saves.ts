@@ -26,12 +26,17 @@ export function trustKindForPath(workspace: string, path: string): TrustKind | n
 
 const sha256 = (data: Buffer | string): string => createHash("sha256").update(data).digest("hex");
 
+/** Thrown when a covered file exists but can't be read: never reported as "was absent". */
+class UnreadableFile extends Error {}
+
 async function fileSha(path: string): Promise<string | null> {
   try {
     if (!(await stat(path)).isFile()) return null;
     return sha256(await readFile(path));
-  } catch {
-    return null;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    // A null before-hash means "the user created it", which the backend trusts outright.
+    throw new UnreadableFile(path);
   }
 }
 
@@ -73,7 +78,12 @@ export class ProjectTrustSaves {
   async willSave(path: string): Promise<void> {
     const kind = trustKindForPath(this.workspace, path);
     if (kind === null) return;
-    this.before.set(path, await trustFingerprint(this.workspace, kind, path));
+    try {
+      this.before.set(path, await trustFingerprint(this.workspace, kind, path));
+    } catch (err) {
+      if (!(err instanceof UnreadableFile)) throw err;
+      this.before.delete(path); // nothing to report: the file stays as trusted as it was
+    }
   }
 
   async didSave(path: string): Promise<void> {

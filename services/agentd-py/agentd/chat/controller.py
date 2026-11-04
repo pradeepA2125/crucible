@@ -194,6 +194,7 @@ from agentd.teams.validation import (
 )
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
+from agentd.trust.invisible import invisible_note, scan_invisible
 from agentd.trust.project_trust import project_trust_for
 from agentd.trust.tool_output import mention_block
 from agentd.trust.turn_taint import TurnTaint
@@ -389,6 +390,13 @@ class TurnDispatches:
 
 
 _WAKE_CAP_TEXT = "🔔 Agents keep finishing — I'll tell you about them at your next message."
+
+def turn_starts_tainted(plan_context: dict[str, object]) -> bool:
+    """A turn woken by notices has no user message, and untrusted AGENTS.md notes are
+    repository text from the first step: neither may back a "the user said" memory."""
+    return bool(plan_context.get("notice_turn")
+                or plan_context.get("untrusted_project_notes"))
+
 
 def referenced_files_block(mentioned_files: list[dict[str, str]] | None) -> str:
     """The goal's "Referenced files" section, each file framed as data (Phase 1)."""
@@ -1169,6 +1177,8 @@ class ChatController:
         # entry hint ("nothing is started yet, decide the approach") read as an order to
         # start the work again; the notice hint says what woke it instead.
         plan_context["notice_turn"] = notice_turn
+        if turn_starts_tainted(plan_context):
+            taint.mark()
         # Debug-artifact keys (KV-safe: build_controller_step_payload ignores them) so
         # create_controller_step can dump the exact per-iteration LLM bytes under
         # chat/<thread_id>/<turn_id>/ (controller analog of the task path's plan-turn-NN).
@@ -2381,7 +2391,9 @@ class ChatController:
         text = self._instructions_loader.load_untrusted()
         if text is None:
             return None
-        return frame("repository", "project-notes", text, source="AGENTS.md")
+        scan = scan_invisible(text)
+        body = scan.text if (note := invisible_note(scan)) is None else f"{scan.text}\n{note}"
+        return frame("repository", "project-notes", body, source="AGENTS.md")
 
     def _judge_context(self, request: JudgeRequest) -> JudgeContext:
         thread = self._store.get_thread(request.thread_id)

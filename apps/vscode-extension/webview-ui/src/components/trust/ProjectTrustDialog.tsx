@@ -44,6 +44,7 @@ function TrustSection({ file, onTrust }: { file: TrustFile; onTrust(kind: TrustK
   const name = /^[a-z]+ /.test(label) ? label.charAt(0).toUpperCase() + label.slice(1) : label;
   const headingId = `trust-${file.kind}`;
   const [full, setFull] = useState(false);
+  // null when there's no earlier trusted copy, or the files are too large to diff here.
   const diff = useMemo(
     () => file.diffBase !== null && file.content !== null ? lineDiff(file.diffBase, file.content) : null,
     [file.diffBase, file.content]);

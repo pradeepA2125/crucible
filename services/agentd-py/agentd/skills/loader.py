@@ -14,6 +14,7 @@ from pathlib import Path
 import yaml
 
 from agentd.skills.models import SkillManifest
+from agentd.trust.config import is_injection_defense_enabled
 from agentd.trust.project_trust import ProjectTrust, project_trust_for
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ class SkillCatalogLoader:
         self._trust = trust or project_trust_for(Path(workspace_path))
         self._lock = threading.Lock()
         self._cached_mtime_ns: int | None = None
+        self._cached_fingerprint: str | None = None
         self._cached: list[SkillManifest] | None = None
 
     def is_trusted(self) -> bool:
@@ -46,13 +48,24 @@ class SkillCatalogLoader:
 
     def load_catalog(self) -> list[SkillManifest]:
         """The skills the agent may use: none until the user trusted this project's skills
-        (prompt-injection Phase 1, spec §4.1)."""
-        if not self.is_trusted():
+        (prompt-injection Phase 1, spec §4.1). One fingerprint is both checked and used as
+        the cache key, so a catalog parsed from other content is never served."""
+        if not is_injection_defense_enabled():
+            return self._load(None)
+        fingerprint = self._trust.fingerprint("skills")
+        if not self._trust.fingerprint_trusted("skills", fingerprint):
             return []
-        return self.load_untrusted()
+        return self._load(fingerprint)
 
     def load_untrusted(self) -> list[SkillManifest]:
         """Every parsed skill regardless of trust, for listings that mark them untrusted."""
+        if not is_injection_defense_enabled():
+            return self._load(None)
+        return self._load(self._trust.fingerprint("skills"))
+
+    def _load(self, fingerprint: str | None) -> list[SkillManifest]:
+        # The root folder's mtime misses edits to a nested SKILL.md; with the defense on the
+        # fingerprint (over every SKILL.md's bytes) is part of the cache key.
         disabled = _disabled_names()
         with self._lock:
             try:
@@ -66,9 +79,11 @@ class SkillCatalogLoader:
                 catalog = self._cached if self._cached is not None else []
                 return self._filter(catalog, disabled)
 
-            if self._cached_mtime_ns != mtime_ns or self._cached is None:
+            if (self._cached_mtime_ns != mtime_ns or self._cached is None
+                    or self._cached_fingerprint != fingerprint):
                 self._cached = self._scan()
                 self._cached_mtime_ns = mtime_ns
+                self._cached_fingerprint = fingerprint
             return self._filter(self._cached, disabled)
 
     @staticmethod

@@ -11,6 +11,7 @@ import os
 import threading
 from pathlib import Path
 
+from agentd.trust.config import is_injection_defense_enabled
 from agentd.trust.project_trust import ProjectTrust, project_trust_for
 
 logger = logging.getLogger(__name__)
@@ -45,15 +46,23 @@ class ProjectInstructionsLoader:
         """The text as project instructions: only once the user trusted this exact content
         (prompt-injection Phase 1, spec §4.1). A cloned repository's AGENTS.md is otherwise
         notes the agent may read, never instructions."""
-        if not self._trust.is_effective("agents_md"):
-            return None
-        return self._read()
+        if not is_injection_defense_enabled():
+            return self._read()
+        data, trusted = self._trust.read_checked("agents_md")
+        return self._decode(data) if trusted else None
 
     def load_untrusted(self) -> str | None:
         """The text while it is present but not trusted, for the payload's notes block."""
-        if self._trust.is_effective("agents_md"):
+        if not is_injection_defense_enabled():
             return None
-        return self._read()
+        data, trusted = self._trust.read_checked("agents_md")
+        return None if trusted else self._decode(data)
+
+    def _decode(self, data: bytes | None) -> str | None:
+        # The same bytes the trust check hashed, never a cached copy of another version.
+        if data is None:
+            return None
+        return self._nonblank(self._cap(data.decode("utf-8", errors="replace")))
 
     def _read(self) -> str | None:
         with self._lock:

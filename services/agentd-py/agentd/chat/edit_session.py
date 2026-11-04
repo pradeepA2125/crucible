@@ -140,7 +140,7 @@ class TurnEditSession:
         # Trust-gated files this edit changes, with their fingerprint before it
         # (prompt-injection Phase 1): accepting a reviewed edit is the user's own change.
         self._trust = project_trust_for(real_path)
-        self._trust_before: dict[TrustKind, str | None] = {}
+        self._trust_kinds: set[TrustKind] = set()
 
     def _raise_if_stale(self, paths: list[str]) -> None:
         """Refuse the first path another agent promoted after this agent last saw it.
@@ -219,12 +219,12 @@ class TurnEditSession:
                 code=PatchFailureCode.NO_OP, file=applied[0] if applied else None,
                 message=message)])
         self._pending_touched = changed
-        self._trust_before = {}
+        self._trust_kinds = set()
         if self.requires_review:  # only a change the user sees on a review card counts
             for rel in changed:
                 kind = kind_for_path(self._real, self._real / rel)
-                if kind is not None and kind not in self._trust_before:
-                    self._trust_before[kind] = self._trust.fingerprint(kind)
+                if kind is not None:
+                    self._trust_kinds.add(kind)
         return compute_diff_entries(self._real, shadow, changed, self._turn_id)
 
     @property
@@ -251,6 +251,9 @@ class TurnEditSession:
             except StaleWriteError:
                 await self.reject()  # restore the shadow from real (shadow == real)
                 raise
+        # Taken now, not at apply: the review card can stay open while git or another
+        # editor changes these files, and that change must not ride along into trust.
+        trust_before = {kind: self._trust.fingerprint(kind) for kind in self._trust_kinds}
         promote_files(self._shadow, self._real, self._pending_touched)
         if self._write_guard is not None:
             guard = self._write_guard
@@ -258,14 +261,14 @@ class TurnEditSession:
                     if k is not None]
             guard.log.note_promote(guard.agent_id, guard.label, guard.name, keys,
                                    {k: file_digest(self._real / k) for k in keys})
-        for kind, before in self._trust_before.items():
+        for kind, before in trust_before.items():
             self._trust.record_own_write(kind, before)
-        self._trust_before = {}
+        self._trust_kinds = set()
         self._pending_touched = []
 
     async def reject(self) -> None:
         assert self._shadow is not None
-        self._trust_before = {}
+        self._trust_kinds = set()
         for rel in self._pending_touched:
             real_f, shadow_f = self._real / rel, self._shadow / rel
             if real_f.exists():
