@@ -14,8 +14,11 @@ from pathlib import Path
 import yaml
 
 from agentd.skills.models import SkillManifest
+from agentd.trust.project_trust import ProjectTrust, project_trust_for
 
 logger = logging.getLogger(__name__)
+
+UNTRUSTED_SKILLS_TEXT = "This project's skills aren't trusted yet. Ask the user to review them."
 
 _NAME_MAX = 64
 _DESC_MAX = 1024
@@ -31,13 +34,25 @@ def _disabled_names() -> frozenset[str]:
 class SkillCatalogLoader:
     SKILLS_SUBDIR = Path(".crucible") / "skills"
 
-    def __init__(self, workspace_path: Path | str) -> None:
+    def __init__(self, workspace_path: Path | str, trust: ProjectTrust | None = None) -> None:
         self._root = Path(workspace_path) / self.SKILLS_SUBDIR
+        self._trust = trust or project_trust_for(Path(workspace_path))
         self._lock = threading.Lock()
         self._cached_mtime_ns: int | None = None
         self._cached: list[SkillManifest] | None = None
 
+    def is_trusted(self) -> bool:
+        return self._trust.is_effective("skills")
+
     def load_catalog(self) -> list[SkillManifest]:
+        """The skills the agent may use: none until the user trusted this project's skills
+        (prompt-injection Phase 1, spec §4.1)."""
+        if not self.is_trusted():
+            return []
+        return self.load_untrusted()
+
+    def load_untrusted(self) -> list[SkillManifest]:
+        """Every parsed skill regardless of trust, for listings that mark them untrusted."""
         disabled = _disabled_names()
         with self._lock:
             try:

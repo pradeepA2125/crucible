@@ -571,8 +571,11 @@ def build_router(
             return {"skills": []}
         from agentd.skills.loader import SkillCatalogLoader
 
-        catalog = SkillCatalogLoader(workspace).load_catalog()
-        return {"skills": [{"name": m.name, "description": m.description} for m in catalog]}
+        # Untrusted skills are listed so the composer can grey them out and offer review.
+        loader = SkillCatalogLoader(workspace)
+        trusted = loader.is_trusted()
+        return {"skills": [{"name": m.name, "description": m.description, "trusted": trusted}
+                           for m in loader.load_untrusted()]}
 
     # ------------------------------------------------------------------
     # Phase 3 — read-only memory inspector (no mutation; gated by the memory flag).
@@ -720,6 +723,7 @@ def build_router(
     @router.post("/tasks", response_model=TaskCreateResponse)
     async def create_task(request: TaskCreateRequest) -> TaskCreateResponse:
         import asyncio
+
         from agentd.project_ownership import OWNER
         if OWNER.active and Path(request.workspace_path).resolve()!=Path(OWNER.root):
             raise HTTPException(409,"Task workspace differs from its owning project.")

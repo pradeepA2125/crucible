@@ -19,7 +19,8 @@ def test_skills_route_lists_catalog(tmp_path, monkeypatch) -> None:
     client = TestClient(build_app(str(tmp_path)))
     r = client.get("/v1/skills", params={"workspace": str(tmp_path)})
     assert r.status_code == 200
-    assert r.json()["skills"] == [{"name": "git-commit", "description": "Make a commit."}]
+    assert r.json()["skills"] == [
+        {"name": "git-commit", "description": "Make a commit.", "trusted": True}]
 
 
 def test_skills_route_gated_empty_when_off(tmp_path, monkeypatch) -> None:

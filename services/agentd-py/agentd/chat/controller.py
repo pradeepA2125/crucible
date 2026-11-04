@@ -99,7 +99,7 @@ from agentd.providers.rate_limit import CALL_PRIORITY
 from agentd.providers.usage import METER, USAGE_OWNER, Usage
 from agentd.runtime.artifacts import chat_turn_artifacts_root
 from agentd.sandbox.runtime import SandboxRuntime
-from agentd.skills.loader import SkillCatalogLoader
+from agentd.skills.loader import UNTRUSTED_SKILLS_TEXT, SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource, cap_skill_body
 from agentd.subagents.agent_files import AgentCatalogLoader
 from agentd.subagents.config import (
@@ -1062,15 +1062,7 @@ class ChatController:
             stored_skill = json.loads(stored_skill_raw)
             active_skills[stored_skill["name"]] = stored_skill["body"]
         if is_skills_enabled() and forced_skills:
-            catalog = SkillCatalogLoader(self._workspace_path).load_catalog()
-            for name in forced_skills:
-                manifest = next((m for m in catalog if m.name == name), None)
-                if manifest is not None:
-                    try:
-                        active_skills.clear()
-                        active_skills[name] = manifest.body_path.read_text(encoding="utf-8")
-                    except OSError:
-                        pass
+            self._seed_forced_skills(forced_skills, active_skills)
         active_skill_persist_cb = partial(self._persist_active_skill, thread_id)
         # Same loader class the forced_skills seeding above already uses (own instance —
         # SkillCatalogLoader's mtime cache is per-instance and cheap to build). Lets
@@ -4723,6 +4715,22 @@ class ChatController:
         self._broadcaster.clear_replay(agent_channel(handle.thread_id, ctx.agent_id))
         return result
 
+    def _seed_forced_skills(self, forced: list[str], active_skills: dict[str, str]) -> None:
+        """`/skill` forced loads, before iteration 1. Untrusted skills are refused."""
+        loader = SkillCatalogLoader(self._workspace_path)
+        if not loader.is_trusted():
+            logger.warning("[skills] forced load of %s refused: %s", forced, UNTRUSTED_SKILLS_TEXT)
+            return
+        catalog = loader.load_catalog()
+        for name in forced:
+            manifest = next((m for m in catalog if m.name == name), None)
+            if manifest is not None:
+                try:
+                    active_skills.clear()
+                    active_skills[name] = manifest.body_path.read_text(encoding="utf-8")
+                except OSError:
+                    pass
+
     def _preseed_child_skills(self, handle: AgentHandle, active_skills: dict[str, str]) -> None:
         """`skills:` frontmatter pre-loads every listed skill (spec §5.2), capped like
         read_skill. Unknown or unreadable names are skipped with a warning."""
@@ -4731,7 +4739,12 @@ class ChatController:
             logger.warning("[subagent] agent %s lists skills but CRUCIBLE_SKILLS_ENABLED is "
                            "off — none pre-loaded", name)
             return
-        catalog = {m.name: m for m in SkillCatalogLoader(self._workspace_path).load_catalog()}
+        loader = SkillCatalogLoader(self._workspace_path)
+        if not loader.is_trusted():
+            logger.warning("[subagent] agent %s: skills not pre-loaded: %s", name,
+                           UNTRUSTED_SKILLS_TEXT)
+            return
+        catalog = {m.name: m for m in loader.load_catalog()}
         for skill in handle.definition.skills:
             manifest = catalog.get(skill)
             if manifest is None:

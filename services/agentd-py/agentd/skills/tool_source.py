@@ -4,6 +4,7 @@ import json
 from collections.abc import Awaitable, Callable
 
 from agentd.skills.config import skills_body_max_chars
+from agentd.skills.loader import UNTRUSTED_SKILLS_TEXT
 from agentd.tools.registry import ToolDefinition, ToolOutput
 
 _READ_SKILL_DEF = ToolDefinition(
@@ -64,6 +65,10 @@ class SkillToolSource:
         name = str(args.get("name", "")).strip()
         catalog = self._loader.load_catalog()  # type: ignore[attr-defined]
         manifest = next((m for m in catalog if m.name == name), None)
+        untrusted = getattr(self._loader, "load_untrusted", None)
+        if manifest is None and untrusted is not None and any(
+                m.name == name for m in untrusted()):
+            return ToolOutput(output=UNTRUSTED_SKILLS_TEXT, is_error=True)
         if manifest is None:
             avail = ", ".join(m.name for m in catalog) or "(none)"
             return ToolOutput(
