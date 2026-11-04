@@ -29,6 +29,8 @@ export interface SlashDropdownItem {
   label: string;
   sublabel?: string;
   badge: "Prompt" | "Skill";
+  /** An untrusted project skill: listed so the user sees it exists, but not loadable. */
+  disabled?: boolean;
 }
 
 /**
@@ -39,7 +41,7 @@ export interface SlashDropdownItem {
 export function buildSlashDropdownItems(
   query: string,
   promptNames: string[],
-  skills: { name: string; description: string }[],
+  skills: { name: string; description: string; trusted?: boolean }[],
 ): SlashDropdownItem[] {
   const q = query.toLowerCase();
   const promptSet = new Set(promptNames);
@@ -48,6 +50,8 @@ export function buildSlashDropdownItems(
     .map((n) => ({ id: n, label: n, badge: "Prompt" as const }));
   const skillItems: SlashDropdownItem[] = skills
     .filter((s) => !promptSet.has(s.name) && s.name.toLowerCase().includes(q))
-    .map((s) => ({ id: s.name, label: s.name, sublabel: s.description, badge: "Skill" as const }));
+    .map((s) => s.trusted === false
+      ? { id: s.name, label: s.name, sublabel: "not trusted", badge: "Skill" as const, disabled: true }
+      : { id: s.name, label: s.name, sublabel: s.description, badge: "Skill" as const });
   return [...prompts, ...skillItems];
 }

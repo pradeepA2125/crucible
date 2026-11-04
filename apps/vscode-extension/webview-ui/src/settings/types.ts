@@ -1,5 +1,6 @@
 // Local mirror of src/settings-data.ts message protocol — the webview bundle never
 // imports the extension's src/ (separate Vite bundle). Mirrors setup/types.ts's split.
+import type { TrustFile, TrustKind } from "../components/trust/projectTrust";
 import type { SectionId } from "./sections/meta";
 import type { ClaudeInMsg, ClaudeOutMsg } from "./claude-types";
 import type { Accent, Appearance } from "../theme";
@@ -80,7 +81,8 @@ export interface SettingsState {
   // schema). null once no validate has produced one yet.
   providerWarning?: string | null;
   runtime: { releaseTag: string; components: Record<string, string> } | null;
-  mcp: { enabled: boolean; servers: McpServerRow[] };
+  // trusted is false while .crucible/mcp.json isn't trusted (absent = older host: trusted).
+  mcp: { enabled: boolean; trusted?: boolean; servers: McpServerRow[] };
   skills: { name: string; description: string; enabled: boolean }[];
   envFlags: Record<string, string>;
   restartRequired: boolean;
@@ -111,6 +113,8 @@ export type SettingsInMsg =
   | { type: "settings/restartBackend" }
   | { type: "settings/listAgents" }
   | { type: "settings/sandbox" }
+  | { type: "settings/projectTrust" }
+  | { type: "settings/trustProjectFile"; kind: TrustKind; sha256: string }
   | { type: "settings/setSandboxEnabled"; enabled: boolean }
   | { type: "settings/setSandboxHosts"; hosts: string[] }
   | { type: "settings/setSandboxFolders"; folders: string[] }
@@ -170,6 +174,7 @@ export type SettingsOutMsg =
   | { type: "settings/agentsError"; message: string }
   | { type: "settings/sandboxState"; config: SandboxConfig }
   | { type: "settings/sandboxError"; message: string }
+  | { type: "settings/projectTrustState"; files: TrustFile[]; error?: string }
   | { type: "settings/models"; models: string[] }
   | { type: "settings/chatgpt"; accounts: ChatGPTAccount[]; activeRegistrationId: string | null }
   | { type: "settings/chatgptError"; message: string; kind?: string }

@@ -1,5 +1,6 @@
 // Shared dispatch for the existing chat protocol. Desktop must validate its IPC
 // envelope separately; this module does not grant access to a project or backend.
+import type { TrustKind } from "@crucible/editor-client";
 import { GateActionSchema } from "./gate-actions.js";
 import type { CommandDecision, ReasoningEffort } from "@crucible/editor-client";
 import type {
@@ -94,6 +95,9 @@ export interface ChatMessageActions {
   onSetOpenTeams: (teamIds: string[]) => void;
   onDisbandTeam: (teamId: string) => Promise<void>;
   onTeamPlanDecision: (threadId: string, gateId: string, decision: "approve" | "feedback" | "reject", feedback?: string) => Promise<void>;
+  /** Repository-file trust (prompt-injection Phase 1); optional for hosts without it. */
+  onProjectTrustRead?: () => Promise<void>;
+  onProjectTrustSet?: (kind: TrustKind, sha256: string) => Promise<void>;
 }
 export interface ChatMessageView {
   postMessage(message: Record<string, unknown>): void;
@@ -105,6 +109,9 @@ export interface ChatMessageView {
 }
 
 /** Handle already-routed chat intents; theme/settings/file links belong to host adapters. */
+const TRUST_KINDS = new Set<string>(["agents_md", "skills", "mcp", "approved_commands",
+  "approved_mcp_tools", "approved_web_fetch", "approved_web_search"]);
+
 export function routeChatMessage(
   message: unknown, actions: ChatMessageActions, view: ChatMessageView,
 ): Promise<void> | undefined {
@@ -291,6 +298,13 @@ export function routeChatMessage(
       const names = await actions.onListPrompts();
       view.postMessage({ type: "promptList", names });
     })();
+  } else if (m["type"] === "projectTrustRead") {
+    p = actions.onProjectTrustRead?.() ?? Promise.resolve();
+  } else if (m["type"] === "projectTrustSet") {
+    const kind = m["kind"], sha256 = m["sha256"];
+    p = typeof kind === "string" && TRUST_KINDS.has(kind) && typeof sha256 === "string"
+      ? actions.onProjectTrustSet?.(kind as TrustKind, sha256) ?? Promise.resolve()
+      : Promise.resolve();
   } else if (m["type"] === "listSkills") {
     p = (async () => {
       const skills = await actions.onListSkills();

@@ -224,6 +224,10 @@ declare module "vscode" {
     const workspaceFolders: readonly WorkspaceFolder[] | undefined;
     const isTrusted: boolean;
     function onDidGrantWorkspaceTrust(listener: () => unknown): Disposable;
+    function onWillSaveTextDocument(listener: (event: {
+      readonly document: TextDocument; waitUntil(thenable: Thenable<unknown>): void;
+    }) => unknown): Disposable;
+    function onDidSaveTextDocument(listener: (document: TextDocument) => unknown): Disposable;
     function getConfiguration(section?: string, scope?: Uri): Configuration;
     function getWorkspaceFolder(uri: Uri): WorkspaceFolder | undefined;
     namespace fs {

@@ -77,5 +77,19 @@ describe("McpSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tools for web: 1 of 2 enabled" }));
     expect((screen.getByRole("checkbox", { name: "a" }) as HTMLInputElement).disabled).toBe(true);
   });
+
+  it("mcp section shows waiting for trust", async () => {
+    const { vscode } = await import("../vscodeApi");
+    const post = vi.spyOn(vscode, "postMessage").mockImplementation(() => {});
+    const state = makeState({ trusted: false, servers: [
+      { name: "evil", transport: "stdio", enabledInFile: true, state: "untrusted", detail: null, toolCount: 0,
+        userEnabled: true, tools: [], enabledTools: null, disabledTools: [] }] });
+    render(<McpSection state={state} busy={false} send={vi.fn()} />);
+    expect(screen.getByText(/Waiting for trust/)).toBeTruthy();
+    expect(screen.getByText(/mcp\.json isn't trusted yet/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(post).toHaveBeenCalledWith({ type: "settings/projectTrust" });
+    post.mockRestore();
+  });
 });
 

@@ -35,4 +35,14 @@ describe("TriggerDropdown", () => {
     );
     expect(container.firstChild).toBeNull();
   });
+
+  it("a disabled item is marked and can't be chosen", () => {
+    const onSelect = vi.fn();
+    render(<TriggerDropdown activeIndex={0} onHover={() => {}} onSelect={onSelect}
+      items={[{ id: "deploy", label: "deploy", sublabel: "not trusted", badge: "Skill", disabled: true }]} />);
+    const option = screen.getByRole("option", { name: /deploy/ });
+    expect(option).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(option);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });

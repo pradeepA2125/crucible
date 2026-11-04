@@ -1,4 +1,5 @@
 import { createControllerViewUI } from "./controller-view-ui.js";
+import { ProjectTrustSaves } from "./project-trust-saves.js";
 import { isApprovalMode, type ApprovalMode } from "./approval-mode.js";
 import { HttpBackendClient } from "@crucible/editor-client";
 import * as vscode from "vscode";
@@ -406,6 +407,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if(root)void runtimeManager.syncProjectTrust(root,true).then(()=>controller.approvalTrustGranted()).catch(error=>vscode.window.showWarningMessage(String(error)));
   }));
   chatPanel.setReceiptCheckHandler(() => controller.checkChatReceipt());
+  chatPanel.setProjectTrustHandlers(() => controller.readProjectTrust(),
+    (kind, sha256) => controller.trustProjectFile(kind, sha256));
+  // Saving AGENTS.md, a skill or a permission store in the editor is the user's own change:
+  // the before-hash lets the backend keep a trusted file trusted (prompt-injection Phase 1).
+  const trustRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (trustRoot) {
+    const trustSaves = new ProjectTrustSaves(trustRoot,
+      (kind, before) => controller.reportProjectFileSaved(kind, before),
+      () => controller.readProjectTrust());
+    context.subscriptions.push(
+      vscode.workspace.onWillSaveTextDocument(event => {
+        event.waitUntil(trustSaves.willSave(event.document.uri.fsPath));
+      }),
+      vscode.workspace.onDidSaveTextDocument(document => {
+        void trustSaves.didSave(document.uri.fsPath);
+      }));
+  }
   chatPanel.setApprovalHandler((mode, confirmed, remember) => controller.setApprovalMode(mode, confirmed, remember));
 
   // Task-subsystem flag (GET /v1/config): when off, the controller handles changes inline

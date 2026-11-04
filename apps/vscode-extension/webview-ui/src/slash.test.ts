@@ -48,4 +48,15 @@ describe("buildSlashDropdownItems", () => {
     );
     expect(items).toEqual([{ id: "shared-name", label: "shared-name", badge: "Prompt" }]);
   });
+
+  it("untrusted skills greyed in slash menu", () => {
+    const items = buildSlashDropdownItems("", [], [
+      { name: "deploy", description: "Ship it", trusted: false },
+      { name: "lint", description: "Lint it", trusted: true },
+    ]);
+    expect(items).toEqual([
+      { id: "deploy", label: "deploy", sublabel: "not trusted", badge: "Skill", disabled: true },
+      { id: "lint", label: "lint", sublabel: "Lint it", badge: "Skill" },
+    ]);
+  });
 });

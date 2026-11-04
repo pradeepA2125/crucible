@@ -1,4 +1,5 @@
 import { createGateActions } from "./gate-actions.js";
+import type { TrustKind } from "@crucible/editor-client";
 import { ChatView } from "./chat-view.js";
 import { DraftSession } from "./drafts/draft-session.js";
 import type { ChatAdmissionView } from "./controller.js";
@@ -117,6 +118,12 @@ export class ChatPanel extends ChatView {
 
   private receiptCheckHandler: () => Promise<void> = async () => {};
   setReceiptCheckHandler(handler: () => Promise<void>): void { this.receiptCheckHandler = handler; }
+  private projectTrustRead: () => Promise<void> = async () => {};
+  private projectTrustSet: (kind: TrustKind, sha256: string) => Promise<void> = async () => {};
+  setProjectTrustHandlers(read: () => Promise<void>, set: (kind: TrustKind, sha256: string) => Promise<void>): void {
+    this.projectTrustRead = read;
+    this.projectTrustSet = set;
+  }
   private approvalHandler: ((mode: unknown, confirmed: boolean, remember: boolean) => Promise<void>) | null = null;
 
   setApprovalHandler(handler: (mode: unknown, confirmed: boolean, remember: boolean) => Promise<void>): void {
@@ -322,6 +329,8 @@ export class ChatPanel extends ChatView {
       onSetOpenTeams: (...args) => this.onSetOpenTeams(...args),
       onDisbandTeam: (...args) => this.onDisbandTeam(...args),
       onTeamPlanDecision: (...args) => this.onTeamPlanDecision(...args),
+      onProjectTrustRead: () => this.projectTrustRead(),
+      onProjectTrustSet: (kind, sha256) => this.projectTrustSet(kind, sha256),
     };
     const view: ChatMessageView = {
       postMessage: (message) => { void this.panel?.webview.postMessage(message); },

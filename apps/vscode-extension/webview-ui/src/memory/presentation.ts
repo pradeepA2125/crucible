@@ -10,7 +10,7 @@ export function memoryTime(value: string): string {
 }
 
 export function provenanceLabel(value: string): string {
-  return ({ tool_verified: "Verified with tools", user_requested: "Saved at the user's request",
+  return ({ tool_verified: "From tool output", user_requested: "Saved at the user's request",
     agent_nomination: "Suggested by the assistant", user_explicit: "Explicitly provided by the user",
   } as Record<string, string>)[value] ?? readable(value);
 }

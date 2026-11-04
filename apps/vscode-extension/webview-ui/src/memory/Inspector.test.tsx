@@ -15,7 +15,7 @@ test("durable search includes body and detail retains provenance and source", ()
  fireEvent.change(screen.getByLabelText("Search memories"), { target: { value: "isolated" } });
  fireEvent.click(screen.getByRole("button", { name: /Run checks/ }));
  expect(screen.getByText("Use the isolated runner")).toBeTruthy();
- expect(screen.getByText("Verified with tools")).toBeTruthy();
+ expect(screen.getByText("From tool output")).toBeTruthy();
  expect(screen.getByRole("heading", { name: "Run checks" })).toBeTruthy();
  expect(screen.getByText(/Source navigation is not available/)).toBeTruthy();
  expect(screen.queryByRole("link")).toBeNull();

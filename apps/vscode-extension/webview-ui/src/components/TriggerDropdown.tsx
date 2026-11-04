@@ -3,6 +3,7 @@ export interface DropdownItem {
   label: string;
   sublabel?: string;
   badge?: string;
+  disabled?: boolean;
 }
 
 interface Props {
@@ -29,9 +30,10 @@ export function TriggerDropdown({ items, activeIndex, onHover, onSelect }: Props
           data-active={i === activeIndex ? "true" : "false"}
           role="option"
           aria-selected={i === activeIndex}
+          aria-disabled={item.disabled ? "true" : undefined}
           onMouseEnter={() => onHover(i)}
-          onClick={() => onSelect(item.id)}
-          className="menu-item flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs"
+          onClick={() => { if (!item.disabled) onSelect(item.id); }}
+          className={`menu-item flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs ${item.disabled ? "cursor-default opacity-60" : "cursor-pointer"}`}
           style={{
             color: "var(--color-text-2)",
             background: i === activeIndex ? "var(--accent-bg)" : "transparent",

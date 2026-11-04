@@ -278,7 +278,8 @@ function reducer(state: AppState, action: Action, historyIdentity?: unknown): Ap
               t.id === msg.id
                 ? { ...t, output: msg.output, isError: msg.isError, done: true,
                     ...(msg.approvalNote ? { approvalNote: msg.approvalNote } : {}),
-                    ...(msg.sandbox ? { sandbox: msg.sandbox } : {}) }
+                    ...(msg.sandbox ? { sandbox: msg.sandbox } : {}),
+                    ...(msg.hiddenChars ? { hiddenChars: true } : {}) }
                 : t,
             ),
           },
@@ -303,7 +304,8 @@ function reducer(state: AppState, action: Action, historyIdentity?: unknown): Ap
               t.id === msg.id
                 ? { ...t, output: msg.output, isError: msg.isError, done: true,
                     ...(msg.approvalNote ? { approvalNote: msg.approvalNote } : {}),
-                    ...(msg.sandbox ? { sandbox: msg.sandbox } : {}) }
+                    ...(msg.sandbox ? { sandbox: msg.sandbox } : {}),
+                    ...(msg.hiddenChars ? { hiddenChars: true } : {}) }
                 : t,
             ),
           },

@@ -31,7 +31,7 @@ import type {
   ThreadAttention,
 } from "@crucible/editor-client";
 import { ContextUsageState } from "./context-usage-state.js";
-import type { ContextUsage } from "@crucible/editor-client";
+import type { ContextUsage, ProjectTrustFile, TrustKind } from "@crucible/editor-client";
 import { ChatAdmissionUnknownError, parseWireChatMessage } from "@crucible/editor-client";
 import { AgentViewManager } from "./agent-views.js";
 import { TeamViewManager, type TeamViewEvent } from "./team-views.js";
@@ -91,6 +91,8 @@ export interface ScopeDecisionPromptResult {
   remember: boolean;
 }
 
+export interface ProjectTrustView { files: ProjectTrustFile[]; error?: string }
+
 export interface ControllerUI {
   getWorkspacePath(): string | null;
   promptForGoal(): Promise<string | undefined>;
@@ -132,7 +134,9 @@ export interface ControllerUI {
   renderLivePlan(plan: LivePlanView): void;
   clearLivePlan(): void;
   appendToolEvent(event: { id: number; tool: string; args: Record<string, unknown>; thought?: string; source: "explore" | "execution" | "planning" }): void;
-  appendToolResult(id: number, output: string, isError: boolean, approvalNote?: string, sandbox?: "blocked" | "outside"): void;
+  appendToolResult(id: number, output: string, isError: boolean, approvalNote?: string, sandbox?: "blocked" | "outside", hiddenChars?: boolean): void;
+  /** Which repository files still need trust; optional so older hosts and test stubs work. */
+  renderProjectTrust?(view: ProjectTrustView): void;
   updateWorkbar(info: { stepIndex?: number; totalSteps?: number; stepTitle?: string; phaseLabel?: string } | null): void;
   updateRetryStatus(status: { attempt: number; max_attempts: number; reason: string; message: string } | null): void;
   updateTokenProgress(
@@ -724,6 +728,40 @@ await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (v
     return this.createClient(this.settings.getBackendBaseUrl());
   }
 
+  private lastProjectTrust: ProjectTrustFile[] = [];
+
+  /** Re-reads which repository files need trust and shows it (prompt-injection Phase 1).
+   * Called on thread open and when a turn ends; deliberately outside lastLiveSignature. */
+  async readProjectTrust(): Promise<void> {
+    try {
+      const trust = await this.memoryClient().getProjectTrust();
+      this.lastProjectTrust = trust.files;
+      this.ui.renderProjectTrust?.({ files: trust.files });
+    } catch {
+      // An older backend has no trust route: nothing to review, nothing to show.
+    }
+  }
+
+  async trustProjectFile(kind: TrustKind, sha256: string): Promise<void> {
+    try {
+      await this.memoryClient().trustProjectFile(kind, sha256);
+    } catch (err) {
+      this.ui.renderProjectTrust?.({
+        files: this.lastProjectTrust, error: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+    await this.readProjectTrust();
+  }
+
+  /** The user saved a covered file in the editor; `before` is what it held before. */
+  async reportProjectFileSaved(kind: TrustKind, before: string | null): Promise<boolean> {
+    try {
+      return await this.memoryClient().reportProjectFileSaved(kind, before);
+    } catch {
+      return false;
+    }
+  }
+
   /** Session-independent client for config reads/hot-swap (composer model menu). */
   configClient(): BackendTaskClient {
     return this.createClient(this.settings.getBackendBaseUrl());
@@ -1085,6 +1123,7 @@ await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (v
     if (!current()) return;
     this.ui.renderChatThreadList(threads, thread.threadId);
     this.startLiveStatePolling();
+    void this.readProjectTrust();
   }
 
   async switchChatThread(threadId: string): Promise<void> {
@@ -1098,6 +1137,7 @@ await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (v
     if (!this.contextState.current(epoch, this.settings.getBackendBaseUrl())) return;
     void this.refreshAgentRoster(threadId); void this.refreshTeams(threadId);
     this.startLiveStatePolling();
+    void this.readProjectTrust();
   }
 
   /** The webview's full set of open agent views (inline boxes + the window). */
@@ -2646,7 +2686,10 @@ await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (v
     const output = (payload["output"] as string) ?? "";
     const note = payload["approval_note"];
     const marker = payload["sandbox"];
-    if (marker === "blocked" || marker === "outside") {
+    if (payload["hidden_chars"] === true) {
+      this.ui.appendToolResult(id, output, payload["is_error"] === true, typeof note === "string" && note ? note : undefined,
+        marker === "blocked" || marker === "outside" ? marker : undefined, true);
+    } else if (marker === "blocked" || marker === "outside") {
       this.ui.appendToolResult(id, output, payload["is_error"] === true, typeof note === "string" && note ? note : undefined, marker);
     } else if (typeof note === "string" && note) {
       this.ui.appendToolResult(id, output, payload["is_error"] === true, note);
@@ -3260,6 +3303,8 @@ await this.runProjectWork(threadId, "mcp_tool", gateId, async (verifyWork, isCur
     if (this.lastTurnActive && !live.turnActive) {
       void this.refreshAgentRoster(threadId);
       void this.refreshTeams(threadId);
+      // A turn may have written AGENTS.md, a skill or a remembered rule.
+      void this.readProjectTrust();
     }
     this.lastTurnActive = live.turnActive ?? false;
     this.ui.sendLiveStatus(live.status ?? null, live.turnActive ?? false, {

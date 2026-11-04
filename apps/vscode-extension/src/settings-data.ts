@@ -6,6 +6,9 @@ import type {
   McpServerList,
   McpServerView,
   SandboxConfig,
+  ProjectTrust,
+  ProjectTrustFile,
+  TrustKind,
 } from "@crucible/editor-client";
 
 import {
@@ -37,7 +40,7 @@ export interface SettingsState {
   // schema). null once no validate has produced one yet.
   providerWarning?: string | null;
   runtime: { releaseTag: string; components: Record<string, string> } | null;
-  mcp: { enabled: boolean; servers: McpServerRow[] };
+  mcp: { enabled: boolean; trusted: boolean; servers: McpServerRow[] };
   skills: { name: string; description: string; enabled: boolean }[];
   envFlags: Record<string, string>;
   restartRequired: boolean;
@@ -77,6 +80,8 @@ export type SettingsInMsg =
   | { type: "settings/setSandboxEnabled"; enabled: boolean }
   | { type: "settings/setSandboxHosts"; hosts: string[] }
   | { type: "settings/setSandboxFolders"; folders: string[] }
+  | { type: "settings/projectTrust" }
+  | { type: "settings/trustProjectFile"; kind: TrustKind; sha256: string }
   | ClaudeInMsg
   | ChatGPTInMsg;
 
@@ -95,6 +100,7 @@ export type SettingsOutMsg =
   | { type: "settings/models"; models: string[] }
   | { type: "settings/sandboxState"; config: SandboxConfig }
   | { type: "settings/sandboxError"; message: string }
+  | { type: "settings/projectTrustState"; files: ProjectTrustFile[]; error?: string }
   | ClaudeOutMsg
   | ChatGPTOutMsg;
 
@@ -141,6 +147,9 @@ export interface SettingsDeps {
     getSandbox(): Promise<SandboxConfig>;
     setSandboxHosts(hosts: string[]): Promise<SandboxConfig>;
     setSandboxFolders(folders: string[]): Promise<SandboxConfig>;
+    // Optional: an older client (or a test fake) without repository-file trust.
+    getProjectTrust?(): Promise<ProjectTrust>;
+    trustProjectFile?(kind: TrustKind, sha256: string): Promise<void>;
   };
   /** Through the approval coordinator: the switch travels with the approval mode. */
   setSandboxEnabled(enabled: boolean): Promise<void>;
@@ -201,6 +210,7 @@ async function buildState(
     runtime: deps.readRuntimeJson(),
     mcp: {
       enabled: mcpList.enabled,
+      trusted: mcpList.trusted ?? true,
       servers: mcpList.servers.map((s) => ({ ...s, userEnabled: !disabledMcp.has(s.name) })),
     },
     skills: skillSummaries.map((s) => ({ ...s, enabled: !disabledSkills.has(s.name) })),
@@ -232,6 +242,18 @@ export function createSettingsHandler(
     } catch (err) {
       post({ type: "settings/sandboxError", message: err instanceof Error ? err.message : String(err) });
     }
+  };
+
+  // Repository-file trust (prompt-injection Phase 1): read apart from the snapshot like the
+  // sandbox; a backend without the route has nothing to review.
+  const postProjectTrust = async (error?: string): Promise<void> => {
+    let files: ProjectTrustFile[] = [];
+    try {
+      files = (await deps.client.getProjectTrust?.())?.files ?? [];
+    } catch (err) {
+      error ??= err instanceof Error ? err.message : String(err);
+    }
+    post({ type: "settings/projectTrustState", files, ...(error ? { error } : {}) });
   };
 
   // The agents catalog is loaded separately from buildState's Promise.all: one failing
@@ -462,6 +484,21 @@ export function createSettingsHandler(
         }
         case "settings/sandbox": {
           await sandboxAction(() => deps.client.getSandbox());
+          return;
+        }
+        case "settings/projectTrust": {
+          await postProjectTrust();
+          return;
+        }
+        case "settings/trustProjectFile": {
+          try {
+            await deps.client.trustProjectFile?.(msg.kind, msg.sha256);
+          } catch (err) {
+            await postProjectTrust(err instanceof Error ? err.message : String(err));
+            return;
+          }
+          await postProjectTrust();
+          await postState(); // a trusted mcp.json connects its servers
           return;
         }
         case "settings/setSandboxEnabled": {

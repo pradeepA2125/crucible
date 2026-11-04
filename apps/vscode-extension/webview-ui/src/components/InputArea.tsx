@@ -161,7 +161,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
   const [trigger, setTrigger] = useState<{ kind: "slash" | "file"; query: string; start: number; end: number } | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [promptNames, setPromptNames] = useState<string[]>([]);
-  const [skillCatalog, setSkillCatalog] = useState<{ name: string; description: string }[]>([]);
+  const [skillCatalog, setSkillCatalog] = useState<{ name: string; description: string; trusted?: boolean }[]>([]);
   const promptsRequestedRef = useRef(false);
   const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
   const filesRequestedRef = useRef(false);
@@ -195,7 +195,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
     function onMessage(e: MessageEvent) {
       const m = e.data as Record<string, unknown>;
       if (m?.["type"] === "skillList") {
-        const skills = (m["skills"] as { name: string; description: string }[] | undefined) ?? [];
+        const skills = (m["skills"] as { name: string; description: string; trusted?: boolean }[] | undefined) ?? [];
         setSkillNames(skills.map((s) => s.name));
         setSkillCatalog(skills);
       } else if (m?.["type"] === "promptList") {
@@ -319,6 +319,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
     trigger?.kind === "slash"
       ? buildSlashDropdownItems(trigger.query, promptNames, skillCatalog).map((i) => ({
           id: i.id, label: i.label, sublabel: i.sublabel, badge: i.badge,
+          ...(i.disabled ? { disabled: true } : {}),
         }))
       : trigger?.kind === "file"
       ? workspaceFiles
@@ -361,7 +362,8 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
     }
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
-      applyTriggerSelection(dropdownItems[activeIndex].id);
+      const item = dropdownItems[activeIndex];
+      if (!("disabled" in item && item.disabled)) applyTriggerSelection(item.id);
       return true;
     }
     if (e.key === "Escape") {

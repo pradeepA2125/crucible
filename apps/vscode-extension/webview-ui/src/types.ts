@@ -78,6 +78,7 @@ export interface ToolEventView {
   isError?: boolean;
   approvalNote?: string;      // why Auto approval let this step run
   sandbox?: "blocked" | "outside"; // the sandbox stopped it, or it ran outside the sandbox
+  hiddenChars?: boolean;      // the output held invisible characters (removed or flagged)
   done: boolean;
 }
 
@@ -432,7 +433,7 @@ export type ExtensionMessage =
   | { type: "appendThinkingEntry"; text: string }
   | { type: "appendThinkingChunk"; chunk: string }
   | { type: "appendToolEvent"; event: Omit<ToolEventView, "output" | "isError" | "done"> }
-  | { type: "appendToolResult"; id: number; output: string; isError: boolean; approvalNote?: string; sandbox?: "blocked" | "outside" }
+  | { type: "appendToolResult"; id: number; output: string; isError: boolean; approvalNote?: string; sandbox?: "blocked" | "outside"; hiddenChars?: boolean }
   | { type: "updateWorkbar"; info: WorkbarInfo | null }
   | { type: "updateRetryStatus"; status: RetryStatusView | null }
   | { type: "updateTokenProgress"; progress: TokenProgressView | null }
@@ -493,8 +494,14 @@ export type ExtensionMessage =
   | { type: "composerPrefill"; text: string };
 
 // ── Webview → Extension ──────────────────────────────────────────────────────
+/** Repository files that need trust (prompt-injection Phase 1); mirrors editor-client. */
+export type TrustKind = "agents_md" | "skills" | "mcp" | "approved_commands" | "approved_mcp_tools"
+  | "approved_web_fetch" | "approved_web_search";
+
 export type WebviewMessage =
   | { type: "checkChatReceipt" }
+  | { type: "projectTrustRead" }
+  | { type: "projectTrustSet"; kind: TrustKind; sha256: string }
   | { type: "webviewReady" }
   | { type: "setApprovalMode"; mode: ApprovalMode; confirmedFullAccess?: boolean; dontShowAgain?: boolean }
   | { type: "fullAccessFirstSendChoice"; requestId: string; choice: "continue" | "accept_edits" | "cancel" }

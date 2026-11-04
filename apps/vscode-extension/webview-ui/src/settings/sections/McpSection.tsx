@@ -8,12 +8,35 @@ import { nextToolFilters } from "../mcpToolFilters";
 import type { McpServerRow } from "../types";
 import { FIELD } from "../ui";
 import type { SectionProps } from "./meta";
+import { ProjectTrustDialog } from "../../components/trust/ProjectTrustDialog";
+import { untrustedFiles, useProjectTrust } from "../../components/trust/projectTrust";
+import type { TrustChannel, TrustFile } from "../../components/trust/projectTrust";
+import { vscode } from "../vscodeApi";
+
+/** Settings' trust channel: the dialog posts through the settings host, not the chat's. */
+const SETTINGS_TRUST_CHANNEL: TrustChannel = {
+  read: () => vscode.postMessage({ type: "settings/projectTrust" }),
+  set: (kind, sha256) => vscode.postMessage({ type: "settings/trustProjectFile", kind, sha256 }),
+  parse: message => {
+    const m = message as { type?: unknown; files?: unknown; error?: unknown } | null;
+    if (m?.type !== "settings/projectTrustState" || !Array.isArray(m.files)) return null;
+    return { files: m.files as TrustFile[], ...(typeof m.error === "string" ? { error: m.error } : {}) };
+  },
+};
+
+/** The review dialog, mounted only while open so it reads trust fresh each time. */
+function TrustReview({ onClose }: { onClose(): void }) {
+  const { view, trust } = useProjectTrust(SETTINGS_TRUST_CHANNEL);
+  if (!view) return null;
+  return <ProjectTrustDialog files={untrustedFiles(view.files)} error={view.error}
+    onTrust={trust} onClose={onClose} />;
+}
 
 /** Colored status dot; the transient "connecting" state pulses a ring. */
 function StatusDot({ state }: { state: string }) {
   const color =
     state === "connected" ? "var(--color-green)"
-    : state === "connecting" ? "var(--color-amber)"
+    : state === "connecting" || state === "untrusted" ? "var(--color-amber)"
     : state === "failed" ? "var(--color-red)"
     : "var(--color-text-4)";
   return (
@@ -77,6 +100,8 @@ export function McpSection({ state, busy, send }: SectionProps) {
   const [name, setName] = useState("");
   const [commandOrUrl, setCommandOrUrl] = useState("");
   const [envVars, setEnvVars] = useState("");
+  const [reviewing, setReviewing] = useState(false);
+  const untrusted = state.mcp.trusted === false;
 
   const servers = state.mcp.servers.filter((s) =>
     s.name.toLowerCase().includes(filter.trim().toLowerCase()),
@@ -90,6 +115,16 @@ export function McpSection({ state, busy, send }: SectionProps) {
         search={{ value: filter, onChange: setFilter }}
       />
 
+      {untrusted && (
+        <div role="status" className="surface-card mb-3 flex min-w-0 flex-wrap items-center gap-2 px-3 py-2 text-[11px]">
+          <span className="min-w-0 flex-1 text-text-2">
+            This project's mcp.json isn't trusted yet, so none of its servers start. Review it to connect them.
+          </span>
+          <BtnPrimary onClick={() => setReviewing(true)}>Review</BtnPrimary>
+        </div>
+      )}
+      {reviewing && <TrustReview onClose={() => setReviewing(false)} />}
+
       {!state.mcp.enabled && (
         <p className="mb-3 text-[11px]" style={{ color: "var(--color-amber)" }}>
           MCP is disabled (CRUCIBLE_MCP_ENABLED=0) — servers below stay dormant.
@@ -102,7 +137,8 @@ export function McpSection({ state, busy, send }: SectionProps) {
             <CardShell
               icon="plug"
               title={s.name}
-              subtitle={`${s.transport} · ${s.toolCount} tools`}
+              subtitle={s.state === "untrusted" ? `${s.transport} · Waiting for trust`
+                : `${s.transport} · ${s.toolCount} tools`}
               badge={<StatusDot state={s.state} />}
               trailing={
                 <span className="flex items-center gap-1.5">

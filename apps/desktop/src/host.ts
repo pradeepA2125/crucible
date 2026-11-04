@@ -190,6 +190,7 @@ export function createProjectHost(ports: HostPorts) {
     onModeDecision: (...args) => controller.handleModeDecisionFromChat(...args), onClarifyDecision: (...args) => controller.handleClarifyDecisionFromChat(...args),
     onEditDecision: (...args) => controller.handleEditDecisionFromChat(...args), onStopTurn: () => controller.stopActiveTurn(), onSetReviewPref: value => controller.setReviewPref(value),
     onListPrompts: () => controller.listPrompts(), onExpandPrompt: (...args) => controller.expandPrompt(...args), onListSkills: () => controller.listSkills(),
+    onProjectTrustRead: () => controller.readProjectTrust(), onProjectTrustSet: (kind, sha256) => controller.trustProjectFile(kind, sha256),
     onReady: async () => {
       const identity=ports.viewIdentity();
       post({type:"desktop/project",name:basename(root)});await controller.openChat();

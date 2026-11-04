@@ -22,6 +22,7 @@ import { AgentsContext, type AgentsUi } from "./agents/AgentsContext";
 import { AgentWindow } from "./agents/AgentWindow";
 import { TeamsContext, type TeamsUi } from "./teams/TeamsContext";
 import { TeamStrip } from "./teams/TeamStrip";
+import { ProjectTrustStrip } from "./trust/ProjectTrustStrip";
 import { TeamWindow } from "./teams/TeamWindow";
 
 export { TranscriptItems } from "./shared/TranscriptItems";
@@ -537,6 +538,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
         onDismissError={() => state.liveError && onDismissError(state.liveError.taskId)}
       />}
 
+      {historyCurrent && <ProjectTrustStrip />}
       {historyCurrent && <TeamStrip />}
 
       <div data-testid="workbar-column" className="mx-auto min-w-0 w-full max-w-[760px] px-4 flex-shrink-0">

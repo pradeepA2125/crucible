@@ -25,6 +25,8 @@ export function ActivityLine({ event }: { event: ToolEventView }) {
         <span className={event.done ? "shrink-0" : "shrink-0 shimmer-text"}>{verb}</span>
         {target && <span className="min-w-0 truncate text-text-3">{target}</span>}
         {event.isError && <span className="shrink-0" style={{ color: "var(--danger)" }}>failed</span>}
+        {event.hiddenChars && <span className="shrink-0 text-caption" style={{ color: "var(--warning)" }}
+          title="The output held invisible characters that can hide text; Crucible removed or flagged them.">hidden characters</span>}
         {event.sandbox === "outside" && <span className="shrink-0 text-caption text-text-3">outside sandbox</span>}
       </button>
       {event.approvalNote && <p className="min-w-0 pl-[21px] text-caption text-text-3">{event.approvalNote}</p>}

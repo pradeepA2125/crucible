@@ -68,6 +68,12 @@ add(["setModel"], { backend: provider, model: id });
 add(["setReasoningEffort"], { level: z.enum(["off", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).nullable() });
 add(["openSettings"], { section: id.optional() });
 add(["settings/setSandboxEnabled"], { enabled: flag });
+// Repository-file trust (prompt-injection Phase 1): a known kind and an exact sha256.
+const trustKind = z.enum(["agents_md", "skills", "mcp", "approved_commands", "approved_mcp_tools",
+  "approved_web_fetch", "approved_web_search"]);
+const sha256 = z.string().regex(/^[0-9a-f]{64}$/);
+add(["projectTrustRead", "settings/projectTrust"]);
+add(["projectTrustSet", "settings/trustProjectFile"], { kind: trustKind, sha256 });
 add(["settings/setSandboxHosts"], { hosts: strings });
 add(["settings/setSandboxFolders"], { folders: strings });
 add(["settings/load", "settings/sandbox", "settings/loadInstructions", "settings/restartBackend", "settings/listAgents", "settings/listModels", "settings/chatgptLoad", "settings/chatgptCancel", "settings/claudeLoad", "settings/claudeSignIn", "settings/claudeCancel"]);

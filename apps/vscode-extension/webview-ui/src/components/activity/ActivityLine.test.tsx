@@ -62,5 +62,12 @@ describe("ActivityLine sandbox markers", () => {
     render(<ActivityLine event={done} />);
     expect(screen.queryByText("outside sandbox")).toBeNull();
     expect(screen.queryByText(/Blocked by the sandbox/)).toBeNull();
+    expect(screen.queryByText("hidden characters")).toBeNull();
+  });
+  it("pill shows hidden characters", () => {
+    render(<ActivityLine event={{ ...done, hiddenChars: true, sandbox: "outside" }} />);
+    const marker = screen.getByText("hidden characters");
+    expect(marker).toHaveAttribute("title", expect.stringContaining("invisible characters"));
+    expect(screen.getByText("outside sandbox")).toBeInTheDocument();
   });
 });

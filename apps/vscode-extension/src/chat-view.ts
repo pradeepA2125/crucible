@@ -1,6 +1,7 @@
 import type { HistoryView } from "./history.js";
 // Shared conversation view state and message projection. Both hosts supply a
 // current-view port, so reload recovery and confirmation rules have one owner.
+import type { ProjectTrustView } from "./controller.js";
 import type { ApprovalView, FirstSendChoice } from "./approval-mode.js";
 import type {
   ProviderAccess, AgentDetail, AgentSummary, ChatMessage, ChatThreadSummary,
@@ -193,6 +194,12 @@ export class ChatView {
     this.viewPort.postMessage({ type: "renderProviderAccess", access });
   }
 
+  /** Which repository files still need the user's trust (prompt-injection Phase 1). */
+  renderProjectTrust(view: ProjectTrustView): void {
+    this.viewPort.postMessage({ type: "projectTrust", files: view.files,
+      ...(view.error ? { error: view.error } : {}) });
+  }
+
   clearLiveTodos(): void {
     this.viewPort.postMessage({ type: "clearLiveTodos" });
   }
@@ -287,9 +294,10 @@ export class ChatView {
     this.viewPort.postMessage({ type: "appendToolEvent", event });
   }
 
-  appendToolResult(id: number, output: string, isError: boolean, approvalNote?: string, sandbox?: "blocked" | "outside"): void {
+  appendToolResult(id: number, output: string, isError: boolean, approvalNote?: string, sandbox?: "blocked" | "outside", hiddenChars?: boolean): void {
     this.viewPort.postMessage({ type: "appendToolResult", id, output, isError,
-      ...(approvalNote ? { approvalNote } : {}), ...(sandbox ? { sandbox } : {}) });
+      ...(approvalNote ? { approvalNote } : {}), ...(sandbox ? { sandbox } : {}),
+      ...(hiddenChars ? { hiddenChars: true } : {}) });
   }
 
   private lastWorkbarInfo: { stepIndex?: number; totalSteps?: number; stepTitle?: string; phaseLabel?: string } | null = null;

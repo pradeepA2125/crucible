@@ -25,6 +25,27 @@ it("admits the sandbox settings with their exact fields", () => {
   expect(() => parsePayload({ type: "settings/setSandboxFolders", folders: ["/tmp/x"], extra: true })).toThrow();
 });
 
+it("contract admits project trust messages", () => {
+  const sha256 = "a".repeat(64);
+  expect(parsePayload({ type: "projectTrustRead" })).toEqual({ type: "projectTrustRead" });
+  expect(parsePayload({ type: "projectTrustSet", kind: "agents_md", sha256 })).toMatchObject({ kind: "agents_md", sha256 });
+  expect(parsePayload({ type: "settings/projectTrust" })).toEqual({ type: "settings/projectTrust" });
+  expect(parsePayload({ type: "settings/trustProjectFile", kind: "mcp", sha256 })).toMatchObject({ kind: "mcp" });
+  expect(() => parsePayload({ type: "projectTrustSet", kind: "secrets", sha256 })).toThrow();
+  expect(() => parsePayload({ type: "projectTrustSet", kind: "mcp", sha256: "not-a-hash" })).toThrow();
+  expect(() => parsePayload({ type: "projectTrustSet", kind: "mcp", sha256, extra: 1 })).toThrow();
+  expect(() => parsePayload({ type: "projectTrustRead", kind: "mcp" })).toThrow();
+});
+
+// The chat router matches on runtime strings too: every chat message it handles must pass.
+it("admits every chat message the shared router handles", () => {
+  const source = readFileSync(new URL("../../vscode-extension/src/chat-message-router.ts", import.meta.url), "utf8");
+  for (const type of ["projectTrustRead", "projectTrustSet"]) {
+    expect(source).toContain(`m["type"] === "${type}"`);
+    expect(isKnownCommand(type)).toBe(true);
+  }
+});
+
 // The contract matches on runtime strings, so a message added to the shared Settings
 // handler type-checks and passes its own tests while the desktop app refuses it.
 it("admits every message the shared Settings handler accepts", () => {
