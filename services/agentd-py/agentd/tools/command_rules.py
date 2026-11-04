@@ -30,6 +30,7 @@ from agentd.approvals.command_parse import (
 )
 from agentd.domain.models import CommandDecision, CommandRule
 from agentd.tools.shell import _build_shell_command_line, _split_command
+from agentd.trust.project_trust import project_trust_for
 
 
 def rule_from_decision(
@@ -115,8 +116,16 @@ class CommandRuleStore:
     def __init__(self, workspace_path: str | Path) -> None:
         self._workspace_path = Path(workspace_path)
         self._path = self._workspace_path / ".crucible" / "approved-commands.json"
+        self._trust = project_trust_for(self._workspace_path)
 
     def load(self) -> list[CommandRule]:
+        """The rules that count: none while the file is untrusted, since a cloned repository
+        could otherwise approve its own commands (prompt-injection Phase 1, spec §4.1)."""
+        if not self._trust.is_effective("approved_commands"):
+            return []
+        return self._read()
+
+    def _read(self) -> list[CommandRule]:
         if not self._path.exists():
             return []
         try:
@@ -147,10 +156,13 @@ class CommandRuleStore:
         return command_is_covered(self.load(), command, args, self._workspace_path)
 
     def add(self, rule: CommandRule) -> None:
-        rules = self.load()
+        # Read every stored rule, trusted or not: an untrusted file's rules stay in it for
+        # the user to review, and the write below keeps that file untrusted.
+        rules = self._read()
         if any(r.type == rule.type and r.value == rule.value for r in rules):
             return
         rules.append(rule)
+        before = self._trust.fingerprint("approved_commands")
         self._path.parent.mkdir(parents=True, exist_ok=True)
         # Atomic write so a reader never sees a half-written file.
         tmp = self._path.with_suffix(".json.tmp")
@@ -159,3 +171,4 @@ class CommandRuleStore:
             encoding="utf-8",
         )
         os.replace(tmp, self._path)
+        self._trust.record_own_write("approved_commands", before)

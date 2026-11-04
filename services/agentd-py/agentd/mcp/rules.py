@@ -7,12 +7,24 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from agentd.trust.project_trust import TrustKind, project_trust_for
+
 
 class McpRuleStore:
+    FILENAME = "approved-mcp-tools.json"
+    KIND: TrustKind = "approved_mcp_tools"
+
     def __init__(self, workspace_path: str | Path) -> None:
-        self._path = Path(workspace_path) / ".crucible" / "approved-mcp-tools.json"
+        self._path = Path(workspace_path) / ".crucible" / self.FILENAME
+        self._trust = project_trust_for(Path(workspace_path))
 
     def load(self) -> list[dict[str, str]]:
+        """The pairs that count: none while the file is untrusted (prompt-injection Phase 1)."""
+        if not self._trust.is_effective(self.KIND):
+            return []
+        return self._read()
+
+    def _read(self) -> list[dict[str, str]]:
         if not self._path.exists():
             return []
         try:
@@ -25,10 +37,13 @@ class McpRuleStore:
         return any(r.get("server") == server and r.get("tool") == tool for r in self.load())
 
     def add(self, server: str, tool: str) -> None:
-        rules = self.load()
+        # Every stored pair, trusted or not, stays in the file; the write keeps its trust.
+        rules = self._read()
         if any(r.get("server") == server and r.get("tool") == tool for r in rules):
             return
         rules.append({"server": server, "tool": tool,
                       "added_at": datetime.now(UTC).isoformat()})
+        before = self._trust.fingerprint(self.KIND)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(json.dumps(rules, indent=2), encoding="utf-8")
+        self._trust.record_own_write(self.KIND, before)

@@ -15,6 +15,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from agentd.mcp.models import McpServerConfig
+from agentd.trust.project_trust import project_trust_for
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ def interpolate_env(mapping: dict[str, str]) -> dict[str, str]:
 class McpConfigLoader:
     def __init__(self, workspace_path: str | Path) -> None:
         self._path = Path(workspace_path) / ".crucible" / "mcp.json"
+        self._trust = project_trust_for(Path(workspace_path))
         self._sig: tuple[int, int] | None = None
         self._cached: list[McpServerConfig] = []
 
@@ -88,7 +90,15 @@ class McpConfigLoader:
     def config_path(self) -> Path:
         return self._path
 
+    def is_trusted(self) -> bool:
+        return self._trust.is_effective("mcp")
+
     def load(self) -> list[McpServerConfig]:
+        """The servers to connect: none while mcp.json is untrusted. A stdio entry runs a
+        command outside the sandbox, so a cloned repository's file must not start it
+        (prompt-injection Phase 1, spec §4.1)."""
+        if not self.is_trusted():
+            return []
         try:
             stat = self._path.stat()
         except OSError:

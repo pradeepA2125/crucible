@@ -230,7 +230,10 @@ class ProjectTrust:
     def record_own_write(self, kind: TrustKind, before: str | None) -> bool:
         """Trust a file the user (or a reviewed edit) just wrote, but only when what it
         replaced was absent or already trusted: an edit on top of planted content must not
-        launder it."""
+        launder it. With the defense off nothing is recorded: everything counts anyway, and
+        the switch promises today's behavior exactly."""
+        if not is_injection_defense_enabled():
+            return True
         if before is not None and before not in self._trusted_shas(kind):
             return False
         current = self.fingerprint(kind)

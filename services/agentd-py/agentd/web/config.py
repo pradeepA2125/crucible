@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 
 from agentd.mcp.rules import McpRuleStore
 
@@ -13,8 +12,8 @@ def is_web_search_enabled() -> bool:
 
 
 class WebSearchRuleStore(McpRuleStore):
-    def __init__(self, workspace_path: str | Path) -> None:
-        self._path = Path(workspace_path) / ".crucible" / "approved-web-search.json"
+    FILENAME = "approved-web-search.json"
+    KIND = "approved_web_search"
 
 FETCH_SERVER = "Web"
 FETCH_TOOL = "web_fetch"
@@ -26,5 +25,5 @@ def is_web_fetch_enabled() -> bool:
 
 
 class WebFetchRuleStore(McpRuleStore):
-    def __init__(self, workspace_path: str | Path) -> None:
-        self._path = Path(workspace_path) / ".crucible" / "approved-web-fetch.json"
+    FILENAME = "approved-web-fetch.json"
+    KIND = "approved_web_fetch"

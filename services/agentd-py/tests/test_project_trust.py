@@ -190,6 +190,14 @@ def test_flag_off_everything_effective(tmp_path, monkeypatch):
     assert trust.is_effective("agents_md")
 
 
+def test_flag_off_own_write_touches_no_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("CRUCIBLE_INJECTION_DEFENSE", "0")
+    trust, ws = _trust(tmp_path)
+    (ws / "AGENTS.md").write_bytes(b"mine")
+    assert trust.record_own_write("agents_md", None) is True
+    assert not (tmp_path / "home" / ".crucible").exists()
+
+
 def test_diff_base_is_last_trusted_content(tmp_path):
     trust, ws = _trust(tmp_path)
     (ws / "AGENTS.md").write_bytes(b"first")

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from agentd.mcp.config import _NAME_RE
+from agentd.trust.project_trust import project_trust_for
 
 
 def _read_raw(path: Path) -> dict[str, Any]:
@@ -17,6 +18,16 @@ def _read_raw(path: Path) -> dict[str, Any]:
         return raw if isinstance(raw, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _write_raw(path: Path, raw: dict[str, Any]) -> None:
+    """Write mcp.json for the settings UI. The user's own write keeps a trusted (or new)
+    file trusted; a write on top of content the user never trusted leaves it untrusted."""
+    trust = project_trust_for(path.parent.parent)
+    before = trust.fingerprint("mcp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    trust.record_own_write("mcp", before)
 
 
 def read_raw_servers(path: Path) -> dict[str, dict[str, Any]]:
@@ -39,8 +50,7 @@ def upsert_server(path: Path, name: str, entry: dict[str, Any]) -> None:
     if not isinstance(servers, dict):
         raw["mcpServers"] = servers = {}
     servers[name] = entry
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    _write_raw(path, raw)
 
 
 def remove_server(path: Path, name: str) -> bool:
@@ -49,7 +59,7 @@ def remove_server(path: Path, name: str) -> bool:
     if not isinstance(servers, dict) or name not in servers:
         return False
     del servers[name]
-    path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    _write_raw(path, raw)
     return True
 
 
@@ -68,5 +78,5 @@ def set_tool_filters(
             entry.pop(key, None)
         else:
             entry[key] = list(value)
-    path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    _write_raw(path, raw)
     return True

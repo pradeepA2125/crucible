@@ -473,6 +473,8 @@ def build_router(
             return {"enabled": False, "servers": []}
         statuses = {s.name: s for s in mcp_manager.statuses()}  # type: ignore[attr-defined]
         inventory = mcp_manager.tool_inventory()  # type: ignore[attr-defined]
+        # An untrusted mcp.json connects nothing; its servers are listed for review.
+        trusted = mcp_manager.loader.is_trusted()  # type: ignore[attr-defined]
         servers = []
         for name, entry in read_raw_servers(
             mcp_manager.loader.config_path  # type: ignore[attr-defined]
@@ -489,7 +491,8 @@ def build_router(
                     "name": name,
                     "transport": transport,
                     "enabled_in_file": entry.get("enabled") is True,
-                    "state": status.state if status else "not_connected",
+                    "state": (status.state if status else
+                              "not_connected" if trusted else "untrusted"),
                     "detail": (getattr(status, "detail", None) if status
                                else TOOL_FILTERS_MALFORMED if filters is None else None),
                     "tool_count": getattr(status, "tool_count", 0) if status else 0,
@@ -498,7 +501,7 @@ def build_router(
                     "disabled_tools": (filters or {}).get("disabled_tools", []),
                 }
             )
-        return {"enabled": True, "servers": servers}
+        return {"enabled": True, "trusted": trusted, "servers": servers}
 
     @router.get("/mcp/servers")
     async def list_mcp_servers() -> dict[str, object]:
