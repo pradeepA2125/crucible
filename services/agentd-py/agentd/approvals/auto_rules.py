@@ -16,6 +16,7 @@ from agentd.chat.protected_paths import command_mentions_protected
 from agentd.domain.models import CommandRule
 from agentd.subagents.write_log import canonical_path
 from agentd.tools.command_rules import command_is_covered
+from agentd.trust.config import is_injection_defense_enabled
 
 _INTERPRETERS = frozenset({
     "sh", "bash", "zsh", "dash", "ksh", "python", "python3", "node", "perl", "ruby", "php",
@@ -345,15 +346,120 @@ def _publishes(words: tuple[str, ...]) -> bool:
     return _name(words) in _PUBLISHING_TOOLS and any(w in _PUBLISHING_WORDS for w in words[1:])
 
 
+_SAFE_METHODS = frozenset({"GET", "HEAD"})
+# curl options that send data or credentials. `--data*` covers --data-binary, --data-raw…
+# `-K`/`--config` reads arbitrary options from a file, so it counts too.
+_CURL_SENDS_SHORT = frozenset("dFTuK")
+_CURL_SENDS_LONG = frozenset({"--json", "--form", "--form-string", "--upload-file", "--user",
+                              "--oauth2-bearer", "--config"})
+# curl short options that take a value: the rest of a `-sSo` cluster is that value.
+_CURL_VALUE_SHORT = frozenset("AbcCDeEhHmoPQrtwxXyYz")
+_WGET_SENDS = frozenset({"--post-data", "--post-file", "--body-data", "--body-file", "--user",
+                         "--password", "--http-user", "--http-password"})
+_HTTPIE = frozenset({"http", "https", "xh", "xhs"})
+_HTTP_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _long(word: str) -> tuple[str, str | None]:
+    name, sep, value = word.partition("=")
+    return name, (value if sep else None)
+
+
+def _is_auth_header(value: str | None) -> bool:
+    return value is not None and value.strip().lower().startswith("authorization:")
+
+
+def _curl_sends(args: tuple[str, ...]) -> bool:
+    index = 0
+    while index < len(args):
+        word = args[index]
+        following = args[index + 1] if index + 1 < len(args) else None
+        if word.startswith("--"):
+            name, value = _long(word)
+            if name.startswith("--data") or name in _CURL_SENDS_LONG:
+                return True
+            if name == "--request":
+                method = value if value is not None else following
+                if method is not None and method.upper() not in _SAFE_METHODS:
+                    return True
+            if name == "--header" and _is_auth_header(value if value is not None else following):
+                return True
+        elif word.startswith("-") and len(word) > 1:
+            for offset, flag in enumerate(word[1:], start=2):
+                rest = word[offset:] or following
+                if flag in _CURL_SENDS_SHORT:
+                    return True
+                if flag == "X" and rest is not None and rest.upper() not in _SAFE_METHODS:
+                    return True
+                if flag == "H" and _is_auth_header(rest):
+                    return True
+                if flag in _CURL_VALUE_SHORT:
+                    break
+        index += 1
+    return False
+
+
+def _wget_sends(args: tuple[str, ...]) -> bool:
+    for index, word in enumerate(args):
+        following = args[index + 1] if index + 1 < len(args) else None
+        name, value = _long(word)
+        if name in _WGET_SENDS:
+            return True
+        if name == "--method":
+            method = value if value is not None else following
+            if method is not None and method.upper() not in _SAFE_METHODS:
+                return True
+        if name == "--header" and _is_auth_header(value if value is not None else following):
+            return True
+    return False
+
+
+def _httpie_sends(args: tuple[str, ...]) -> bool:
+    positional: list[str] = []
+    for word in args:
+        if word.startswith("-"):
+            if _long(word)[0] in {"--auth", "-a"}:
+                return True
+            continue
+        positional.append(word)
+    if not positional:
+        return False
+    first = positional[0]
+    items = positional[1:]
+    if first.isalpha() and (first.isupper() or first.upper() in _HTTP_WRITE_METHODS):
+        if first.upper() not in _SAFE_METHODS:
+            return True
+        items = positional[2:]
+    # Request items: field=value, raw:=json, @file and Authorization headers send data.
+    return any("=" in item or item.startswith("@") or _is_auth_header(item) for item in items)
+
+
+def _sends_data(words: tuple[str, ...]) -> bool:
+    """curl, wget and httpie requests that upload data or carry credentials. Plain downloads
+    stay inside: the sandbox's allowed hosts are where uploads would go (spec §4.5)."""
+    name, args = _name(words), words[1:]
+    if name == "curl":
+        return _curl_sends(args)
+    if name == "wget":
+        return _wget_sends(args)
+    if name in _HTTPIE:
+        return _httpie_sends(args)
+    return False
+
+
 def is_outward(parsed: ParsedCommand) -> bool:
     """A command that publishes or changes something remote through a host the sandbox
-    allows (pushes, releases, package uploads). With the sandbox on, these still go to
-    the judge. A line the parser cannot read counts as outward (fail closed)."""
+    allows (pushes, releases, package uploads, and with the prompt-injection defense on,
+    curl/wget/httpie uploads and credentialed requests). With the sandbox on, these still
+    go to the judge. A line the parser cannot read counts as outward (fail closed)."""
     if parsed.parse_failed or parsed.has_substitution:
         return True
+    defense_on = is_injection_defense_enabled()
     for segment in parsed.segments:
         words = _command_words(segment)
         name = _name(words)
+        if defense_on and _sends_data(words):
+            return True
         if name == "git":
             if _git_pushes(words):
                 return True
