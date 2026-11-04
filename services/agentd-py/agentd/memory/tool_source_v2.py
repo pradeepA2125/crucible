@@ -20,6 +20,8 @@ from agentd.memory.recall_v2 import (
 )
 from agentd.memory.scope import ScopeContext
 from agentd.tools.registry import ToolDefinition, ToolOutput
+from agentd.trust.config import is_injection_defense_enabled
+from agentd.trust.turn_taint import TurnTaint
 
 _DEFINITIONS = [
     ToolDefinition(
@@ -75,6 +77,11 @@ _DEFINITIONS = [
 ]
 
 
+TAINTED_REMEMBER_TEXT = (
+    "This memory can't be saved as yours: this turn has read files or tool output. "
+    "Ask the user to confirm, or save it as your own note.")
+
+
 class DurableMemoryToolSource:
     name = "memory"
 
@@ -87,8 +94,10 @@ class DurableMemoryToolSource:
         catalogs: RecallCoordinator | None = None,
         allow_writes: bool = True,
         source_mseq: Callable[[], int | None] = lambda: None,
+        taint: TurnTaint | None = None,
     ) -> None:
         self.store, self.context, self.search = store, context, search
+        self.taint = taint
         self.catalogs = catalogs or (
             RecallCoordinator(search or CandidateSearch(store)) if store is not None else None
         )
@@ -131,6 +140,11 @@ class DurableMemoryToolSource:
                 origin: WriteOrigin = (
                     "user_requested" if requested_origin == "user_requested" else "agent_nomination"
                 )
+                # "The user said" (and user scope, and corrections, which require it) can't be
+                # claimed once this turn has read untrusted output (prompt-injection Phase 1).
+                if (origin == "user_requested" and self.taint is not None
+                        and self.taint.seen and is_injection_defense_enabled()):
+                    return ToolOutput(output=TAINTED_REMEMBER_TEXT, is_error=True)
                 source = self.source_mseq()
                 if source is None:
                     raise ValueError("The evidence message has no persistent source ID")

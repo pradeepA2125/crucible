@@ -498,6 +498,7 @@ class MemoryHarness:
 
     def memory_tool_source(
         self, run_id: str = "", *, allow_remember: bool = True, thread_id: str | None = None,
+        taint: object | None = None,
     ) -> object | None:
         """A MemoryToolSource for the controller registry. The default (remember + recall)
         needs a consolidator; a sub-agent's recall-only source (allow_remember=False,
@@ -520,6 +521,7 @@ class MemoryHarness:
                 search=self._v2_recall.search if self._v2_recall is not None else None,
                 catalogs=self._v2_recall,
                 allow_writes=allow_remember, source_mseq=source_mseq,
+                taint=taint,  # type: ignore[arg-type]
             )
         from agentd.memory.tool_source import MemoryToolSource
         if allow_remember:

@@ -45,7 +45,8 @@ class _Source:
 
 
 async def _run(tmp_path: Path, calls: list[dict], source: _Source | None = None,
-               plan_context: dict | None = None) -> tuple[list[dict], list[dict]]:
+               plan_context: dict | None = None,
+               taint: object | None = None) -> tuple[list[dict], list[dict]]:
     engine = ScriptedReasoningEngine(None, [], controller_step_responses=[
         {"type": "tool_calls", "thought": "look", "calls": calls},
         {"type": "answer", "thought": "done", "answer": "ok"},
@@ -62,8 +63,9 @@ async def _run(tmp_path: Path, calls: list[dict], source: _Source | None = None,
         original(channel, event)
 
     broadcaster.broadcast = record  # type: ignore[method-assign]
+    extra = {"taint": taint} if taint is not None else {}
     loop = ControllerLoop(engine, AggregatingToolRegistry(sources), broadcaster,
-                          channel_id="c1", phase_sm=ControllerPhaseSM())
+                          channel_id="c1", phase_sm=ControllerPhaseSM(), **extra)
     seen: list[list[dict]] = []
     await loop.run({"goal": "g", "workspace_path": str(tmp_path), **(plan_context or {})},
                    max_iters=6, history_update_cb=lambda h: seen.append([dict(m) for m in h]))

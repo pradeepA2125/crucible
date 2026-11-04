@@ -49,6 +49,7 @@ from agentd.subagents.write_log import canonical_path
 from agentd.teams.tools import MAIN_TOOL_NAMES, MEMBER_TOOL_NAMES
 from agentd.trust.config import is_injection_defense_enabled
 from agentd.trust.tool_output import frame_tool_output, retrieval_refresh_content
+from agentd.trust.turn_taint import TurnTaint
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -743,8 +744,11 @@ class ControllerLoop:
         context_observer_factory: Callable[[], object] | None = None,
         context_invalidate: Callable[[], None] | None = None,
         capabilities: CapabilitySession | None = None,
+        taint: TurnTaint | None = None,
     ) -> None:
         self._reasoning = reasoning
+        # Marked when an untrusted tool result arrives (memory's remember reads it).
+        self._taint = taint
         # On-demand MCP loading (main agent, flag-gated): None keeps the full catalog.
         self._capabilities = capabilities
         self._deferred_defs: dict[str, dict[str, object]] = {}
@@ -1068,6 +1072,8 @@ class ControllerLoop:
                     # Unknown tools default to untrusted: a forgotten one fails safe.
                     trust = output_trust.get(outcome.call.tool, "untrusted")
                     if defense_on and trust == "untrusted":
+                        if self._taint is not None:
+                            self._taint.mark()
                         framed = frame_tool_output(
                             outcome.call.tool, outcome.call.args, out.output)
                         content, hidden = framed.content, framed.hidden_chars

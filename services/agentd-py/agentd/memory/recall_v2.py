@@ -18,6 +18,7 @@ from agentd.memory.recall_context import clean_closing
 from agentd.memory.reranker import Reranker
 from agentd.memory.scope import ScopeContext
 from agentd.subagents.framing import TOOL_KIND, unwrap_frames
+from agentd.trust.config import is_injection_defense_enabled
 
 # Owner-approved catalog delivery: the working model decides relevance.
 MAX_CATALOG = 15
@@ -33,8 +34,16 @@ def catalog(memory: DurableMemory) -> str:
     return (
         f"[m:{memory.id}@{memory.revision}] {one_line(memory.topic)} — "
         f"when: {one_line(memory.applies_when)}: {one_line(memory.content)} "
-        f"({memory.provenance})"
+        f"({_provenance_label(memory.provenance)})"
     )
+
+
+def _provenance_label(provenance: str) -> str:
+    # A tool's output can carry planted text, so the catalog names where the claim came
+    # from rather than calling it verified (prompt-injection Phase 1). Stored value unchanged.
+    if provenance == "tool_verified" and is_injection_defense_enabled():
+        return "from tool output"
+    return provenance
 
 
 def catalog_notice(method: str) -> str:

@@ -196,6 +196,7 @@ from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 from agentd.trust.project_trust import project_trust_for
 from agentd.trust.tool_output import mention_block
+from agentd.trust.turn_taint import TurnTaint
 from agentd.workspace.promote import promote_files
 
 if TYPE_CHECKING:
@@ -693,6 +694,7 @@ class ChatController:
         read_observer: Callable[[str], None] | None = None,
         extra_sources: list[object] | None = None,
         escalation_approval_cb: object | None = None,
+        taint: TurnTaint | None = None,
     ) -> AggregatingToolRegistry:
         sources: list[object] = [BuiltinToolSource(
             shadow_root=Path(self._workspace_path),
@@ -725,7 +727,8 @@ class ChatController:
         if todo_ledger is not None:
             sources.append(TodoToolSource(todo_ledger, on_mutate=todo_persist_cb))
         # run_id = thread_id tags explicit remembers so a rewind can retire them.
-        mts = self._memory_harness.memory_tool_source(thread_id)  # None unless enabled
+        mts = self._memory_harness.memory_tool_source(  # None unless enabled
+            thread_id, taint=taint)
         if mts is not None:
             sources.append(mts)
         if is_skills_enabled() and active_skills is not None:
@@ -1097,9 +1100,11 @@ class ChatController:
                            in self._mcp_manager.server_instructions().items()},
                 window_tokens=lambda: self._memory_harness.image_context_window)
             dispatch_sources.append(CapabilityToolSource(capabilities))
+        taint = TurnTaint()  # one per turn: has it read untrusted output yet?
         loop = ControllerLoop(
             self._reasoning,
             self._build_registry(command_cb, ledger, todo_persist_cb,
+                                  taint=taint,
                                   active_skills=active_skills,
                                   active_skill_persist_cb=active_skill_persist_cb,
                                   thread_id=thread_id,
@@ -1112,7 +1117,7 @@ class ChatController:
                                       if write_log is not None else None),
                                   extra_sources=dispatch_sources), self._broadcaster,
             channel_id=channel_id, phase_sm=sm, edit_session_factory=edit_session_factory,
-            todo_ledger=ledger,
+            todo_ledger=ledger, taint=taint,
             context_observer_factory=lambda: self._context_usage.observer(thread_id, turn_id),
             context_invalidate=lambda: self._context_usage.invalidate(thread_id),
             task_subsystem_enabled=self._task_subsystem_enabled,
