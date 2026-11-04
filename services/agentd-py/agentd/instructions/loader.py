@@ -11,6 +11,8 @@ import os
 import threading
 from pathlib import Path
 
+from agentd.trust.project_trust import ProjectTrust, project_trust_for
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_CHARS = 16000
@@ -32,13 +34,28 @@ class ProjectInstructionsLoader:
 
     FILENAME = "AGENTS.md"
 
-    def __init__(self, workspace_path: Path | str) -> None:
+    def __init__(self, workspace_path: Path | str, trust: ProjectTrust | None = None) -> None:
         self._path = Path(workspace_path) / self.FILENAME
+        self._trust = trust or project_trust_for(Path(workspace_path))
         self._lock = threading.Lock()
         self._cached_mtime_ns: int | None = None
         self._cached_text: str | None = None  # capped; "" means present-but-blank
 
     def load(self) -> str | None:
+        """The text as project instructions: only once the user trusted this exact content
+        (prompt-injection Phase 1, spec §4.1). A cloned repository's AGENTS.md is otherwise
+        notes the agent may read, never instructions."""
+        if not self._trust.is_effective("agents_md"):
+            return None
+        return self._read()
+
+    def load_untrusted(self) -> str | None:
+        """The text while it is present but not trusted, for the payload's notes block."""
+        if self._trust.is_effective("agents_md"):
+            return None
+        return self._read()
+
+    def _read(self) -> str | None:
         with self._lock:
             try:
                 mtime_ns = self._path.stat().st_mtime_ns

@@ -20,6 +20,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
+from agentd.approvals.auto_gate import AutoGate, is_control_key
+from agentd.approvals.judge import (
+    AutoJudge,
+    TransportSource,
+    auto_judge_timeout_sec,
+    auto_judge_turn_uncached_tokens,
+)
+from agentd.approvals.judge_context import JudgeContext, build_judge_context
+from agentd.approvals.types import JudgeRequest, PendingActionKind
 from agentd.chat.approval import (
     ApprovalConflict,
     ApprovalManaged,
@@ -28,6 +37,7 @@ from agentd.chat.approval import (
 )
 from agentd.chat.controller_factory import (
     is_capability_loading_enabled,
+    is_project_instructions_enabled,
     is_skills_enabled,
     is_subagents_enabled,
     is_task_subsystem_enabled,
@@ -62,20 +72,9 @@ from agentd.chat.protected_paths import (
     is_protected,
 )
 from agentd.chat.rewind import RewindStore
-from agentd.approvals.auto_gate import is_control_key
-from agentd.sandbox.runtime import SandboxRuntime
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
 from agentd.chat.turn_control import ChatTurnControl
-from agentd.approvals.auto_gate import AutoGate
-from agentd.approvals.judge import (
-    AutoJudge,
-    TransportSource,
-    auto_judge_timeout_sec,
-    auto_judge_turn_uncached_tokens,
-)
-from agentd.approvals.judge_context import JudgeContext, build_judge_context
-from agentd.approvals.types import JudgeRequest, PendingActionKind
 from agentd.domain.models import (
     ApprovalOutcome,
     CommandDecision,
@@ -84,6 +83,7 @@ from agentd.domain.models import (
     McpToolDecision,
     ShellPolicy,
 )
+from agentd.instructions.loader import ProjectInstructionsLoader
 from agentd.memory.harness import NO_OP_HARNESS, MemoryHarness
 from agentd.memory.models import ObservedPrompt
 from agentd.performance import mark, profile_async, profile_workspace_turn, span
@@ -98,6 +98,7 @@ from agentd.providers.plan_access import (
 from agentd.providers.rate_limit import CALL_PRIORITY
 from agentd.providers.usage import METER, USAGE_OWNER, Usage
 from agentd.runtime.artifacts import chat_turn_artifacts_root
+from agentd.sandbox.runtime import SandboxRuntime
 from agentd.skills.loader import SkillCatalogLoader
 from agentd.skills.tool_source import SkillToolSource, cap_skill_body
 from agentd.subagents.agent_files import AgentCatalogLoader
@@ -193,6 +194,7 @@ from agentd.teams.validation import (
 )
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
+from agentd.trust.project_trust import project_trust_for
 from agentd.workspace.promote import promote_files
 
 if TYPE_CHECKING:
@@ -451,6 +453,7 @@ class ChatController:
         sandbox_runtime: SandboxRuntime | None = None,
     ) -> None:
         self._workspace_path = workspace_path
+        self._instructions_loader = ProjectInstructionsLoader(workspace_path)
         # The command sandbox (None in tests and legacy factories: commands run as before).
         self._sandbox = sandbox_runtime
         self._reasoning = reasoning_engine
@@ -483,7 +486,7 @@ class ChatController:
         self._auto_ask_streak: dict[str, int] = {}
         if getattr(reasoning_engine, "_transport", None) is not None:
             # Re-read per judgment: a provider hot-swap mutates the engine in place.
-            self._attach_judge(lambda: (getattr(self._reasoning, "_transport"),
+            self._attach_judge(lambda: (self._reasoning._transport,
                                         str(getattr(self._reasoning, "_model", ""))))
         self._command_decision_timeout_sec = max(0.0, command_decision_timeout_sec)
         # Per-thread controller conversation history — the cache prefix replayed as
@@ -1130,6 +1133,9 @@ class ChatController:
             "goal": goal, "workspace_path": self._workspace_path,
             # run_id keys the per-thread compaction segments + anchored summary.
             "run_id": thread_id}
+        notes = self._untrusted_project_notes()
+        if notes is not None:
+            plan_context["untrusted_project_notes"] = notes
         if getattr(self._memory_harness, "recall_v2", False):
             self._memory_harness.bind_memory_state(self._store)
             thread = self._store.get_thread(thread_id)
@@ -2364,6 +2370,16 @@ class ChatController:
         if self._auto_judge is not None:
             self._auto_judge.forget_thread(thread_id)
 
+    def _untrusted_project_notes(self) -> str | None:
+        """An AGENTS.md the user hasn't trusted, framed as repository notes for the payload
+        head (prompt-injection Phase 1): the agent can read it, it never instructs."""
+        if not is_project_instructions_enabled():
+            return None
+        text = self._instructions_loader.load_untrusted()
+        if text is None:
+            return None
+        return frame("repository", "project-notes", text, source="AGENTS.md")
+
     def _judge_context(self, request: JudgeRequest) -> JudgeContext:
         thread = self._store.get_thread(request.thread_id)
         messages = list(thread.messages) if thread is not None else []
@@ -2376,6 +2392,9 @@ class ChatController:
             agents_md: str | None = (Path(self._workspace_path) / "AGENTS.md").read_text(
                 encoding="utf-8", errors="replace")
         except OSError:
+            agents_md = None
+        # An untrusted AGENTS.md never authorizes a command (prompt-injection Phase 1).
+        if not project_trust_for(Path(self._workspace_path)).is_effective("agents_md"):
             agents_md = None
         return build_judge_context(messages, history, agents_md,
                                    history_anchor=self._judge_anchor(request.thread_id))
@@ -4462,6 +4481,9 @@ class ChatController:
             "artifact_thread_id": thread_id,
             "artifact_turn_id": f"{turn_id}/agents/{ctx.agent_id}/a{activation}",
             "artifact_seed_len": 0, "edit_is_resume": False}
+        notes = self._untrusted_project_notes()
+        if notes is not None:
+            plan_context["untrusted_project_notes"] = notes
         if getattr(self._memory_harness, "recall_v2", False):
             self._memory_harness.bind_memory_state(self._store)
             plan_context["memory_v2"] = True

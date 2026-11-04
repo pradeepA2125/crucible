@@ -1442,6 +1442,11 @@ def build_controller_step_payload(
     payload: dict[str, object] = {
         "workspace_path": plan_context.get("workspace_path", ""),
     }
+    # An AGENTS.md the user hasn't trusted (prompt-injection Phase 1): framed notes in the
+    # cached head, never the system prompt. Stable across a turn's steps.
+    notes = plan_context.get("untrusted_project_notes")
+    if isinstance(notes, str) and notes:
+        payload["untrusted_project_notes"] = notes
     raw_max = plan_context.get("max_iters", _DEFAULT_MAX_ITERS)
     max_iters = raw_max if isinstance(raw_max, int) else _DEFAULT_MAX_ITERS
     # THIS turn's step count, supplied by the loop. The `len(history) // 2` fallback is
