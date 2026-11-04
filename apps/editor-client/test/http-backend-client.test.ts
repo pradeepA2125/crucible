@@ -180,7 +180,7 @@ describe("HttpBackendClient skills", () => {
           headers: { "content-type": "application/json" },
         }),
     });
-    expect(await client.listSkills("/ws")).toEqual([{ name: "a", description: "b" }]);
+    expect(await client.listSkills("/ws")).toEqual([{ name: "a", description: "b", trusted: true }]);
   });
 });
 

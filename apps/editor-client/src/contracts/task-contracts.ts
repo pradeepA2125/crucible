@@ -172,7 +172,7 @@ export type StreamEvent =
   // done carries {status} when the engine reaches a terminal/pause state (engine.py:1550) and {} on bare pause paths
   | { type: "done"; payload: { status?: string } }
   | { type: "tool_call"; payload: { tool: string; thought: string; iteration?: number; phase?: string; args?: Record<string, unknown>; call_index?: number } }
-  | { type: "tool_result"; payload: { tool?: string; output: string; is_error: boolean; iteration?: number; call_index?: number } }
+  | { type: "tool_result"; payload: { tool?: string; output: string; is_error: boolean; iteration?: number; call_index?: number; hidden_chars?: boolean } }
   | { type: "planning_tool_call"; payload: { tool: string; thought: string; iteration: number; args?: Record<string, unknown> } }
   | { type: "planning_tool_result"; payload: { tool: string; output: string; is_error: boolean; iteration: number } }
   | { type: "explore_tool_result"; payload: { tool: string; output: string; is_error: boolean } }
@@ -878,6 +878,8 @@ export const BackendConfigSchema = z.object({
   mcpEnabled: z.boolean(),
   subagentsEnabled: z.boolean().default(false),
   teamsEnabled: z.boolean().default(false),
+  // Repository files that change Crucible's behavior need trust (prompt-injection Phase 1).
+  injectionDefense: z.boolean().default(false),
   // Current reasoning provider (null when the backend runs scripted / pre-P4).
   // contextWindow is the window compaction is actually using right now — seeded
   // from CRUCIBLE_MEMORY_WINDOW_TOKENS at startup, overwritten by a settings save.
@@ -894,8 +896,31 @@ export const BackendConfigSchema = z.object({
 });
 export type BackendConfig = z.infer<typeof BackendConfigSchema>;
 
-export const SkillSummarySchema = z.object({ name: z.string(), description: z.string() });
+export const SkillSummarySchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  // False while the project's skills aren't trusted; older backends omit it.
+  trusted: z.boolean().default(true),
+});
 export type SkillSummary = z.infer<typeof SkillSummarySchema>;
+
+// ── Trust for repository files that change Crucible's behavior (prompt-injection Phase 1).
+export const TrustKindSchema = z.enum([
+  "agents_md", "skills", "mcp", "approved_commands", "approved_mcp_tools",
+  "approved_web_fetch", "approved_web_search",
+]);
+export type TrustKind = z.infer<typeof TrustKindSchema>;
+export const ProjectTrustFileSchema = z.object({
+  kind: TrustKindSchema,
+  state: z.enum(["absent", "trusted", "untrusted"]),
+  sha256: z.string().nullable(),
+  // Invisible characters arrive as visible ⟦U+XXXX⟧ markers.
+  content: z.string().nullable(),
+  diffBase: z.string().nullable(),
+});
+export type ProjectTrustFile = z.infer<typeof ProjectTrustFileSchema>;
+export const ProjectTrustSchema = z.object({ files: z.array(ProjectTrustFileSchema) });
+export type ProjectTrust = z.infer<typeof ProjectTrustSchema>;
 
 // ── Settings › Agents (sub-agents v2 §10). tools: null = all tools, distinct from [].
 export const AgentDefinitionViewSchema = z.object({
@@ -985,6 +1010,9 @@ export const McpServerViewSchema = z.object({
 });
 export const McpServerListSchema = z.object({
   enabled: z.boolean(),
+  // False while .crucible/mcp.json isn't trusted: nothing connects and servers read
+  // state "untrusted". Older backends omit it.
+  trusted: z.boolean().default(true),
   servers: z.array(McpServerViewSchema),
 });
 export type McpToolView = z.infer<typeof McpToolViewSchema>;
@@ -1143,6 +1171,9 @@ export interface BackendTaskClient {
   getSupersedeChain(memoryId: string): Promise<MemoryView[]>;
   listSkills(workspace: string): Promise<SkillSummary[]>;
   getSandbox(): Promise<SandboxConfig>;
+  getProjectTrust(): Promise<ProjectTrust>;
+  trustProjectFile(kind: TrustKind, sha256: string): Promise<void>;
+  reportProjectFileSaved(kind: TrustKind, beforeSha256: string | null): Promise<boolean>;
   setSandboxHosts(hosts: string[]): Promise<SandboxConfig>;
   setSandboxFolders(folders: string[]): Promise<SandboxConfig>;
   listAgentDefinitions(): Promise<AgentCatalog>;

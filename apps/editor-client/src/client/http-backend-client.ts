@@ -26,6 +26,9 @@ import {
   ThreadLiveStateSchema,
   approvalFromWire,
   SandboxConfigSchema,
+  ProjectTrustSchema,
+  type ProjectTrust,
+  type TrustKind,
   type SandboxConfig,
   type ApprovalModeResult, type SetApprovalModeOptions,
   parseContextUsage,
@@ -1184,6 +1187,7 @@ export class HttpBackendClient implements BackendTaskClient {
       mcpEnabled: raw["mcp_enabled"] ?? false,
       subagentsEnabled: raw["subagents_enabled"] ?? false,
       teamsEnabled: raw["teams_enabled"] ?? false,
+      injectionDefense: raw["injection_defense"] ?? false,
       provider: HttpBackendClient.mapProvider(raw["provider"]),
     });
   }
@@ -1335,6 +1339,30 @@ export class HttpBackendClient implements BackendTaskClient {
     const v = raw as Record<string, unknown>;
     return SandboxConfigSchema.parse({ status: v["status"], defaultHosts: v["default_hosts"],
       hosts: v["hosts"], folders: v["folders"] });
+  }
+
+  async getProjectTrust(): Promise<ProjectTrust> {
+    const raw = await this.fetchJsonDetail("/v1/project-trust") as { files?: Record<string, unknown>[] };
+    return ProjectTrustSchema.parse({
+      files: (raw.files ?? []).map((f) => ({
+        kind: f["kind"], state: f["state"], sha256: f["sha256"] ?? null,
+        content: f["content"] ?? null, diffBase: f["diff_base"] ?? null,
+      })),
+    });
+  }
+
+  async trustProjectFile(kind: TrustKind, sha256: string): Promise<void> {
+    // 409 when the file changed since the user reviewed it; the error carries that detail.
+    await this.fetchJsonDetail("/v1/project-trust", {
+      method: "POST", body: JSON.stringify({ kind, sha256 }),
+    });
+  }
+
+  async reportProjectFileSaved(kind: TrustKind, beforeSha256: string | null): Promise<boolean> {
+    const raw = await this.fetchJsonDetail("/v1/project-trust/saved", {
+      method: "POST", body: JSON.stringify({ kind, before_sha256: beforeSha256 }),
+    }) as { trusted?: unknown };
+    return raw.trusted === true;
   }
 
   async getSandbox(): Promise<SandboxConfig> {
@@ -1633,10 +1661,12 @@ export class HttpBackendClient implements BackendTaskClient {
   private static mapMcpList(raw: unknown): McpServerList {
     const wire = raw as {
       enabled?: boolean;
+      trusted?: boolean;
       servers?: Record<string, unknown>[];
     };
     return McpServerListSchema.parse({
       enabled: wire.enabled ?? false,
+      trusted: wire.trusted ?? true,
       servers: (wire.servers ?? []).map((s) => ({
         name: s["name"],
         transport: s["transport"],
