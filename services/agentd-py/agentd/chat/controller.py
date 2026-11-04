@@ -195,6 +195,7 @@ from agentd.teams.validation import (
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 from agentd.trust.project_trust import project_trust_for
+from agentd.trust.tool_output import mention_block
 from agentd.workspace.promote import promote_files
 
 if TYPE_CHECKING:
@@ -388,14 +389,19 @@ class TurnDispatches:
 
 _WAKE_CAP_TEXT = "🔔 Agents keep finishing — I'll tell you about them at your next message."
 
+def referenced_files_block(mentioned_files: list[dict[str, str]] | None) -> str:
+    """The goal's "Referenced files" section, each file framed as data (Phase 1)."""
+    blocks = "\n\n".join(
+        mention_block(f["path"], f.get("content", ""))
+        for f in mentioned_files or [] if f.get("path"))
+    return f"\n\n---\nReferenced files:\n{blocks}" if blocks else ""
+
+
 def _with_mentioned_files(message: str, mentioned_files: list[dict[str, str]] | None) -> str:
     """@-mentions are turn-scoped: the model sees the referenced file content only for the
     turn the message starts (it feeds that turn's goal). The persisted message keeps the
     short original text, tagged with the paths only."""
-    blocks = "\n\n".join(
-        f"### {f['path']}\n```\n{f['content']}\n```"
-        for f in mentioned_files or [] if f.get("path"))
-    return f"{message}\n\n---\nReferenced files:\n{blocks}" if blocks else message
+    return message + referenced_files_block(mentioned_files)
 
 
 # How often a turn may be held open for agent reports that are still arriving (spec §5.2).

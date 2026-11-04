@@ -17,6 +17,7 @@ from agentd.memory.models import DurableMemory, History
 from agentd.memory.recall_context import clean_closing
 from agentd.memory.reranker import Reranker
 from agentd.memory.scope import ScopeContext
+from agentd.subagents.framing import TOOL_KIND, unwrap_frames
 
 # Owner-approved catalog delivery: the working model decides relevance.
 MAX_CATALOG = 15
@@ -203,6 +204,7 @@ def working_items(history: History, workspace: str = "") -> set[str]:
             except ValueError:
                 pass
         elif message.get("role") in {"tool_result", "tool"}:
+            content = unwrap_frames(content, {TOOL_KIND})
             for path in re.findall(
                 r"(?<![\w])(?:[\w.@-]+/)*[A-Za-z_][\w.-]*\.(?:py|ts|tsx|js|rs|go|java|md)"
                 r"(?::[A-Za-z_]\w*)?",

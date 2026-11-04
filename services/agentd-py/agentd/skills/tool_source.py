@@ -9,6 +9,8 @@ from agentd.tools.registry import ToolDefinition, ToolOutput
 
 _READ_SKILL_DEF = ToolDefinition(
     name="read_skill",
+    # Only trusted skills load (the trust gate), and a skill is meant to be followed.
+    output_trust="trusted",
     description=(
         "Load a skill's full SKILL.md instructions into context. Call with the skill "
         "name from the AVAILABLE SKILLS catalog when that skill is relevant to the task."

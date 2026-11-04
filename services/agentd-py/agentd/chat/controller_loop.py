@@ -47,6 +47,8 @@ from agentd.skills.config import skills_body_max_chars
 from agentd.subagents.framing import frame
 from agentd.subagents.write_log import canonical_path
 from agentd.teams.tools import MAIN_TOOL_NAMES, MEMBER_TOOL_NAMES
+from agentd.trust.config import is_injection_defense_enabled
+from agentd.trust.tool_output import frame_tool_output, retrieval_refresh_content
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -1018,6 +1020,9 @@ class ControllerLoop:
         from agentd.tools.registry import ToolOutput
 
         batch_id = "b" + uuid4().hex
+        defense_on = is_injection_defense_enabled()
+        output_trust = ({d.name: d.output_trust for d in self._registry.definitions()}
+                        if defense_on else {})
         persisted = {**resp, "batch_id": batch_id}
         history.append(self._assistant_turn(persisted))
         indices = {}
@@ -1059,7 +1064,14 @@ class ControllerLoop:
                     plan_context["tool_calls_executed"] = self._executed_tool_calls
                 if outcome.output is not None:
                     out = outcome.output
-                    slots[outcome.call.id].update(content=out.output, is_error=out.is_error,
+                    content, hidden = out.output, False
+                    # Unknown tools default to untrusted: a forgotten one fails safe.
+                    trust = output_trust.get(outcome.call.tool, "untrusted")
+                    if defense_on and trust == "untrusted":
+                        framed = frame_tool_output(
+                            outcome.call.tool, outcome.call.args, out.output)
+                        content, hidden = framed.content, framed.hidden_chars
+                    slots[outcome.call.id].update(content=content, is_error=out.is_error,
                                                   status=outcome.state)
                     if getattr(out, "image_refs", None):
                         slots[outcome.call.id]["image_refs"] = out.image_refs
@@ -1069,7 +1081,7 @@ class ControllerLoop:
                     result = ToolResult(call_id=identity, tool_name=outcome.call.tool,
                         output=out.output, is_error=out.is_error, status=outcome.state,
                         approval_note=getattr(out, "approval_note", None),
-                        sandbox=sandbox_marker(out))
+                        sandbox=sandbox_marker(out), hidden_chars=hidden)
                     previous = next(
                         (i for i, r in enumerate(self._results) if r.call_id == identity), None
                     )
@@ -1081,7 +1093,8 @@ class ControllerLoop:
                         "payload": {"call_index": indices[outcome.call.id], "output": out.output,
                                     "is_error": out.is_error, "status": outcome.state,
                                     "approval_note": result.approval_note,
-                                    "sandbox": result.sandbox}})
+                                    "sandbox": result.sandbox,
+                                    "hidden_chars": result.hidden_chars}})
                     if not out.is_error:
                         self._note_delegation(outcome.call.tool, outcome.call.args, out.output)
                         if plan_context.get("notice_turn"):
@@ -1157,7 +1170,8 @@ class ControllerLoop:
             delta = await retrieval_delta_cb(list(dict.fromkeys(changes)))
             if delta:
                 history.append(
-                    {"role": "tool_result", "tool": "retrieval_refresh", "content": delta}
+                    {"role": "tool_result", "tool": "retrieval_refresh",
+                     "content": retrieval_refresh_content(delta)}
                 )
 
     def force_final(self) -> None:
@@ -2449,7 +2463,7 @@ class ControllerLoop:
                         if delta:
                             history.append({
                                 "role": "tool_result", "tool": "retrieval_refresh",
-                                "content": delta})
+                                "content": retrieval_refresh_content(delta)})
                 else:
                     history.append({
                         "role": "tool_result", "tool": "edit",

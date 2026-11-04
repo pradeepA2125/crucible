@@ -38,6 +38,9 @@ _TOOLS_DESCRIPTION = (
 
 LOAD_CAPABILITIES = ToolDefinition(
     name=LOADER_TOOL,
+    # The bundle is parsed back out of history (capabilities/history.py); its schemas
+    # come from servers in a trusted mcp.json.
+    output_trust="trusted",
     description=_NAMESPACE_DESCRIPTION,
     parameters={
         "type": "object",

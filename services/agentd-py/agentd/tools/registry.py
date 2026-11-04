@@ -6,9 +6,9 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agentd.local_models import semantic_ready
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
@@ -23,6 +23,12 @@ class ToolDefinition(BaseModel):
     name: str
     description: str
     parameters: dict[str, object]  # JSON Schema for the args object
+    # How the loop hands this tool's output to the model (prompt-injection Phase 1):
+    # "untrusted" is framed as data, "trusted" is Crucible's own text, "self_framed"
+    # frames its own parts. Defaults to untrusted so a forgotten tool fails safe.
+    # Excluded from model_dump, so the prompt's tool schemas don't change.
+    output_trust: Literal["untrusted", "trusted", "self_framed"] = Field(
+        default="untrusted", exclude=True)
 
 
 @dataclass

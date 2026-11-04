@@ -21,6 +21,7 @@ WAIT_TOOL_NAME = "wait_agents"
 MESSAGE_TOOL_NAME = "message_agent"
 STOP_TOOL_NAME = "stop_agent"
 _TOOLS = (DISPATCH_TOOL_NAME, WAIT_TOOL_NAME, MESSAGE_TOOL_NAME, STOP_TOOL_NAME)
+OUTPUT_TRUST = dict.fromkeys(_TOOLS, "self_framed")
 _ON_FINISH = ("notify", "wake")
 _REFUSALS = (DispatchCapExceeded, AgentNotFoundError, AgentNotYoursError, AgentBusyError)
 
@@ -96,6 +97,11 @@ class SubAgentToolSource:
         self._ops = ops
 
     def definitions(self) -> list[ToolDefinition]:
+        # Reports are framed by format_dispatch_result; the rest is Crucible's own text.
+        return [d.model_copy(update={"output_trust": OUTPUT_TRUST[d.name]})
+                for d in self._definitions()]
+
+    def _definitions(self) -> list[ToolDefinition]:
         def line(d: AgentDefinition) -> str:
             if d.trust == "capped":
                 return f"- {d.name}:\n" + frame(f"definition {d.source} (untrusted)",

@@ -16,6 +16,7 @@ from agentd.history_metadata import project_history
 from agentd.performance import profile_sync
 from agentd.prompting.tagged import RenderContext, render_prompt, tagged
 from agentd.subagents.framing import FRAMING_SENTENCE
+from agentd.trust.config import is_injection_defense_enabled
 
 # The patch ops the controller edit action exposes — a subset of the engine's
 # PatchOperationV2 union (domain/models.py) chosen for chat edits: full-file
@@ -1315,11 +1316,16 @@ def format_controller_system_prompt(
            for d in tool_definitions if isinstance(d, dict)):
         base += render_prompt(_SESSIONS_BLOCK, ctx)
     record("sessions_guidance")
+    # Every untrusted tool result is framed (prompt-injection Phase 1), so the main agent
+    # needs the sentence whether or not it can dispatch; children already carry it.
+    defense_on = is_injection_defense_enabled()
+    if ctx.is_main and defense_on:
+        base += ("" if base.endswith("\n") else "\n") + FRAMING_SENTENCE + "\n"
     # dispatch teaching block: keyed off the merged tool definitions, like the two above.
     if any(str((d or {}).get("name", "")) == "dispatch_agents"
            for d in tool_definitions if isinstance(d, dict)):
         base += render_prompt(_DISPATCH_BLOCK, ctx)
-        if ctx.is_main:
+        if ctx.is_main and not defense_on:
             base += FRAMING_SENTENCE + "\n"
     record("dispatch_guidance")
     if ctx.is_main and any(str((d or {}).get("name", "")) == "create_team"

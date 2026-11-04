@@ -101,6 +101,8 @@ class ToolResult(BaseModel):
     approval_note: str | None = None
     # The sandbox stopped this call, or it ran outside the sandbox (shown on the tool pill).
     sandbox: Literal["blocked", "outside"] | None = None
+    # The output held invisible characters (removed or flagged; shown on the tool pill).
+    hidden_chars: bool = False
 
 
 class AgentToolTrace(BaseModel):

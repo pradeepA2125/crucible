@@ -48,5 +48,7 @@ def trace_to_tool_events(
                 event["approvalNote"] = result.approval_note
             if result.sandbox:
                 event["sandbox"] = result.sandbox
+            if result.hidden_chars:
+                event["hiddenChars"] = True
         events.append(event)
     return events

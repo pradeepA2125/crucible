@@ -2,13 +2,20 @@
 import json
 from pathlib import Path
 
-from tests.prompt_goldens import default_capture
+import pytest
 
 from agentd.chat.controller_prompts import format_controller_system_prompt
 from agentd.prompting.tagged import RenderContext
 from agentd.subagents.context import AgentContext
 from agentd.subagents.definitions import BUILTIN_AGENTS
 from agentd.teams.tools import MainTeamOps, MainTeamToolSource
+from tests.prompt_goldens import default_capture
+
+
+@pytest.fixture(autouse=True)
+def _injection_defense_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The goldens pin the shipped prompt, and the prompt-injection defense ships on.
+    monkeypatch.setenv("CRUCIBLE_INJECTION_DEFENSE", "1")
 
 GOLDEN = Path(__file__).parent / "goldens" / "controller_prompt_teams.json"
 BRIEF = ("Team 'auth'. Goal: Add login\nRoster:\n- alice (you): general-purpose — edits\n"

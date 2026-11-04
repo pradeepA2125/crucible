@@ -50,6 +50,7 @@ _WRITE_TODOS_PARAMETERS: dict[str, object] = {
 def _write_todos_def(ctx: RenderContext) -> ToolDefinition:
     return ToolDefinition(
         name="write_todos",
+        output_trust="trusted",  # Crucible's own ledger text
         description=render_prompt(_WRITE_TODOS_DESCRIPTION, ctx),
         parameters=_WRITE_TODOS_PARAMETERS,
     )

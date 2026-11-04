@@ -31,6 +31,7 @@ from agentd.memory.scope import ScopeContext, ScopeKind
 from agentd.memory.store import MemoryStore
 from agentd.providers.plan_access import find_access_stop
 from agentd.providers.usage import METER, USAGE_OWNER
+from agentd.subagents.framing import TOOL_KIND, unwrap_frames
 
 logger = logging.getLogger(__name__)
 MAX_INPUT_TOKENS = 24_000
@@ -133,7 +134,8 @@ def _provenance(source: Mapping[str, object], content: str) -> str:
         return "user_said"
     # An inferred lesson from an error/output is not itself tool-verified. Reserve
     # that provenance for a direct observation, rather than a causal paraphrase.
-    if source.get("role") in {"tool", "tool_result"} and content in str(source.get("content", "")):
+    raw = unwrap_frames(str(source.get("content", "")), {TOOL_KIND})
+    if source.get("role") in {"tool", "tool_result"} and content in raw:
         return "tool_verified"
     return "agent_inferred"
 

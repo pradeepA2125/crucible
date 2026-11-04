@@ -13,6 +13,9 @@ from agentd.teams.service import ActivationCounters, TeamService
 from agentd.teams.validation import TeamInputError, check_label, check_text, effective_mentions
 from agentd.tools.registry import ToolDefinition, ToolOutput
 
+# Team tools frame other agents' text themselves (prompt-injection Phase 1).
+OUTPUT_TRUST = "self_framed"
+
 MEMBER_TOOL_NAMES = frozenset({
     "team_post", "team_message", "team_propose", "team_agree", "team_object", "team_withdraw",
     "team_read", "team_reply_main"})
@@ -53,6 +56,11 @@ class TeamToolSource:
         self._unsolicited_reply_sent = False
 
     def definitions(self) -> list[ToolDefinition]:
+        # Board posts and members' words are framed where the team service writes them.
+        return [d.model_copy(update={"output_trust": OUTPUT_TRUST})
+                for d in self._definitions()]
+
+    def _definitions(self) -> list[ToolDefinition]:
         def tool(name: str, description: str, props: dict[str, object],
                  required: list[str]) -> ToolDefinition:
             return ToolDefinition(name=name, description=description, parameters={
@@ -283,6 +291,11 @@ class MainTeamToolSource:
         self._created = first_turn_team_ids
 
     def definitions(self) -> list[ToolDefinition]:
+        # Board posts and members' words are framed where the team service writes them.
+        return [d.model_copy(update={"output_trust": OUTPUT_TRUST})
+                for d in self._definitions()]
+
+    def _definitions(self) -> list[ToolDefinition]:
         member = {"type": _OBJ, "properties": {"label": _STR, "agent": {
             "type": "string", "enum": list(self._catalog)}}, "required": ["label", "agent"]}
         kickoff = {"type": _OBJ, "properties": {

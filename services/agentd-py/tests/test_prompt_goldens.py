@@ -1,7 +1,15 @@
 """Main-agent byte identity (spec §4.7.4). Only Plan 1A Task 11 may re-capture."""
 import json
 
+import pytest
+
 from tests.prompt_goldens import GOLDEN_PATH, collect
+
+
+@pytest.fixture(autouse=True)
+def _injection_defense_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The goldens pin the shipped prompt, and the prompt-injection defense ships on.
+    monkeypatch.setenv("CRUCIBLE_INJECTION_DEFENSE", "1")
 
 
 # Explicit image-branch addition to the legacy fixture, not derived from the registry.
