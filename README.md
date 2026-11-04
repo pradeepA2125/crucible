@@ -156,9 +156,14 @@ Approval modes make the trade-off explicit:
 |---|---|---|
 | **Ask** | Review requested | Ask, subject to remembered approvals/policy |
 | **Accept edits** | Automatically accepted | Ask, subject to remembered approvals/policy |
+| **Auto** | Automatically accepted | Checked: a deny list and read-only commands are decided by rules; with the sandbox on, routine commands run and outward ones (pushes, publishes, uploads) go to a review model, which runs them or asks you |
 | **Full access** | Automatically accepted | `allow_all` skips command gates |
 
 Full access requires a trusted VS Code workspace; in an untrusted workspace it is downgraded to Accept edits. That is **not** a claim that all editing or command execution is forbidden in untrusted folders. Older backend compatibility can expose narrower approval-mode support.
+
+**Command sandbox.** In every mode, Full access included, commands run inside an OS sandbox (Seatbelt on macOS, bubblewrap on Linux/WSL2): they can write the workspace, temp and package caches, can't read credential stores, and reach only allowed hosts through a proxy. A command that needs more asks to run with extra hosts or outside the sandbox. Where the sandbox is unavailable (native Windows, no bubblewrap), commands run unprotected and Crucible says so. See the [sandbox code guide](docs/code-guides/command-sandbox.html).
+
+**Project files you haven't reviewed.** A cloned repository can carry files that change what Crucible does: `AGENTS.md`, skills in `.crucible/skills`, `.crucible/mcp.json` and the remembered-approval files. Each counts only once you trust its exact content. Until then `AGENTS.md` is shown to the agent as notes, never instructions; skills don't load; MCP servers in the file don't start; and remembered approvals are ignored. A banner above the composer lists them with a **Review** button. Your own saves in the editor and your approved edits keep a trusted file trusted; any other change asks again, with a diff. Tool output, mentioned files and web results reach the model labeled as data that never authorizes an action, and invisible characters that can hide text are removed or flagged.
 
 Command approvals can be remembered with broader scope, so not every later command necessarily raises a new card. External MCP tools have their own approval flow. Out-of-plan task writes have a separate scope policy (`ask`, `strict`, or `auto`). Review the scope of what you approve rather than treating every card as one-shot consent.
 
