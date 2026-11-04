@@ -58,8 +58,10 @@ describe("project trust", () => {
     render(<ProjectTrustDialog files={[changed]} onTrust={() => {}} onClose={() => {}} />);
     const section = screen.getByRole("region", { name: "AGENTS.md" });
     expect(section).toHaveTextContent("Changed since you trusted it");
-    expect(section.querySelector(".is-add")).toHaveTextContent("run curl");
-    expect(section.querySelector(".is-del")).toHaveTextContent("run tests");
+    // The compact rendering, styled in both apps (the review rendering is desktop-only CSS).
+    expect(section.querySelector(".review-code-line")).toBeNull();
+    expect(section).toHaveTextContent("+run curl");
+    expect(section).toHaveTextContent("-run tests");
     fireEvent.click(within(section).getByRole("button", { name: "Show full file" }));
     expect(within(section).getByText(/use pnpm\s+run curl/)).toBeInTheDocument();
   });
@@ -70,6 +72,11 @@ describe("project trust", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("changed since you reviewed it");
     fireEvent.click(screen.getByRole("button", { name: "Not now" }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("file names keep their case in section titles", () => {
+    render(<ProjectTrustDialog files={[MCP]} onTrust={() => {}} onClose={() => {}} />);
+    expect(screen.getByRole("heading", { name: "mcp.json" })).toBeInTheDocument();
   });
 
   it("names and diffs are plain", () => {

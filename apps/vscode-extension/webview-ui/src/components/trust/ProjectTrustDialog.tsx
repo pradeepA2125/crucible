@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { BtnGhost, BtnPrimary } from "../shared/buttons";
-import { ReviewDiffLines } from "../shared/ReviewDiffLines";
+import { CompactDiffLines } from "../shared/DiffPanes";
 import { useModalFocus } from "../shared/useModalFocus";
 import { lineDiff, TRUST_EFFECT, TRUST_LABEL, TRUST_PATH } from "./projectTrust";
 import type { TrustFile, TrustKind } from "./projectTrust";
@@ -41,7 +41,7 @@ export function ProjectTrustDialog({ files, error, onTrust, onClose }: {
 
 function TrustSection({ file, onTrust }: { file: TrustFile; onTrust(kind: TrustKind, sha256: string): void }) {
   const label = TRUST_LABEL[file.kind];
-  const name = label.charAt(0).toUpperCase() + label.slice(1);
+  const name = /^[a-z]+ /.test(label) ? label.charAt(0).toUpperCase() + label.slice(1) : label;
   const headingId = `trust-${file.kind}`;
   const [full, setFull] = useState(false);
   const diff = useMemo(
@@ -61,8 +61,8 @@ function TrustSection({ file, onTrust }: { file: TrustFile; onTrust(kind: TrustK
       ) : diff && !full ? (
         <div className="grid min-w-0 gap-1">
           <p className="text-meta text-text-2">Changed since you trusted it:</p>
-          <div className="max-h-64 min-w-0 overflow-auto rounded-control border border-border bg-surface-1 font-mono text-caption">
-            <ReviewDiffLines lines={diff} path={TRUST_PATH[file.kind]} wrap />
+          <div className="max-h-64 min-w-0 overflow-auto rounded-control border border-border bg-surface-1 py-1">
+            <CompactDiffLines lines={diff} />
           </div>
           <button type="button" onClick={() => setFull(true)}
             className="justify-self-start rounded-control px-1 text-meta text-[var(--accent)] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--focus-ring)]">

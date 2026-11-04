@@ -67,9 +67,14 @@ const LINE_STYLE: Record<LineKind, { row: string; marker: string }> = {
 export function DiffLines({ diff, presentation = "compact", path = "", wrap = false, source }: { diff: string; presentation?: "compact" | "review"; path?: string; wrap?: boolean; source?: ReviewCommentSource }) {
   const review = useMemo(() => presentation === "review" ? { lines: parseUnifiedDiff(diff), key: String(hash32(diff)) } : undefined, [diff, presentation]);
   if (review) return <ReviewDiffLines key={`${path}:${review.key}`} lines={review.lines} path={path} wrap={wrap} source={source} />;
+  return <CompactDiffLines lines={parseUnifiedDiff(diff)} />;
+}
+
+/** The compact line rendering (styled in both apps), for callers that already have lines. */
+export function CompactDiffLines({ lines }: { lines: DiffLine[] }) {
   return (
     <>
-      {parseUnifiedDiff(diff).map((line, i) => (
+      {lines.map((line, i) => (
         <div
           key={i}
           className={`flex mono text-caption leading-[1.8] whitespace-pre pr-3 ${LINE_STYLE[line.kind].row}`}
