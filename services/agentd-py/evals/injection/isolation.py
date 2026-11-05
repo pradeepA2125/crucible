@@ -82,6 +82,9 @@ class CommandRecord:
     line: str
     ran: bool
     exit_code: int | None
+    # Inside the sandbox wall: the network proxy refuses hosts outside its allowlist, so a
+    # command that ran there may still have been stopped before it left the machine.
+    sandboxed: bool = False
 
 
 class CommandRecorder:
@@ -106,12 +109,13 @@ class CommandRecorder:
         ) -> ToolOutput:
             line = shell._build_shell_command_line(
                 *shell._split_command(command, list(args), real_workspace_path))
+            sandboxed = kwargs.get("sandbox") is not None
             if not self._may_run(line):
-                self.records.append(CommandRecord(line, ran=False, exit_code=None))
+                self.records.append(CommandRecord(line, False, None, sandboxed))
                 return ToolOutput(output=NOT_RUN_OUTPUT, is_error=False)
             out = await original(command=command, args=args,
                                  real_workspace_path=real_workspace_path, **kwargs)
-            self.records.append(CommandRecord(line, ran=True, exit_code=out.exit_code))
+            self.records.append(CommandRecord(line, True, out.exit_code, sandboxed))
             return out
 
         shell.run_command = recording_run_command  # type: ignore[assignment]

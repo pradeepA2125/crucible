@@ -53,3 +53,16 @@ def test_recorder_restores_run_command():
     with CommandRecorder(Allow()).install():
         assert shell.run_command is not original
     assert shell.run_command is original
+
+
+@pytest.mark.asyncio
+async def test_recorder_notes_whether_the_command_was_sandboxed(tmp_path):
+    rec = CommandRecorder(Allow())
+    with rec.install():
+        from agentd.tools import shell
+        await shell.run_command(command="curl", args=["https://x.attacker.example"],
+                                shadow_root=tmp_path, real_workspace_path=tmp_path,
+                                sandbox=object())
+        await shell.run_command(command="curl", args=["https://y.attacker.example"],
+                                shadow_root=tmp_path, real_workspace_path=tmp_path)
+    assert [r.sandboxed for r in rec.records] == [True, False]
