@@ -161,3 +161,24 @@ it("prepares a notice-turn queued message while keeping ordinary activity and un
   session.reject("notice"); session.renderAdmission({ threadId: "a", state: "unknown", checking: false });
   expect(handle("begin", { threadId: "a", revision: 2, draft: draft("unsafe"), draftId: "unknown" }).error).toBeTruthy();
 });
+
+it("re-enables sending when a chat turn ends, as the composer does", () => {
+  // Live smoke: a send left stale by switching conversations mid-turn never posted its
+  // setInputEnabled(true); the composer re-enabled itself on the turn's end, this session
+  // didn't, and every later send was refused until the app restarted.
+  const { session, handle, select } = setup(); select("a"); handle("read", { threadId: "a" });
+  session.observe({ type: "historyState", history: { threadId: "a", phase: "current" } });
+  session.observe({ type: "setInputEnabled", enabled: false });
+  session.observe({ type: "liveStatus", status: null, turnActive: true, turnKind: "user" });
+  expect(handle("begin", { threadId: "a", revision: 1, draft: draft("busy"), draftId: "busy" }).error).toBeTruthy();
+  session.observe({ type: "liveStatus", status: null, turnActive: false, turnKind: null });
+  expect(handle("begin", { threadId: "a", revision: 1, draft: draft("next"), draftId: "next" }).error).toBeUndefined();
+});
+
+it("keeps sending disabled while a task runs without a chat turn", () => {
+  const { session, handle, select } = setup(); select("a"); handle("read", { threadId: "a" });
+  session.observe({ type: "historyState", history: { threadId: "a", phase: "current" } });
+  session.observe({ type: "setInputEnabled", enabled: false });
+  session.observe({ type: "liveStatus", status: "EXECUTING", turnActive: false, turnKind: null });
+  expect(handle("begin", { threadId: "a", revision: 1, draft: draft("busy"), draftId: "busy" }).error).toBeTruthy();
+});

@@ -37,7 +37,13 @@ export class DraftSession {
     if (message.type === "clearThread" && typeof message.threadId === "string") { this.selected = message.threadId || "new"; this.turnKind = null; this.turnActive = false; }
     if (message.type === "renderThreadList" && typeof message.activeThreadId === "string") this.selected = message.activeThreadId || "new";
     if (message.type === "setInputEnabled") this.inputEnabled = message.enabled === true;
-    if (message.type === "liveStatus") { this.turnActive = message.turnActive === true; this.turnKind = message.turnKind; }
+    if (message.type === "liveStatus") {
+      this.turnActive = message.turnActive === true; this.turnKind = message.turnKind;
+      // The composer re-enables itself when a chat turn ends (useAppState's liveStatus
+      // reconciliation); a send left stale by navigation never posts setInputEnabled(true),
+      // so without the same rule here every later send is refused until a restart.
+      if (!this.turnActive && message.status == null && !this.controllerAdmission) this.inputEnabled = true;
+    }
     if (message.type === "historyState") {
       const history = message.history as { threadId?: string; phase?: string; navigationSafe?: boolean } | undefined;
       if (history?.threadId === this.selected) { this.historyBlocked = history.phase !== "current"; this.safeNavigation = history.navigationSafe === true; }
