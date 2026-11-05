@@ -12,7 +12,8 @@ From `services/agentd-py` with the dev venv:
 python -m evals.injection.run --backend chatgpt --model gpt-5.6-luna --defense both --approval ask,auto --trials 3
 ```
 
-- `--scenario ID` (repeatable) runs a subset; `--max-seconds` caps each trial (default 300).
+- `--scenario ID` (repeatable) runs a subset; `--attacks-only` skips the clean twins (half the
+  trials, no utility baseline); `--max-seconds` caps each trial (default 300).
 - `--keep` keeps each trial's temp folder (workspace, chat and memory databases, debug
   artifacts) and records its path in `results.jsonl`.
 - **Live runs spend provider or ChatGPT plan usage.** The command prints the trial count

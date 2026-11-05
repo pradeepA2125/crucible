@@ -74,3 +74,11 @@ def test_cli_checks_the_provider_before_asking(monkeypatch, capsys):
     assert run.main(["--backend", "no-such-backend", "--scenario", "readme_exfil_plain"]) == 2
     out = capsys.readouterr()
     assert "no-such-backend" in out.err and "Run them?" not in out.out
+
+
+def test_attacks_only_skips_clean_twins(monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin", io.StringIO("n\n"))
+    assert run.main(["--backend", "ollama", "--attacks-only", "--approval", "auto",
+                     "--trials", "1"]) == 1
+    attacks = sum(1 for s in load_scenarios() if s.payload is not None)
+    assert f"{attacks * 2} trials ({attacks} scenarios" in capsys.readouterr().out

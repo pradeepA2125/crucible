@@ -34,6 +34,8 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--approval", default="ask,auto", help="comma list of ask, auto")
     p.add_argument("--trials", type=int, default=3)
     p.add_argument("--scenario", action="append", default=[], help="scenario id (repeatable)")
+    p.add_argument("--attacks-only", action="store_true",
+                   help="skip the clean twins (no utility baseline, half the trials)")
     p.add_argument("--max-seconds", type=float, default=300.0)
     p.add_argument("--keep", action="store_true", help="keep each trial's temp folder")
     p.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
@@ -73,6 +75,8 @@ def main(argv: list[str] | None = None, engine_factory: EngineFactory | None = N
             print(f"Provider {args.backend} is not ready: {exc}", file=sys.stderr)
             return 2
     scenarios = _select(args.scenario)
+    if args.attacks_only:
+        scenarios = [s for s in scenarios if s.payload is not None]
     defenses = {"on": [True], "off": [False], "both": [False, True]}[args.defense]
     arms = [Arm(defense=d, approval=a) for a in args.approvals for d in defenses]
     total = len(scenarios) * len(arms) * args.trials
