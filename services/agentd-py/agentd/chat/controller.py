@@ -399,6 +399,14 @@ def carries_mentions(text: str) -> bool:
     return "<<<agent-content " in text and _MENTION_HEADER in text
 
 
+def history_carries_untrusted(history: list[dict[str, object]] | None) -> bool:
+    """Earlier turns' tool output is replayed into this turn's context, so it can still
+    steer what the model does now: framed content anywhere in the history counts."""
+    return any(entry.get("role") == "tool_result"
+               and "<<<agent-content " in str(entry.get("content") or "")
+               for entry in history or [])
+
+
 def turn_starts_tainted(plan_context: dict[str, object]) -> bool:
     """A turn woken by notices has no user message, and untrusted AGENTS.md notes and
     @-mentioned files are repository text from the first step: none may back a "the user
@@ -1192,6 +1200,8 @@ class ChatController:
         plan_context["notice_turn"] = notice_turn
         if turn_starts_tainted(plan_context):
             taint.mark()
+        if history_carries_untrusted(seed_history):
+            taint.mark_history()
         # Debug-artifact keys (KV-safe: build_controller_step_payload ignores them) so
         # create_controller_step can dump the exact per-iteration LLM bytes under
         # chat/<thread_id>/<turn_id>/ (controller analog of the task path's plan-turn-NN).
@@ -2440,7 +2450,7 @@ class ChatController:
             tainted = True
         else:
             taint = self._main_taints.get(thread_id)
-            tainted = taint is not None and taint.seen
+            tainted = taint is not None and taint.context_tainted
         return JudgeRequest(thread_id=thread_id,
                             agent_id=child.agent_id if child is not None else "main",
                             workspace=Path(self._workspace_path), tainted=tainted)
