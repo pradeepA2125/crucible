@@ -16,9 +16,14 @@ PACKAGE_DIR = Path(__file__).resolve().parent
 SCENARIO_DIR = PACKAGE_DIR / "scenarios"
 WORKSPACES_DIR = PACKAGE_DIR / "fixtures" / "workspaces"
 PLACEHOLDER = "@@PAYLOAD@@"
+# The fixture's content template; materialize moves it out of the workspace.
 MCP_CONTENT_FILE = ".crucible/eval-mcp-content.json"
-MCP_SINK_FILE = ".crucible/eval-sink.jsonl"
 MCP_SERVER_PATH = PACKAGE_DIR / "fixtures" / "mcp_server.py"
+# Inside a trial's data folder, next to the workspace, never in it: nothing the agent can
+# list or read says it is being tested.
+DATA_CONTENT = "content.json"
+DATA_SINK = "sink.jsonl"
+DATA_SERVER = "server.py"
 
 _REQUIRED = (
     "id", "channel", "goal", "technique", "user_message", "workspace", "payload",
@@ -137,38 +142,51 @@ def render_payload(scenario: Scenario, marker: str) -> str:
     return _INVISIBLE_COVER + hidden
 
 
-def mcp_config(python: str, workspace: Path) -> dict[str, Any]:
-    """The `.crucible/mcp.json` body that connects the fixture server for `workspace`."""
+def mcp_config(python: str, data_dir: Path) -> dict[str, Any]:
+    """The `.crucible/mcp.json` body that connects the fixture server copied into
+    `data_dir`."""
     return {"mcpServers": {"tracker": {
-        "command": python, "args": [str(MCP_SERVER_PATH), str(workspace)], "enabled": True,
+        "command": python, "args": [str(data_dir / DATA_SERVER), str(data_dir)],
+        "enabled": True,
     }}}
 
 
-def read_sink(workspace: Path) -> list[dict[str, Any]]:
-    path = workspace / MCP_SINK_FILE
+def read_sink(data_dir: Path) -> list[dict[str, Any]]:
+    path = data_dir / DATA_SINK
     if not path.exists():
         return []
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
-def materialize(scenario: Scenario, marker: str, dest: Path) -> None:
-    """Copy the scenario's workspace to `dest` with this trial's payload in its target.
+def materialize(scenario: Scenario, marker: str, dest: Path,
+                data_dir: Path | None = None) -> None:
+    """Copy the scenario's workspace to `dest` with this trial's payload in its target, and
+    put the fixture MCP server's files in `data_dir` (default: `tracker` beside `dest`).
 
     Fixture workspaces are shared between scenarios, so every placeholder other than the
     target's is removed."""
+    data_dir = data_dir or dest.parent / "tracker"
     shutil.copytree(scenario.workspace, dest)
+    template = dest / MCP_CONTENT_FILE
+    content_text = template.read_text(encoding="utf-8") if template.exists() else None
+    template.unlink(missing_ok=True)
     if scenario.uses_mcp:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(MCP_SERVER_PATH, data_dir / DATA_SERVER)
         config = dest / ".crucible" / "mcp.json"
         config.parent.mkdir(parents=True, exist_ok=True)
-        config.write_text(json.dumps(mcp_config(sys.executable, dest), indent=2), encoding="utf-8")
+        config.write_text(json.dumps(mcp_config(sys.executable, data_dir), indent=2),
+                          encoding="utf-8")
     payload = render_payload(scenario, marker)
     target = scenario.payload_target
+    created: Path | None = None
     if target.startswith("mcp:"):
-        _fill_mcp_content(dest, target, payload)
+        _fill_mcp_content(data_dir, content_text, target, payload)
         target_file = None
     else:
         target_file = dest / target.removeprefix("file:")
         if not target_file.exists():
+            created = target_file
             # A planted file the fixture doesn't ship (an AGENTS.md) is the payload alone.
             target_file.parent.mkdir(parents=True, exist_ok=True)
             target_file.write_text(f"{PLACEHOLDER}\n", encoding="utf-8")
@@ -183,6 +201,9 @@ def materialize(scenario: Scenario, marker: str, dest: Path) -> None:
             continue
         fill = payload if target_file is not None and path == target_file else ""
         path.write_text(_replace_placeholder(text, fill), encoding="utf-8")
+    if created is not None and not payload:
+        # A clean twin of a planted file has no such file at all.
+        created.unlink()
 
 
 def _replace_placeholder(text: str, fill: str) -> str:
@@ -193,11 +214,11 @@ def _replace_placeholder(text: str, fill: str) -> str:
     return "".join(lines).replace(PLACEHOLDER, "")
 
 
-def _fill_mcp_content(dest: Path, target: str, payload: str) -> None:
-    path = dest / MCP_CONTENT_FILE
+def _fill_mcp_content(data_dir: Path, template: str | None, target: str, payload: str) -> None:
+    path = data_dir / DATA_CONTENT
     content: dict[str, dict[str, str]] = {"issues": {}, "pages": {}}
-    if path.exists():
-        content.update(json.loads(path.read_text(encoding="utf-8")))
+    if template is not None:
+        content.update(json.loads(template))
     _, section, key = target.split(":", 2)
     bucket = content["issues" if section == "issue" else "pages"]
     for name in ("issues", "pages"):
@@ -211,7 +232,8 @@ def _fill_mcp_content(dest: Path, target: str, payload: str) -> None:
 
 
 __all__ = [
-    "MCP_CONTENT_FILE", "MCP_SERVER_PATH", "MCP_SINK_FILE", "PLACEHOLDER", "SCENARIO_DIR",
+    "DATA_CONTENT", "DATA_SERVER", "DATA_SINK", "MCP_CONTENT_FILE", "MCP_SERVER_PATH",
+    "PLACEHOLDER", "SCENARIO_DIR",
     "WORKSPACES_DIR", "ScenarioError", "load_scenarios", "materialize", "mcp_config",
     "new_marker", "read_sink", "render_payload",
 ]

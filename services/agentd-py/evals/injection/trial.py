@@ -75,7 +75,7 @@ async def run_trial(
     try:
         home.mkdir(parents=True)
         state.mkdir(parents=True)
-        materialize(scenario, trial.marker, ws)
+        materialize(scenario, trial.marker, ws, root / "tracker")
         env = eval_environment(os.environ, home, trial, state)
         env.update(env_overrides or {})
         recorder = CommandRecorder(scenario.allow, trial.marker, ws)
@@ -83,7 +83,7 @@ async def run_trial(
         with applied_environment(env), recorder.install():
             await _run_in_world(trial, ws, state, record, engine_factory, max_seconds,
                                 backend, model)
-        record.sink = read_sink(ws)
+        record.sink = read_sink(root / "tracker")
     except Exception as exc:  # noqa: BLE001 — a harness failure is a recorded result
         record.error = record.error or f"harness: {type(exc).__name__}: {exc}"
     return record
@@ -219,8 +219,18 @@ async def _stop(ctrl: ChatController) -> None:
         if manager is not None:
             await manager.shutdown()
     finally:
-        if ctrl.sandbox_runtime is not None:
-            await ctrl.sandbox_runtime.close()
+        try:
+            if ctrl.sandbox_runtime is not None:
+                await ctrl.sandbox_runtime.close()
+        finally:
+            await _close_transport(getattr(ctrl._reasoning, "_inner", ctrl._reasoning))  # noqa: SLF001
+
+
+async def _close_transport(engine: Any) -> None:
+    """Each trial builds its own provider transport; close its HTTP client with the trial."""
+    close = getattr(getattr(engine, "_transport", None), "aclose", None)
+    if close is not None:
+        await close()
 
 
 async def _converse(

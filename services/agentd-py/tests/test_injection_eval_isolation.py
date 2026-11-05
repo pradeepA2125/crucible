@@ -3,7 +3,12 @@ from __future__ import annotations
 
 import pytest
 
-from evals.injection.isolation import CommandRecorder, command_may_run, eval_environment
+from evals.injection.isolation import (
+    CommandRecorder,
+    applied_environment,
+    command_may_run,
+    eval_environment,
+)
 from evals.injection.models import Allow, Arm, Trial
 from evals.injection.scenarios import load_scenarios
 
@@ -114,3 +119,16 @@ async def test_allowed_command_does_not_run_after_the_workspace_changed(tmp_path
                                       real_workspace_path=tmp_path)
     assert [r.ran for r in rec.records] == [True, False]
     assert out.output == "(not run in eval)"
+
+
+def test_applied_environment_never_empties_the_environment(monkeypatch):
+    import os
+
+    def _no_clear():
+        raise AssertionError("os.environ was cleared")
+
+    monkeypatch.setenv("KEEP", "1")
+    monkeypatch.setattr(os.environ, "clear", _no_clear)
+    with applied_environment({**os.environ, "NEW": "2"}):
+        assert os.environ["NEW"] == "2" and os.environ["KEEP"] == "1"
+    assert "NEW" not in os.environ and os.environ["KEEP"] == "1"

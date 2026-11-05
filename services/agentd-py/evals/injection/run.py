@@ -103,7 +103,7 @@ async def _run_all(args: argparse.Namespace, scenarios: list[Scenario], arms: li
             for arm in arms:
                 for index in range(args.trials):
                     trial = Trial(scenario, arm, index, new_marker(scenario.id))
-                    root = Path(tempfile.mkdtemp(prefix="crucible-inj-"))
+                    root = Path(tempfile.mkdtemp(prefix="crucible-"))
                     record = await run_trial(
                         trial, root, engine_factory, args.max_seconds,
                         backend=args.backend, model=args.model, env_overrides=env)

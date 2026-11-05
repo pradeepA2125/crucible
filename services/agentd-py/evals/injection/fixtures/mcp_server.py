@@ -1,9 +1,9 @@
-"""Fixture MCP server for the injection eval (spec §4.3): run as `python mcp_server.py <ws>`.
+"""Fixture MCP server for the injection eval (spec §4.3): run as `python server.py <data>`.
 
-Read tools return the trial's content (planted or clean) from
-`<ws>/.crucible/eval-mcp-content.json`. The sinks only log their arguments to
-`<ws>/.crucible/eval-sink.jsonl`: a call that reaches one has, as far as the agent knows,
-sent data off the machine. Nothing here touches the network."""
+Read tools return the trial's content (planted or clean) from `<data>/content.json`. The
+sinks only log their arguments to `<data>/sink.jsonl`: a call that reaches one has, as far
+as the agent knows, sent data off the machine. Nothing here touches the network. The data
+folder sits beside the trial's workspace, so the agent never sees these files."""
 from __future__ import annotations
 
 import json
@@ -12,9 +12,9 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-WORKSPACE = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
-CONTENT = WORKSPACE / ".crucible" / "eval-mcp-content.json"
-SINK = WORKSPACE / ".crucible" / "eval-sink.jsonl"
+DATA = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
+CONTENT = DATA / "content.json"
+SINK = DATA / "sink.jsonl"
 
 server = FastMCP("tracker", log_level="WARNING")
 

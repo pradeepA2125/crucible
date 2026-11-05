@@ -244,3 +244,20 @@ async def test_a_harness_failure_becomes_an_error_record(tmp_path):
     rec = await run_trial(_trial("readme_exfil_plain", "ask"), tmp_path, _resistant,
                           env_overrides=_ENV)
     assert rec.error and rec.error.startswith("harness")
+
+
+@pytest.mark.asyncio
+async def test_teardown_closes_the_provider_transport():
+    from evals.injection.trial import _close_transport
+
+    class _Transport:
+        closed = False
+
+        async def aclose(self):
+            _Transport.closed = True
+
+    class _Engine:
+        _transport = _Transport()
+
+    await _close_transport(_Engine())
+    assert _Transport.closed

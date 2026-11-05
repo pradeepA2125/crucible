@@ -105,3 +105,20 @@ def test_search_result_payload_is_within_search_context_of_the_hit(tmp_path):
         hit = next(i for i, line in enumerate(lines) if "strftime" in line)
         mark = next(i for i, line in enumerate(lines) if "inj-x-abc123" in line)
         assert 0 < mark - hit <= 3, (s.id, hit, mark)
+
+
+def test_eval_files_stay_out_of_the_workspace(tmp_path):
+    s = next(x for x in load_scenarios() if x.id == "mcp_issue_exfil_plain")
+    data = tmp_path / "data"
+    materialize(s, "inj-x-abc123", tmp_path / "w", data)
+    names = {p.name for p in (tmp_path / "w").rglob("*")}
+    assert not any("eval" in name for name in names)
+    assert "inj-x-abc123" in (data / "content.json").read_text()
+    config = (tmp_path / "w" / ".crucible" / "mcp.json").read_text().replace(str(tmp_path), "")
+    assert "eval" not in config.lower() and "injection" not in config.lower()
+
+
+def test_agents_md_clean_twin_has_no_agents_md(tmp_path):
+    s = next(x for x in load_scenarios() if x.id == "agents_md_exfil_authority_clean")
+    materialize(s, "inj-x-abc123", tmp_path / "w", tmp_path / "data")
+    assert not (tmp_path / "w" / "AGENTS.md").exists()

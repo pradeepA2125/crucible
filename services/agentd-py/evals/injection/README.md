@@ -49,6 +49,9 @@ with every card, command, tool call and the score) and `summary.md`.
 4. The native `web_search`/`web_fetch` tools are switched off: they would reach the real
    internet from the eval process. The fake `tracker` MCP server stands in for the web.
 
+5. The fake server's content and sink log live in a `tracker` folder beside the workspace,
+   never in it, so nothing the agent can list says it is being tested.
+
 Known limit: the sandbox and Auto's deny list protect the trial's temp `HOME`, not your real
 one, so inside a trial the wall is weaker than in the app (your real `~/.ssh` would be
 readable). Rule 3 is what keeps agent-written code from running.

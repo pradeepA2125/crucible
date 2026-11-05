@@ -80,13 +80,19 @@ def eval_environment(
 def applied_environment(env: dict[str, str]) -> Iterator[None]:
     """Make `os.environ` exactly `env` for the duration, then restore it."""
     saved = dict(os.environ)
-    os.environ.clear()
-    os.environ.update(env)
+    _swap_environment(env)
     try:
         yield
     finally:
-        os.environ.clear()
-        os.environ.update(saved)
+        _swap_environment(saved)
+
+
+def _swap_environment(env: Mapping[str, str]) -> None:
+    # Key by key, never clear(): a background thread (a model warmup reading HOME) must not
+    # catch the environment empty and fall back to the real home folder.
+    os.environ.update(env)
+    for key in [k for k in os.environ if k not in env]:
+        del os.environ[key]
 
 
 @dataclass(frozen=True)
