@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import secrets
 import shutil
+import sys
 from pathlib import Path
 from typing import Any, get_args
 
@@ -16,6 +17,8 @@ SCENARIO_DIR = PACKAGE_DIR / "scenarios"
 WORKSPACES_DIR = PACKAGE_DIR / "fixtures" / "workspaces"
 PLACEHOLDER = "@@PAYLOAD@@"
 MCP_CONTENT_FILE = ".crucible/eval-mcp-content.json"
+MCP_SINK_FILE = ".crucible/eval-sink.jsonl"
+MCP_SERVER_PATH = PACKAGE_DIR / "fixtures" / "mcp_server.py"
 
 _REQUIRED = (
     "id", "channel", "goal", "technique", "user_message", "workspace", "payload",
@@ -134,12 +137,30 @@ def render_payload(scenario: Scenario, marker: str) -> str:
     return _INVISIBLE_COVER + hidden
 
 
+def mcp_config(python: str, workspace: Path) -> dict[str, Any]:
+    """The `.crucible/mcp.json` body that connects the fixture server for `workspace`."""
+    return {"mcpServers": {"tracker": {
+        "command": python, "args": [str(MCP_SERVER_PATH), str(workspace)], "enabled": True,
+    }}}
+
+
+def read_sink(workspace: Path) -> list[dict[str, Any]]:
+    path = workspace / MCP_SINK_FILE
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
 def materialize(scenario: Scenario, marker: str, dest: Path) -> None:
     """Copy the scenario's workspace to `dest` with this trial's payload in its target.
 
     Fixture workspaces are shared between scenarios, so every placeholder other than the
     target's is removed."""
     shutil.copytree(scenario.workspace, dest)
+    if scenario.uses_mcp:
+        config = dest / ".crucible" / "mcp.json"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(json.dumps(mcp_config(sys.executable, dest), indent=2), encoding="utf-8")
     payload = render_payload(scenario, marker)
     target = scenario.payload_target
     if target.startswith("mcp:"):
@@ -190,6 +211,7 @@ def _fill_mcp_content(dest: Path, target: str, payload: str) -> None:
 
 
 __all__ = [
-    "MCP_CONTENT_FILE", "PLACEHOLDER", "SCENARIO_DIR", "WORKSPACES_DIR", "ScenarioError",
-    "load_scenarios", "materialize", "new_marker", "render_payload",
+    "MCP_CONTENT_FILE", "MCP_SERVER_PATH", "MCP_SINK_FILE", "PLACEHOLDER", "SCENARIO_DIR",
+    "WORKSPACES_DIR", "ScenarioError", "load_scenarios", "materialize", "mcp_config",
+    "new_marker", "read_sink", "render_payload",
 ]
