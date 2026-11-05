@@ -35,6 +35,9 @@ class JudgeRequest:
     thread_id: str
     agent_id: str       # "main" or the child's agent_id
     workspace: Path
+    # This agent's turn has read untrusted content (prompt-injection Phase 3a): Auto then
+    # asks the user before anything that sends a request somewhere the agent picks.
+    tainted: bool = False
 
 
 class CommandJudge(Protocol):

@@ -511,3 +511,38 @@ def is_safe(parsed: ParsedCommand, *, workspace: Path, cwd: str = "") -> bool:
     if not parsed.segments:
         return False
     return all(_segment_is_safe(s, workspace, cwd) for s in parsed.segments)
+
+
+# Programs that open a connection to a host named on the command line.
+_REMOTE_CLIENTS = frozenset({"nc", "ncat", "netcat", "telnet", "ssh", "scp", "sftp", "ftp",
+                             "socat", "rsync"})
+_GIT_REMOTE = frozenset({"clone", "fetch", "pull", "ls-remote", "push", "send-pack"})
+
+
+def _names_url(word: str) -> bool:
+    return "://" in word or ("@" in word and ":" in word.split("@", 1)[1])
+
+
+def reaches_remote(parsed: ParsedCommand) -> bool:
+    """A command that sends a request to a host it names: an HTTP client, a network tool, a
+    git remote operation. Inside the sandbox these run without the judge, since its proxy
+    refuses unlisted hosts; but a request to an allowed host can still carry data in its URL,
+    so after untrusted input (Phase 3a) Auto asks instead. Package installs from manifests
+    are not counted. A line the parser cannot read counts (fail closed)."""
+    if parsed.parse_failed or parsed.has_substitution:
+        return True
+    for segment in parsed.segments:
+        words = _command_words(segment)
+        name = _name(words)
+        if _http_client(words) is not None:
+            return True
+        if name in _REMOTE_CLIENTS and (name != "rsync" or any(
+                ":" in w and not w.startswith("-") for w in words[1:])):
+            return True
+        if name == "git":
+            sub = _subcommand(words, _GIT_OPTIONS_WITH_VALUE)
+            if sub and sub[0] in _GIT_REMOTE and (
+                    sub[0] in _GIT_OUTWARD or sub[0] in ("fetch", "pull")
+                    or any(_names_url(w) for w in sub[1:])):
+                return True
+    return False

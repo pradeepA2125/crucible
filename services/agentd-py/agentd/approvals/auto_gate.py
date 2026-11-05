@@ -10,6 +10,7 @@ from agentd.approvals.auto_rules import (
     deny_reason,
     is_outward,
     is_safe,
+    reaches_remote,
     rules_cover,
     writes_protected,
 )
@@ -23,9 +24,12 @@ from agentd.approvals.types import (
 )
 from agentd.domain.models import Escalation
 from agentd.tools.command_rules import CommandRuleStore
+from agentd.trust.config import is_injection_defense_enabled
 
 PROTECTED_WRITE_REASON = "writes a protected file"
 NO_JUDGE_REASON = "Needs your approval in Auto"
+TAINTED_REASON = ("This turn read content from files or tools, so Auto asks before "
+                  "anything is sent off this machine")
 # Enter, Ctrl-C, Ctrl-D, Ctrl-Z, Escape, Tab and the arrow keys a prompt menu uses.
 _CONTROL_KEYS = frozenset({"\n", "\r", "\r\n", "\x03", "\x04", "\x1a", "\x1b", "\t",
                            "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D"})
@@ -89,6 +93,9 @@ class AutoGate:
             return AutoDecision("ask", PROTECTED_WRITE_REASON, None)
         if rules_cover(CommandRuleStore(self._workspace).load(), command, args, self._workspace):
             return AutoDecision("run", "", None)
+        if _tainted(request) and (is_outward(parsed) or reaches_remote(parsed)):
+            # The command line, or the request it sends, may have come from what was read.
+            return AutoDecision("ask", TAINTED_REASON, None)
         if sandboxed and not is_outward(parsed):
             return AutoDecision("run", "", None)
         if not sandboxed and is_safe(parsed, workspace=self._workspace, cwd=cwd):
@@ -110,6 +117,8 @@ class AutoGate:
         if (escalation.kind == "outside_sandbox"
                 and writes_protected(parsed, workspace=self._workspace, home=self._home)):
             return AutoDecision("ask", PROTECTED_WRITE_REASON, None)
+        if _tainted(request):
+            return AutoDecision("ask", TAINTED_REASON, None)
         if self.judge is None:
             return AutoDecision("ask", NO_JUDGE_REASON, None)
         what = ("run outside the sandbox" if escalation.kind == "outside_sandbox"
@@ -142,8 +151,15 @@ class AutoGate:
     async def decide_tool_call(self, kind: PendingActionKind, server: str, tool: str,
                                args: dict[str, object], request: JudgeRequest) -> AutoDecision:
         """MCP and web calls: no deny or safe list applies; the judge decides (a
-        remembered rule is checked by the caller first)."""
+        remembered rule is checked by the caller first). After untrusted input every call
+        but a web search asks: its arguments can carry what was read to the server."""
+        if _tainted(request) and kind != "web_search":
+            return AutoDecision("ask", TAINTED_REASON, None)
         if self.judge is None:
             return AutoDecision("ask", NO_JUDGE_REASON, None)
         summary = f"{server}.{tool}({json.dumps(args, sort_keys=True, default=str)})"
         return await self.judge.judge(request, PendingAction.build(kind, summary, ""))
+
+
+def _tainted(request: JudgeRequest) -> bool:
+    return request.tainted and is_injection_defense_enabled()

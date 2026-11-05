@@ -120,7 +120,7 @@ from agentd.subagents.definitions import (
     definition_to_json,
 )
 from agentd.subagents.events import SequencedBroadcaster
-from agentd.subagents.framing import frame
+from agentd.subagents.framing import MENTION_KIND, frame
 from agentd.subagents.inbox import InboxItem
 from agentd.subagents.notices import (
     build_fold,
@@ -391,11 +391,21 @@ class TurnDispatches:
 
 _WAKE_CAP_TEXT = "🔔 Agents keep finishing — I'll tell you about them at your next message."
 
+_MENTION_HEADER = f'kind="{MENTION_KIND}"'
+
+
+def carries_mentions(text: str) -> bool:
+    """The text holds @-mentioned file contents: the user chose the file, not what it says."""
+    return "<<<agent-content " in text and _MENTION_HEADER in text
+
+
 def turn_starts_tainted(plan_context: dict[str, object]) -> bool:
-    """A turn woken by notices has no user message, and untrusted AGENTS.md notes are
-    repository text from the first step: neither may back a "the user said" memory."""
+    """A turn woken by notices has no user message, and untrusted AGENTS.md notes and
+    @-mentioned files are repository text from the first step: none may back a "the user
+    said" memory, or let Auto send anything off the machine without asking (Phase 3a)."""
     return bool(plan_context.get("notice_turn")
-                or plan_context.get("untrusted_project_notes"))
+                or plan_context.get("untrusted_project_notes")
+                or carries_mentions(str(plan_context.get("goal") or "")))
 
 
 def referenced_files_block(mentioned_files: list[dict[str, str]] | None) -> str:
@@ -571,6 +581,8 @@ class ChatController:
         # The running main turn's inbox, per thread (spec §5.2 path 2): reports that
         # arrived mid-turn, appended one per iteration top.
         self._main_inbox: dict[str, list[InboxItem]] = {}
+        # The main agent's current turn per thread: whether it has read untrusted content.
+        self._main_taints: dict[str, TurnTaint] = {}
         # Per running main turn: how often it was held open for arriving reports.
         self._announced: dict[str, int] = {}
         # Notice turns (spec §5.3), per thread: which kind of main turn is running, the
@@ -1109,6 +1121,7 @@ class ChatController:
                 window_tokens=lambda: self._memory_harness.image_context_window)
             dispatch_sources.append(CapabilityToolSource(capabilities))
         taint = TurnTaint()  # one per turn: has it read untrusted output yet?
+        self._main_taints[thread_id] = taint
         loop = ControllerLoop(
             self._reasoning,
             self._build_registry(command_cb, ledger, todo_persist_cb,
@@ -2421,9 +2434,16 @@ class ChatController:
         return chat_turn_artifacts_root(request.thread_id, turn_id, self._workspace_path)
 
     def _judge_request(self, thread_id: str, child: AgentHandle | None) -> JudgeRequest:
+        if child is not None:
+            # A sub-agent's instructions are another agent's text, so it always counts as
+            # having read untrusted content.
+            tainted = True
+        else:
+            taint = self._main_taints.get(thread_id)
+            tainted = taint is not None and taint.seen
         return JudgeRequest(thread_id=thread_id,
                             agent_id=child.agent_id if child is not None else "main",
-                            workspace=Path(self._workspace_path))
+                            workspace=Path(self._workspace_path), tainted=tainted)
 
     async def _child_command_approval_cb(
         self, child: AgentHandle, command: str, args: list[str], cwd: str,
@@ -3208,6 +3228,11 @@ class ChatController:
         from dataclasses import replace
         taken = [replace(item, image_refs=self._message_image_refs(thread_id, item.source_id))
                  if item.kind == "user" else item for item in taken]
+        taint = self._main_taints.get(thread_id)
+        if taint is not None and any(
+                item.kind != "user" or carries_mentions(item.text) for item in taken):
+            # Agents' reports and notices are model text; mentions are file contents.
+            taint.mark()
         claims = [i.notice_id for i in taken if i.notice_id]
         if claims:
             self._store.claim_notices(
