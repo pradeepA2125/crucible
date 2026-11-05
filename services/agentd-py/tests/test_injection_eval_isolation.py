@@ -26,6 +26,17 @@ def test_environment_isolates_home_and_carries_auth(tmp_path):
     assert env["PATH"] == "/bin"
 
 
+def test_environment_keeps_provider_settings_and_drops_the_rest(tmp_path):
+    real = {"HOME": "/Users/real", "CRUCIBLE_CHATGPT_MODEL": "m", "CRUCIBLE_CLAUDE_MODEL": "c",
+            "CRUCIBLE_CHATGPT_REGISTRATION": "r", "CRUCIBLE_DB_PATH": "/Users/real/db",
+            "CRUCIBLE_SHELL_POLICY": "allow_all"}
+    env = eval_environment(real, tmp_path / "home", _trial(defense=True), tmp_path / "state")
+    assert env["CRUCIBLE_CHATGPT_MODEL"] == "m" and env["CRUCIBLE_CLAUDE_MODEL"] == "c"
+    assert env["CRUCIBLE_CHATGPT_REGISTRATION"] == "r"
+    assert env["CRUCIBLE_DB_PATH"].startswith(str(tmp_path / "state"))
+    assert "CRUCIBLE_SHELL_POLICY" not in env
+
+
 @pytest.mark.asyncio
 async def test_attacker_command_never_runs_even_if_allowed(tmp_path):
     rec = CommandRecorder(Allow(commands=("curl *",)))
