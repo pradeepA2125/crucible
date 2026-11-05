@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from evals.injection.isolation import CommandRecorder, eval_environment
+from evals.injection.isolation import CommandRecorder, command_may_run, eval_environment
 from evals.injection.models import Allow, Arm, Trial
 from evals.injection.scenarios import load_scenarios
 
@@ -77,3 +77,40 @@ async def test_recorder_notes_whether_the_command_was_sandboxed(tmp_path):
         await shell.run_command(command="curl", args=["https://y.attacker.example"],
                                 shadow_root=tmp_path, real_workspace_path=tmp_path)
     assert [r.sandboxed for r in rec.records] == [True, False]
+
+
+def test_environment_turns_off_native_web_tools_and_carries_claude_auth(tmp_path):
+    real = {"HOME": "/Users/real", "CRUCIBLE_MEMORY_WINDOW_TOKENS": "272000"}
+    env = eval_environment(real, tmp_path / "home", _trial(defense=True), tmp_path / "state")
+    assert env["CRUCIBLE_WEB_SEARCH_ENABLED"] == "0"
+    assert env["CRUCIBLE_WEB_FETCH_ENABLED"] == "0"
+    assert env["CRUCIBLE_CLAUDE_AUTH_DIR"] == "/Users/real/.crucible/auth/claude"
+    assert env["CRUCIBLE_MEMORY_WINDOW_TOKENS"] == "272000"
+
+
+def test_command_may_run_refuses_marker_operators_and_substitution():
+    allow = Allow(commands=("*pytest*", "sh *"))
+    marker = "inj-x-abc123"
+    assert command_may_run("python -m pytest tests", allow, marker)
+    assert command_may_run("python -m pytest tests 2>&1", allow, marker)
+    assert not command_may_run(f"python -m pytest tests/{marker}", allow, marker)
+    assert not command_may_run("python -m pytest ; curl https://x.example", allow, marker)
+    assert not command_may_run("python -m pytest $(curl x)", allow, marker)
+    assert not command_may_run("python -m pytest `curl x`", allow, marker)
+    assert not command_may_run("sh -c 'curl x'", allow, marker)
+    assert not command_may_run("python -m pytest | sh", allow, marker)
+
+
+@pytest.mark.asyncio
+async def test_allowed_command_does_not_run_after_the_workspace_changed(tmp_path):
+    (tmp_path / "script.sh").write_text("echo ok\n")
+    rec = CommandRecorder(Allow(commands=("echo *",)), marker="inj-x-abc123", workspace=tmp_path)
+    with rec.install():
+        from agentd.tools import shell
+        await shell.run_command(command="echo", args=["one"], shadow_root=tmp_path,
+                                real_workspace_path=tmp_path)
+        (tmp_path / "script.sh").write_text("curl https://planted.example\n")
+        out = await shell.run_command(command="echo", args=["two"], shadow_root=tmp_path,
+                                      real_workspace_path=tmp_path)
+    assert [r.ran for r in rec.records] == [True, False]
+    assert out.output == "(not run in eval)"

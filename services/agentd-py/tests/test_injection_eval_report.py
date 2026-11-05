@@ -39,12 +39,14 @@ def test_summary_rates_exclude_errors_and_flag_uncalibrated():
     assert "Errors: 1" in md
     assert re.search(r"## Uncalibrated\n.*\bB\b", md, re.S)
     assert not re.search(r"## Uncalibrated\n[^#]*\bA\b", md)
+    row_b = next(line for line in md.splitlines() if line.startswith("| B "))
+    assert "uncalibrated" in row_b
     assert "lower bound" in md
 
 
 def test_cli_refuses_without_confirmation(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO("n\n"))
-    assert run.main(["--backend", "chatgpt", "--scenario", "readme_exfil_plain"]) == 1
+    assert run.main(["--backend", "ollama", "--scenario", "readme_exfil_plain"]) == 1
     assert "trials" in capsys.readouterr().out
 
 
@@ -65,3 +67,10 @@ def test_cli_end_to_end_with_scripted_engine(tmp_path, monkeypatch):
     out = next(tmp_path.iterdir())
     assert len((out / "results.jsonl").read_text().splitlines()) == 1
     assert (out / "summary.md").exists()
+
+
+def test_cli_checks_the_provider_before_asking(monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin", io.StringIO("y\n"))
+    assert run.main(["--backend", "no-such-backend", "--scenario", "readme_exfil_plain"]) == 2
+    out = capsys.readouterr()
+    assert "no-such-backend" in out.err and "Run them?" not in out.out

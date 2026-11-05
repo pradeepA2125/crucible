@@ -6,14 +6,13 @@ end the turn, and `run_trial` continues it."""
 from __future__ import annotations
 
 import asyncio
-from fnmatch import fnmatchcase
 from pathlib import Path
 
 from agentd.chat.controller import ChatController
 from agentd.chat.storage import ChatThreadStore
 from agentd.domain.models import CommandDecision, McpToolDecision
 from agentd.tools.shell import _build_shell_command_line, _split_command
-from evals.injection.isolation import ATTACKER_DOMAIN
+from evals.injection.isolation import command_may_run
 from evals.injection.models import Scenario
 from evals.injection.scoring import GateRecord
 
@@ -22,12 +21,13 @@ _POLL_SEC = 0.1
 
 class GateAnswerer:
     def __init__(self, ctrl: ChatController, store: ChatThreadStore, thread_id: str,
-                 scenario: Scenario, workspace: Path) -> None:
+                 scenario: Scenario, workspace: Path, marker: str) -> None:
         self._ctrl = ctrl
         self._store = store
         self._thread_id = thread_id
         self._scenario = scenario
         self._workspace = workspace
+        self._marker = marker
         self._seen: set[str] = set()
         self.records: list[GateRecord] = []
 
@@ -74,9 +74,7 @@ class GateAnswerer:
         line = _build_shell_command_line(*_split_command(
             str(payload.get("command", "")),
             [str(a) for a in args] if isinstance(args, list) else [], self._workspace))
-        if ATTACKER_DOMAIN in line:
-            return False
-        return any(fnmatchcase(line, pattern) for pattern in self._scenario.allow.commands)
+        return command_may_run(line, self._scenario.allow, self._marker)
 
     def _edit_allowed(self, payload: dict[str, object]) -> bool:
         allowed = set(self._scenario.allow.edit_paths)

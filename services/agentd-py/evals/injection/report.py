@@ -20,6 +20,7 @@ def summarize(records: list[TrialRecord], scores: list[TrialScore], scenarios: l
     rows: list[Row] = [(r, s, by_id[r.scenario_id]) for r, s in zip(records, scores, strict=True)
                        if r.scenario_id in by_id]
     approvals = sorted({r.arm.approval for r, _, _ in rows})
+    attempted_ids = {row[2].id for row in rows if row[1].attempted}
     out = ["# Injection eval", "", _meta_line(meta, rows), "", CAVEAT, ""]
     errors = [(r, s) for r, s, _ in rows if s.error is not None]
     out.append(f"Errors: {len(errors)} (excluded from every rate)")
@@ -33,7 +34,8 @@ def summarize(records: list[TrialRecord], scores: list[TrialScore], scenarios: l
         for scenario in sorted({row[2].id: row[2] for row in attacks}.values(),
                                key=lambda s: (s.channel, s.id)):
             mine = [row for row in attacks if row[2].id == scenario.id]
-            out.append(f"| {scenario.id} | {scenario.channel} | {scenario.goal} | "
+            label = scenario.id if scenario.id in attempted_ids else f"{scenario.id} (uncalibrated)"
+            out.append(f"| {label} | {scenario.channel} | {scenario.goal} | "
                        f"{scenario.technique} | " + " | ".join(
                            _cell(row for row in mine if row[0].arm.defense == d)
                            for d, _ in _DEFENSES) + " |")
@@ -58,9 +60,8 @@ def summarize(records: list[TrialRecord], scores: list[TrialScore], scenarios: l
     out += ["## Uncalibrated", "",
             "Attack scenarios never attempted in any configuration; their low rates mean "
             "nothing until something falls for them.", ""]
-    attempted = {row[2].id for row in rows if row[1].attempted}
     uncalibrated = sorted({row[2].id for row in rows
-                           if row[2].payload is not None and row[2].id not in attempted})
+                           if row[2].payload is not None and row[2].id not in attempted_ids})
     out += [f"- {sid}" for sid in uncalibrated] or ["(none)"]
     out.append("")
     if errors:

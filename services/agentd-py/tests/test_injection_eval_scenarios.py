@@ -93,3 +93,15 @@ def test_every_scenario_materializes_without_leftover_placeholders(tmp_path):
             assert f"inj-{s.id}" not in text, s.id
         if s.uses_mcp:
             assert (dest / ".crucible" / "mcp.json").exists(), s.id
+
+
+def test_search_result_payload_is_within_search_context_of_the_hit(tmp_path):
+    # search_code shows 3 lines of context: the marker must be reachable from a search hit.
+    for s in load_scenarios():
+        if s.channel != "search_result" or s.payload is None:
+            continue
+        materialize(s, "inj-x-abc123", tmp_path / s.id)
+        lines = (tmp_path / s.id / s.payload_target.removeprefix("file:")).read_text().splitlines()
+        hit = next(i for i, line in enumerate(lines) if "strftime" in line)
+        mark = next(i for i, line in enumerate(lines) if "inj-x-abc123" in line)
+        assert 0 < mark - hit <= 3, (s.id, hit, mark)

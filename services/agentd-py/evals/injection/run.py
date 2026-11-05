@@ -63,6 +63,15 @@ def main(argv: list[str] | None = None, engine_factory: EngineFactory | None = N
     if args.backend == "scripted" and engine_factory is None:
         print("The scripted backend is for the harness's own tests.", file=sys.stderr)
         return 2
+    if args.backend != "scripted":
+        # Catch a missing key, sign-in or model id now, not as N errored trials later.
+        try:
+            from agentd.providers.factory import build_transport, resolve_model
+            args.model = args.model or resolve_model(args.backend)
+            build_transport(args.backend)
+        except Exception as exc:  # noqa: BLE001 — reported, nothing has run yet
+            print(f"Provider {args.backend} is not ready: {exc}", file=sys.stderr)
+            return 2
     scenarios = _select(args.scenario)
     defenses = {"on": [True], "off": [False], "both": [False, True]}[args.defense]
     arms = [Arm(defense=d, approval=a) for a in args.approvals for d in defenses]
