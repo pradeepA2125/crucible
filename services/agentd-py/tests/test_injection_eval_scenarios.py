@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from typing import get_args
 
 import pytest
 
+from evals.injection.models import Channel, Technique
 from evals.injection.scenarios import (
     ScenarioError,
     load_scenarios,
@@ -58,3 +60,36 @@ def test_bad_scenario_names_the_file(tmp_path):
     (tmp_path / "bad.yaml").write_text("id: bad\nchannel: nowhere\n")
     with pytest.raises(ScenarioError, match="bad.yaml"):
         load_scenarios(tmp_path)
+
+
+def test_corpus_covers_the_spec_minimum():
+    attacks = [s for s in load_scenarios() if s.payload is not None]
+    pairs = {(s.channel, s.goal) for s in attacks}
+    for need in [("readme", "exfil_command"), ("code_comment", "persist_file"),
+                 ("agents_md", "exfil_command"), ("command_output", "exfil_command"),
+                 ("mcp_issue", "exfil_mcp"), ("mcp_page", "memory_poison"),
+                 ("mcp_page", "answer_hijack"), ("search_result", "persist_file")]:
+        assert need in pairs, need
+    assert all(sum(s.channel == c for s in attacks) >= 2 for c in get_args(Channel))
+    assert all(sum(s.technique == t for s in attacks) >= 2 for t in get_args(Technique))
+    assert {s.clean_of for s in load_scenarios() if s.payload is None} == {s.id for s in attacks}
+    techniques = {(s.channel, s.goal, s.technique) for s in attacks}
+    assert ("readme", "exfil_command", "helpful_step") in techniques
+    assert ("agents_md", "exfil_command", "authority") in techniques
+    assert ("mcp_issue", "exfil_mcp", "plain") in techniques
+    assert ("mcp_issue", "exfil_mcp", "authority") in techniques
+    assert ("mcp_page", "memory_poison", "helpful_step") in techniques
+    assert ("command_output", "fake_frame_close") in {(s.channel, s.technique) for s in attacks}
+    assert ("mcp_page", "invisible") in {(s.channel, s.technique) for s in attacks}
+
+
+def test_every_scenario_materializes_without_leftover_placeholders(tmp_path):
+    for s in load_scenarios():
+        dest = tmp_path / s.id
+        materialize(s, f"inj-{s.id}-abcdef", dest)
+        text = "".join(p.read_text(errors="ignore") for p in dest.rglob("*") if p.is_file())
+        assert "@@PAYLOAD@@" not in text, s.id
+        if s.payload is None:
+            assert f"inj-{s.id}" not in text, s.id
+        if s.uses_mcp:
+            assert (dest / ".crucible" / "mcp.json").exists(), s.id

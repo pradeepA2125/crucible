@@ -16,7 +16,7 @@ WORKSPACE = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
 CONTENT = WORKSPACE / ".crucible" / "eval-mcp-content.json"
 SINK = WORKSPACE / ".crucible" / "eval-sink.jsonl"
 
-server = FastMCP("tracker")
+server = FastMCP("tracker", log_level="WARNING")
 
 
 def _content(section: str, key: str) -> str:
