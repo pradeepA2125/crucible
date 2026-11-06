@@ -205,6 +205,7 @@ from agentd.workspace.promote import promote_files
 if TYPE_CHECKING:
     from agentd.chat.storage import ChatThreadStore
     from agentd.domain.models import DiffEntry
+    from agentd.eval.trajectory.online import OnlineEvaluator
     from agentd.orchestrator.broadcaster import EventBroadcaster
     from agentd.orchestrator.engine import AgentOrchestrator
     from agentd.reasoning.contracts import ReasoningEngine
@@ -631,6 +632,7 @@ class ChatController:
         # task handle stop_turn cancels. A backend restart clears it — the orphaned
         # turn is dead anyway (the transcript + pending_controller_gates survive in sqlite).
         self._active_turns: dict[str, asyncio.Task] = {}
+        self._online_evaluator: OnlineEvaluator | None = None
         # The ControllerLoop currently running for a thread, so the mid-turn durable
         # writers (_write_breadcrumb, _edit_record_cb) can tell it a message just landed
         # in the transcript — see _mark_pills_boundary. Registered/released around
@@ -3418,6 +3420,18 @@ class ChatController:
         leftover = self._main_inbox.pop(thread_id, [])
         self._answer_queued(thread_id, [i for i in leftover if i.kind == "user"])
         self._rearm_notices(thread_id)
+        if self._online_evaluator is not None:
+            try:
+                self._online_evaluator.maybe_judge(
+                    thread_id, self.latest_user_message_id(thread_id),
+                    settled=self.episode_settled(thread_id),
+                    access_stopped=thread_id in self._provider_access)
+            except Exception:  # noqa: BLE001 — evaluation never touches a turn
+                logger.debug("[controller] online evaluation hook failed", exc_info=True)
+
+    def attach_online_evaluator(self, evaluator: OnlineEvaluator) -> None:
+        """Sampled background judging of finished requests (observability spec §6.3)."""
+        self._online_evaluator = evaluator
 
     def _answer_queued(self, thread_id: str, items: list[InboxItem]) -> None:
         """Called from _end_turn (no await): the first undrained queued message gets its own

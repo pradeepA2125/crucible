@@ -395,6 +395,48 @@ _chat_agent = select_chat_handler(
     command_decision_timeout_sec=_float_env("CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC", 0.0),
 ) if reasoning_backend != "scripted" else None
 
+
+def _online_evaluator() -> object | None:
+    """Sampled background judging (observability spec §6.3); off unless CRUCIBLE_EVAL_ONLINE."""
+    from agentd.eval.trajectory.online import OnlineConfig, OnlineEvaluator
+    config = OnlineConfig.from_env()
+    if not config.enabled or not hasattr(_chat_agent, "attach_online_evaluator"):
+        return None
+    import logging
+
+    from agentd.providers.factory import build_transport, resolve_model
+    from agentd.telemetry.config import TracingConfig
+    logger = logging.getLogger("agentd.eval")
+    judge_backend = os.getenv("CRUCIBLE_EVAL_JUDGE_BACKEND", "").strip()
+    judge_model = os.getenv("CRUCIBLE_EVAL_JUDGE_MODEL", "").strip()
+    if judge_backend:
+        try:
+            judge_transport = build_transport(judge_backend)
+            fixed = (judge_transport, judge_model or resolve_model(judge_backend))
+        except Exception:  # noqa: BLE001 — evaluation stays off; the backend still starts
+            logger.warning("[eval] judge backend %s is not usable; online evaluation off",
+                           judge_backend, exc_info=True)
+            return None
+
+        def judge() -> tuple[object, str]:
+            return fixed
+    else:
+        def judge() -> tuple[object, str]:
+            # The chat engine's live transport and model, so a provider swap applies.
+            engine = getattr(_chat_agent, "_reasoning", None)
+            return (getattr(engine, "_transport", None),
+                    judge_model or str(getattr(engine, "_model", "")))
+    evaluator = OnlineEvaluator(
+        store=_chat_thread_store, workspace_path=Path(_chat_workspace_path), judge=judge,
+        phoenix_endpoint=TracingConfig.from_env().endpoint, sample=config.sample)
+    _chat_agent.attach_online_evaluator(evaluator)  # type: ignore[union-attr]
+    return evaluator
+
+
+_evaluator = _online_evaluator()
+if _evaluator is not None:
+    app.router.add_event_handler("shutdown", _evaluator.aclose)  # type: ignore[attr-defined]
+
 # MCP servers connect once per process at APP STARTUP, not at construction — this
 # module runs synchronously at import (no event loop), and the SDK's stdio/http
 # transports are async context managers held open by per-server tasks. Shutdown
