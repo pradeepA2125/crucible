@@ -15,7 +15,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
-from agentd.telemetry.context import CALL_PURPOSE
+from agentd.telemetry.context import (
+    CALL_PURPOSE,
+    EVAL_TAGS,
+    TurnKind,
+    last_user_turn_link,
+    remember_turn,
+)
 from agentd.telemetry.redact import cap_text
 from agentd.telemetry.tracer import capture_content, get_tracer
 
@@ -188,3 +194,72 @@ def note_usage(*, prompt: int = 0, completion: int = 0, cached: int = 0) -> None
     state.prompt += prompt
     state.completion += completion
     state.cached += cached
+
+
+# ---- turns ----------------------------------------------------------------------------------
+
+def _hex_ids(span: Any) -> tuple[str, str]:
+    context = span.get_span_context()
+    return format(context.trace_id, "032x"), format(context.span_id, "016x")
+
+
+def _links(contexts: list[object | None]) -> list[Any] | None:
+    found = [c for c in contexts if c is not None]
+    if not found:
+        return None
+    from opentelemetry.trace import Link
+    return [Link(c) for c in found]  # type: ignore[arg-type]
+
+
+def _new_root() -> Any:
+    """An empty context: a turn or an agent run is never the child of whatever task happened
+    to start it (an ended turn's span would otherwise become its parent)."""
+    from opentelemetry.context import Context
+    return Context()
+
+
+class TurnSpan:
+    def __init__(self, span: Any) -> None:
+        self._span = span
+        self.ids: tuple[str, str] = _hex_ids(span)
+
+    def set_outcome(self, kind: str, text: str, *, failed: bool = False) -> None:
+        _set(self._span, "crucible.outcome_kind", kind)
+        if capture_content():
+            _set(self._span, OUTPUT_VALUE, cap_text(text))
+        if failed:
+            _mark_failed(self._span, "turn ended with a failure notice")
+
+
+@contextmanager
+def turn_span(*, thread_id: str, turn_id: str, request_id: str | None, turn_kind: TurnKind,
+              goal: str) -> Iterator[TurnSpan | None]:
+    if get_tracer() is None:
+        yield None
+        return
+    attributes: dict[str, object] = {
+        SESSION_ID: thread_id, "crucible.turn_id": turn_id or None,
+        "crucible.request_id": request_id, "crucible.turn_kind": turn_kind,
+        **EVAL_TAGS.get()}
+    if capture_content():
+        attributes[INPUT_VALUE] = cap_text(goal)
+    try:
+        links = _links([last_user_turn_link(thread_id)]) if turn_kind == "continuation" else None
+        span = _start("chat.turn", "AGENT", attributes, context=_new_root(), links=links)
+    except Exception:  # noqa: BLE001
+        logger.debug("[telemetry] could not start turn span", exc_info=True)
+        span = None
+    if span is None:
+        yield None
+        return
+    traced = TurnSpan(span)
+    remember_turn(turn_id, span.get_span_context(), thread_id=thread_id,
+                  is_user_turn=turn_kind == "user")
+    try:
+        with _current(span):
+            yield traced
+    except BaseException as exc:
+        _mark_error(span, exc)
+        raise
+    finally:
+        _end(span)

@@ -192,6 +192,8 @@ from agentd.teams.validation import (
     check_assignments,
     parse_assignments,
 )
+from agentd.telemetry.context import TurnKind
+from agentd.telemetry.spans import turn_span
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 from agentd.trust.invisible import invisible_note, scan_invisible
@@ -209,6 +211,16 @@ if TYPE_CHECKING:
     from agentd.retrieval.artifact_client import RetrievalArtifactClient
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _TurnInfo:
+    """What a turn's trace file records about the turn itself (observability spec §6.3)."""
+    started_at: str
+    turn_kind: TurnKind
+    request_id: str | None
+    trace_id: str | None
+    span_id: str | None
 
 # Seconds to hold a per-edit review gate open before auto-rejecting (0 = forever).
 # Mirrors CRUCIBLE_COMMAND_DECISION_TIMEOUT_SEC; guards against a dropped SSE client
@@ -1016,6 +1028,17 @@ class ChatController:
             forced_skills=list(forced) if isinstance(forced, list) else None,
             image_attachments=self._message_image_refs(thread_id, message_id))
 
+    def latest_user_message_id(self, thread_id: str) -> str | None:
+        """The id of the thread's newest user message: the request a turn belongs to, so
+        notice turns and continuations share their request's id (observability spec §6.1)."""
+        thread = self._store.get_thread(thread_id)
+        if thread is None:
+            return None
+        for message in reversed(thread.messages):
+            if message.role == "user":
+                return message.id
+        return None
+
     @profile_workspace_turn
     @profile_async("controller.setup_and_loop")
     async def _run_loop(
@@ -1025,6 +1048,39 @@ class ChatController:
         edit_is_resume: bool = False, forced_skills: list[str] | None = None,
         notice_turn: bool = False,
         image_attachments: list[dict[str, object]] | None = None,
+        continuation: bool = False,
+    ) -> ControllerOutcome:
+        """One turn, traced: the span wraps the whole turn, including its stop and failure
+        exits (observability spec §6.1)."""
+        turn_kind: TurnKind = (
+            "notice" if notice_turn else "continuation" if continuation else "user")
+        request_id = self.latest_user_message_id(thread_id)
+        with turn_span(thread_id=thread_id, turn_id=turn_id or "", request_id=request_id,
+                       turn_kind=turn_kind, goal=goal) as traced:
+            info = _TurnInfo(
+                started_at=datetime.now(UTC).isoformat(), turn_kind=turn_kind,
+                request_id=request_id,
+                trace_id=traced.ids[0] if traced is not None else None,
+                span_id=traced.ids[1] if traced is not None else None)
+            outcome = await self._run_loop_body(
+                thread_id, channel_id, goal, seed_history=seed_history,
+                step_review=step_review, phase=phase, turn_id=turn_id,
+                edit_is_resume=edit_is_resume, forced_skills=forced_skills,
+                notice_turn=notice_turn, image_attachments=image_attachments,
+                turn_info=info)
+            if traced is not None:
+                traced.set_outcome(outcome.kind, outcome.text or "",
+                                   failed=outcome.system_notice)
+            return outcome
+
+    async def _run_loop_body(
+        self, thread_id: str, channel_id: str, goal: str, *,
+        seed_history: list[dict[str, object]] | None, step_review: bool | None,
+        phase: str | None = None, turn_id: str | None = None,
+        edit_is_resume: bool = False, forced_skills: list[str] | None = None,
+        notice_turn: bool = False,
+        image_attachments: list[dict[str, object]] | None = None,
+        turn_info: _TurnInfo | None = None,
     ) -> ControllerOutcome:
         if any(entry.get("image_refs") for entry in seed_history or []):
             from agentd.providers.image_capabilities import resolve_image_capability
@@ -1351,7 +1407,7 @@ class ChatController:
         # info in one file for offline debugging — phase, verbatim history, pills,
         # thinking, outcome. Best-effort, never fails the turn.
         if turn_id:
-            self._write_turn_trace(thread_id, turn_id, goal, sm.phase, outcome)
+            self._write_turn_trace(thread_id, turn_id, goal, sm.phase, outcome, turn_info)
         # Durably persist the verbatim turn history so a backend restart rehydrates
         # seed_history instead of re-exploring cold (mirrors the planner persisting
         # planning_conversation_history on the TaskRecord).
@@ -1450,7 +1506,7 @@ class ChatController:
 
     def _write_turn_trace(
         self, thread_id: str, turn_id: str, goal: str, phase: str,
-        outcome: ControllerOutcome,
+        outcome: ControllerOutcome, info: _TurnInfo | None = None,
     ) -> None:
         """One-file turn trace for offline debugging (controller analog of the task
         path's tool-trace.json). Best-effort — never fails the turn."""
@@ -1470,6 +1526,13 @@ class ChatController:
                     "history": outcome.history or [],
                     "tool_events": outcome.tool_events or [],
                     "thinking_log": outcome.thinking_log or [],
+                    # Episode ordering and the trace this turn exported to (spec §6.3).
+                    "started_at": info.started_at if info else None,
+                    "ended_at": datetime.now(UTC).isoformat(),
+                    "turn_kind": info.turn_kind if info else None,
+                    "request_id": info.request_id if info else None,
+                    "trace_id": info.trace_id if info else None,
+                    "span_id": info.span_id if info else None,
                 }, indent=2, default=str),
                 encoding="utf-8",
             )
@@ -5031,7 +5094,8 @@ class ChatController:
                 seed_history = [*(seed_history or []), {"role": "user", "content": block}]
             outcome = await self._run_loop(
                 thread_id, channel_id, effective_goal,
-                seed_history=seed_history, step_review=review, phase=phase, turn_id=turn_id)
+                seed_history=seed_history, step_review=review, phase=phase, turn_id=turn_id,
+                continuation=True)
             await self._finish(
                 thread_id, channel_id, outcome, step_review=review, turn_id=turn_id)
             return
@@ -5114,6 +5178,6 @@ class ChatController:
         outcome = await self._run_loop(
             thread_id, channel_id, goal, seed_history=seed_history,
             step_review=review, phase=resume_phase, turn_id=turn_id,
-            edit_is_resume=(resume_phase == "ACTIVE"))
+            edit_is_resume=(resume_phase == "ACTIVE"), continuation=True)
         await self._finish(
             thread_id, channel_id, outcome, step_review=review, turn_id=turn_id)
