@@ -164,3 +164,14 @@ def test_export_refuses_to_overwrite_a_label_file(
     assert calibrate.main(["export", "--results", str(results), "--out", str(out),
                            "--force"]) == 0
     assert json.loads(out.read_text()) == {"items": []}
+
+
+def test_errored_runs_are_not_exported_for_labelling(tmp_path: Path) -> None:
+    from evals.trajectory.calibration import items_from_results
+    kept = tmp_path / "kept"
+    kept.mkdir()
+    results = tmp_path / "results.jsonl"
+    results.write_text(json.dumps({"case_id": "compaction", "repeat": 0,
+                                   "episode_dir": str(kept), "error": "time cap",
+                                   "judge": None}) + "\n")
+    assert items_from_results(results) == []

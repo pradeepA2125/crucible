@@ -198,7 +198,8 @@ def items_from_results(results_jsonl: Path) -> list[LabelItem]:
     for raw in results_jsonl.read_text(encoding="utf-8").splitlines():
         line = json.loads(raw)
         root = Path(line["episode_dir"]) if line.get("episode_dir") else None
-        if root is None or not root.is_dir():
+        # An errored run was never judged: there is nothing to compare a label with.
+        if root is None or not root.is_dir() or line.get("error") is not None:
             continue
         store = ChatThreadStore(root / "state" / "chat.sqlite3")
         threads = store.list_threads(str(root / "ws"))
