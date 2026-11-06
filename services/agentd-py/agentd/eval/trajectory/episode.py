@@ -17,7 +17,10 @@ from agentd.runtime.artifacts import chat_turn_artifacts_root
 logger = logging.getLogger(__name__)
 
 _EVENT_ARGS_CHARS = 200
-_EVENT_OUTPUT_CHARS = 300
+# Enough of each tool output for the judge to check claims against what was read.
+_EVENT_OUTPUT_CHARS = 2000
+# A turn's outcome line, which repeats the final answer.
+_OUTCOME_CHARS = 300
 _REPORT_CHARS = 2000
 
 
@@ -169,7 +172,7 @@ def _render(episode: Episode, keep: int | None) -> str:
         set(range(keep)) | set(range(total - keep, total))
     parts = [f"Request:\n{episode.user_message}", "Turns:"]
     parts.extend(f"[{n}] {t.turn_kind} turn, outcome {t.outcome_kind}: "
-                 f"{t.outcome_text[:_EVENT_OUTPUT_CHARS]}"
+                 f"{t.outcome_text[:_OUTCOME_CHARS]}"
                  for n, t in enumerate(episode.turns, start=1))
     first_omitted = min(set(range(total)) - kept, default=None)
     calls: list[str] = []

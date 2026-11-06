@@ -184,3 +184,15 @@ async def test_episode_settled_ignores_agents_from_an_earlier_request(
     assert ctrl.episode_settled(tid) is True             # request 2 started no agent
     assert ctrl.episode_settled(tid, first) is False     # request 1's agent still runs
     await ctrl.stop_all_agents(tid)
+
+
+def test_render_shows_enough_of_each_tool_output_to_ground_claims() -> None:
+    # 300 chars hid what the agent read, so the judge failed `grounded` for that alone.
+    body = "def apply_discount(amount, code):\n" + "    # line\n" * 300 + "TAIL_MARKER"
+    events: list[dict[str, object]] = [{"tool": "read_file", "args": {"path": "p.py"},
+                                        "output": body}]
+    episode = Episode(thread_id="t", request_id=None, user_message="q", turns=[], agents=[],
+                      final_answer="a", diff="", tool_events=events)
+    text = render_for_judge(episode)
+    assert "line" * 1 in text and len(text) > 1500
+    assert "TAIL_MARKER" not in text  # still shortened, past 2000 chars
