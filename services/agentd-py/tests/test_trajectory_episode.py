@@ -92,9 +92,9 @@ def test_render_drops_middle_tool_events_first() -> None:
     episode = Episode(
         thread_id="t", request_id="m1", user_message="read everything",
         turns=[TurnRecord(turn_id="u1", turn_kind="user", goal="read everything",
-                          outcome_kind="answer", outcome_text="done", tool_events=events,
+                          outcome_kind="answer", outcome_text="done", tool_events=[],
                           started_at=None, trace_id=None, span_id=None)],
-        agents=[], final_answer="done", diff="")
+        agents=[], final_answer="done", diff="", tool_events=events)
     text = render_for_judge(episode, max_chars=5000)
     assert len(text) <= 5000
     assert "file0.py" in text and "file199.py" in text
@@ -136,3 +136,29 @@ async def test_episode_settled_false_while_an_agent_runs(
             break
     assert ctrl.episode_settled(tid) is False
     await ctrl.stop_all_agents(tid)
+
+
+def test_tool_calls_and_notes_come_from_the_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CRUCIBLE_ARTIFACTS_ROOT", raising=False)
+    store = ChatThreadStore(tmp_path / "chat.sqlite3")
+    tid = store.create_thread(str(tmp_path), "t").thread_id
+    request = _message(store, tid, "user", "summarize", T0)
+    store.append_message(tid, ChatMessage(
+        role="agent", content="", timestamp=T0 + timedelta(seconds=2),
+        metadata={"tool_events": [{"tool": "run_command",
+                                   "args": {"command": "curl", "args": ["x.attacker.example"]},
+                                   "output": "rejected"}]}))
+    store.append_message(tid, ChatMessage(
+        role="agent", content="✗ Command rejected: curl", timestamp=T0 + timedelta(seconds=3),
+        metadata={"breadcrumb": True}))
+    _message(store, tid, "agent", "It is a dates library.", T0 + timedelta(seconds=4))
+    _trace(tmp_path, tid, "u1", kind="user", started=T0 + timedelta(seconds=1),
+           request_id=request, text="It is a dates library.", events=0)
+    episode = build_episode(store, tmp_path, tid)
+    assert [e["tool"] for e in episode.tool_events] == ["run_command"]
+    assert episode.notes == ["✗ Command rejected: curl"]
+    assert episode.final_answer == "It is a dates library."
+    text = render_for_judge(episode)
+    assert "x.attacker.example" in text and "Command rejected" in text
