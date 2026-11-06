@@ -13,7 +13,7 @@ import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, Literal
 
 from agentd.telemetry.context import (
     CALL_PURPOSE,
@@ -21,6 +21,7 @@ from agentd.telemetry.context import (
     TurnKind,
     last_user_turn_link,
     remember_turn,
+    turn_link,
 )
 from agentd.telemetry.redact import cap_text, redact_args
 from agentd.telemetry.tracer import capture_content, get_tracer
@@ -293,6 +294,41 @@ def tool_span(name: str, args: Mapping[str, object]) -> Iterator[ToolSpan | None
     try:
         with _current(span):
             yield ToolSpan(span)
+    except BaseException as exc:
+        _mark_error(span, exc)
+        raise
+    finally:
+        _end(span)
+
+
+# ---- sub-agents and team members ----------------------------------------------------------
+
+@contextmanager
+def agent_span(*, thread_id: str, agent_id: str, label: str,
+               kind: Literal["subagent", "team_member"], team_name: str | None,
+               link_turn_id: str | None, request_id: str | None) -> Iterator[None]:
+    """One agent activation as the root of its own trace, linked to the turn that started it:
+    agents outlive turns, so they are never a turn span's children (spec §6.1)."""
+    if get_tracer() is None:
+        yield
+        return
+    name = f"team:{team_name}/{label}" if kind == "team_member" else f"subagent:{label}"
+    attributes: dict[str, object] = {
+        SESSION_ID: thread_id, "crucible.agent_id": agent_id, "crucible.agent_label": label,
+        "crucible.agent_kind": kind, "crucible.team": team_name,
+        "crucible.request_id": request_id, **EVAL_TAGS.get()}
+    try:
+        links = _links([turn_link(link_turn_id)]) if link_turn_id else None
+        span = _start(name, "AGENT", attributes, context=_new_root(), links=links)
+    except Exception:  # noqa: BLE001
+        logger.debug("[telemetry] could not start agent span", exc_info=True)
+        span = None
+    if span is None:
+        yield
+        return
+    try:
+        with _current(span):
+            yield
     except BaseException as exc:
         _mark_error(span, exc)
         raise

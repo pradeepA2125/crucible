@@ -193,7 +193,7 @@ from agentd.teams.validation import (
     parse_assignments,
 )
 from agentd.telemetry.context import TurnKind
-from agentd.telemetry.spans import turn_span
+from agentd.telemetry.spans import agent_span, turn_span
 from agentd.tools.command_rules import CommandRuleStore, rule_from_decision
 from agentd.tools.sources import AggregatingToolRegistry, BuiltinToolSource
 from agentd.trust.invisible import invisible_note, scan_invisible
@@ -4321,6 +4321,20 @@ class ChatController:
                         ctx.agent_id, ctx.parent_agent_id, ctx.depth, ctx.name)
 
     async def _activate(self, handle: AgentHandle) -> ChildResult:
+        """One activation, traced as the root of its own trace (observability spec §6.1)."""
+        agent_id = handle.context.agent_id
+        membership = self._store.teams.member_for_agent(agent_id)
+        team = (self._store.teams.get_team(membership.team_id)
+                if membership is not None else None)
+        with agent_span(
+                thread_id=handle.thread_id, agent_id=agent_id, label=handle.context.label,
+                kind="team_member" if membership is not None else "subagent",
+                team_name=team.name if team is not None else None,
+                link_turn_id=handle.turn_id,
+                request_id=self.latest_user_message_id(handle.thread_id)):
+            return await self._activate_body(handle)
+
+    async def _activate_body(self, handle: AgentHandle) -> ChildResult:
         """Build and run one sub-agent (spec §5): its own context window, tool set,
         shadow, channel and transcript, on the shared workspace guarded by the thread's
         write log."""
