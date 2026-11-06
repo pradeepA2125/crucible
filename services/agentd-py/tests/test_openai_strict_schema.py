@@ -188,16 +188,17 @@ def test_strict_violations_reports_what_openai_would_reject() -> None:
 
 def _every_schema_we_send() -> list[tuple[str, dict[str, object]]]:
     """Every schema the codebase hands to generate_json. A new one must be added here."""
+    from agentd.approvals.judge_policy import JUDGE_SCHEMA as AUTO_JUDGE_SCHEMA
     from agentd.chat.agent import _EXPLORE_SCHEMA
     from agentd.chat.classifier import _CLASSIFY_SCHEMA
     from agentd.chat.controller_prompts import controller_response_schema
     from agentd.domain.models import PatchDocumentV2, PlanDocument
     from agentd.eval.memory_judge_legacy import JUDGE_SCHEMA
+    from agentd.eval.trajectory.judge import TRAJECTORY_JUDGE_SCHEMA
     from agentd.memory.consolidator import CANDIDATE_MEMORY_SCHEMA
     from agentd.planning.prompts import planning_response_schema
     from agentd.providers.validate import _PROBE_SCHEMA
     from agentd.reasoning.env_prompts import DRAFT_CONVENTIONS_RESPONSE_SCHEMA
-    from agentd.approvals.judge_policy import JUDGE_SCHEMA as AUTO_JUDGE_SCHEMA
     from agentd.reasoning.narrative_prompts import TASK_NARRATIVE_RESPONSE_SCHEMA
     from agentd.reasoning.tool_prompts import AGENT_STEP_RESPONSE_SCHEMA
 
@@ -209,6 +210,7 @@ def _every_schema_we_send() -> list[tuple[str, dict[str, object]]]:
         ("consolidator", CANDIDATE_MEMORY_SCHEMA),
         ("memory_judge", JUDGE_SCHEMA),
         ("auto_judge", AUTO_JUDGE_SCHEMA),
+        ("trajectory_judge", TRAJECTORY_JUDGE_SCHEMA),
         ("probe", _PROBE_SCHEMA),
         ("conventions", DRAFT_CONVENTIONS_RESPONSE_SCHEMA),
         ("narrative", TASK_NARRATIVE_RESPONSE_SCHEMA),
