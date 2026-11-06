@@ -95,3 +95,33 @@ def test_test_exporter_records_spans() -> None:
     with t.start_as_current_span("one"):
         pass
     assert [s.name for s in exporter.get_finished_spans()] == ["one"]
+
+
+def test_process_exit_is_bounded_when_phoenix_is_down(tmp_path: Path) -> None:
+    # The await alone returning at 2 s is not enough: asyncio.run and uvicorn join the
+    # default executor on teardown, and an exporter retrying a full queue held it ~10 s.
+    code = f"""
+import asyncio, time
+from agentd.telemetry import tracer
+from agentd.telemetry.config import TracingConfig
+
+async def main():
+    tracer.init_tracing(TracingConfig(True, "http://127.0.0.1:{_closed_port()}/v1/traces",
+                                      "crucible", False), version="0", backend="openai")
+    t = tracer.get_tracer()
+    for i in range(2000):
+        with t.start_as_current_span(f"s{{i}}"):
+            pass
+    await tracer.shutdown_tracing(timeout_sec=2.0)
+
+started = time.monotonic()
+asyncio.run(main())
+print("ELAPSED", round(time.monotonic() - started, 2))
+"""
+    started = time.monotonic()
+    out = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True,
+                         text=True, timeout=60)
+    total = time.monotonic() - started
+    assert "ELAPSED" in out.stdout, out.stdout + out.stderr
+    assert float(out.stdout.split("ELAPSED")[1]) < 3.0, out.stdout
+    assert total < 6.0, f"interpreter exit took {total:.1f}s"

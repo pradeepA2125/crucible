@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import TYPE_CHECKING, Any
 
 from agentd.telemetry.config import TracingConfig
@@ -46,7 +47,8 @@ def init_tracing(config: TracingConfig, *, version: str, backend: str) -> bool:
                 "tracing stays off. Install them with: %s", _INSTALL_HINT)
         return False
     try:
-        provider = TracerProvider(resource=Resource.create({
+        # Our shutdown bounds the exporter; the SDK's own atexit hook would wait for it.
+        provider = TracerProvider(shutdown_on_exit=False, resource=Resource.create({
             "service.name": "crucible-agentd",
             "service.version": version,
             # Phoenix routes spans to a project by this resource attribute.
@@ -101,13 +103,32 @@ async def shutdown_tracing(timeout_sec: float = 2.0) -> None:
     _provider, _tracer = None, None
     if provider is None:
         return
+    # A daemon thread, not the default executor: asyncio.run and uvicorn join that executor
+    # on teardown, which would wait out an exporter retrying a dead endpoint.
+    done = asyncio.get_running_loop().create_future()
+
+    def stop() -> None:
+        try:
+            provider.shutdown()
+        except Exception:  # noqa: BLE001
+            logger.debug("[telemetry] shutdown failed", exc_info=True)
+        finally:
+            try:
+                done.get_loop().call_soon_threadsafe(_resolve, done)
+            except RuntimeError:
+                pass  # the loop already closed: nobody is waiting any more
+
+    threading.Thread(target=stop, name="crucible-tracing-shutdown", daemon=True).start()
     try:
-        await asyncio.wait_for(asyncio.to_thread(provider.shutdown), timeout=timeout_sec)
+        await asyncio.wait_for(asyncio.shield(done), timeout=timeout_sec)
     except TimeoutError:
         logger.warning("[telemetry] exporter did not finish within %.1fs; spans may be lost",
                        timeout_sec)
-    except Exception:  # noqa: BLE001
-        logger.debug("[telemetry] shutdown failed", exc_info=True)
+
+
+def _resolve(future: asyncio.Future[None]) -> None:
+    if not future.done():
+        future.set_result(None)
 
 
 def install_test_exporter(*, capture_content: bool = True) -> InMemorySpanExporter:
