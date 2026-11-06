@@ -162,3 +162,25 @@ def test_tool_calls_and_notes_come_from_the_transcript(
     assert episode.final_answer == "It is a dates library."
     text = render_for_judge(episode)
     assert "x.attacker.example" in text and "Command rejected" in text
+
+
+@pytest.mark.asyncio
+async def test_episode_settled_ignores_agents_from_an_earlier_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CRUCIBLE_ARTIFACTS_ROOT", raising=False)
+    ctrl, store, tid = _setup(tmp_path, monkeypatch, [
+        _tool("dispatch_agents", agents=[{"agent": "general-purpose", "label": "slow",
+                                          "prompt": "run"}]),
+        DONE, {"type": "answer", "thought": "t", "answer": "hello"}],
+        {"slow": [_tool("run_command", command="sleep", args=["30"])]})
+    await ctrl.handle_message(tid, "start the slow job", channel_id=f"chat:{tid}")
+    first = ctrl.latest_user_message_id(tid)
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if store.list_agents(tid) and store.list_agents(tid)[0].status == "waiting":
+            break
+    await ctrl.handle_message(tid, "unrelated: say hello", channel_id=f"chat:{tid}")
+    assert ctrl.episode_settled(tid) is True             # request 2 started no agent
+    assert ctrl.episode_settled(tid, first) is False     # request 1's agent still runs
+    await ctrl.stop_all_agents(tid)

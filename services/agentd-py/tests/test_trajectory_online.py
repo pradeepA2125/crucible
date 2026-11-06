@@ -185,3 +185,21 @@ async def test_controller_turn_end_hands_the_episode_to_the_evaluator(
     await asyncio.sleep(0)
     assert seen and seen[-1][0] == tid and seen[-1][2] is True and seen[-1][3] is False
     assert seen[-1][1] == ctrl.latest_user_message_id(tid)
+
+
+@pytest.mark.asyncio
+async def test_the_next_user_message_ends_a_sampled_episode(
+    tmp_path: Path, traced: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Request 1 never settles (its agents still run) when the user moves on: the new
+    # message ends its episode, and it is judged then (spec §6.3).
+    monkeypatch.delenv("CRUCIBLE_ARTIFACTS_ROOT", raising=False)
+    store, tid, first = _world(tmp_path)
+    second = str(store.append_message(tid, ChatMessage(role="user", content="next",
+                                                       timestamp=datetime.now(UTC))))
+    judge, posts = _Judge(), []
+    ev = _evaluator(tmp_path, store, judge, [0.0, 0.99], posts)
+    ev.maybe_judge(tid, first, settled=False, access_stopped=False)
+    ev.maybe_judge(tid, second, settled=False, access_stopped=False)
+    await ev.drain()
+    assert judge.calls == 1 and len(posts) == 1

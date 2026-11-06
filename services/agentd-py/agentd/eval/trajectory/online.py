@@ -69,6 +69,9 @@ class OnlineEvaluator:
         self._decisions: OrderedDict[str, bool] = OrderedDict()
         self._tasks: set[asyncio.Task[None]] = set()
         self._warned = False
+        # Per thread, the sampled request still waiting to settle. A new user message ends
+        # its episode, so it is judged then rather than never.
+        self._open: dict[str, str] = {}
 
     def maybe_judge(self, thread_id: str, request_id: str | None, *, settled: bool,
                     access_stopped: bool) -> None:
@@ -82,6 +85,10 @@ class OnlineEvaluator:
                 logger.warning("CRUCIBLE_EVAL_ONLINE is set but tracing is off; online "
                                "evaluation needs CRUCIBLE_TRACING_ENABLED")
             return
+        previous = self._open.get(thread_id)
+        if previous is not None and previous != request_id:
+            del self._open[thread_id]
+            self._start(thread_id, previous)
         decision = self._decisions.get(request_id)
         if decision is None:
             decision = self._rng() < self._sample
@@ -93,9 +100,15 @@ class OnlineEvaluator:
         if access_stopped:
             # A provider stop says nothing about the agent; never judged, now or later.
             self._decisions[request_id] = False
+            self._open.pop(thread_id, None)
             return
         if not settled:
+            self._open[thread_id] = request_id
             return
+        self._open.pop(thread_id, None)
+        self._start(thread_id, request_id)
+
+    def _start(self, thread_id: str, request_id: str) -> None:
         self._decisions[request_id] = False  # judged once
         task = asyncio.get_running_loop().create_task(self._judge_one(thread_id, request_id))
         self._tasks.add(task)

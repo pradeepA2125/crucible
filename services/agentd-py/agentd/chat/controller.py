@@ -13,6 +13,7 @@ import logging
 import os
 import shutil
 from collections.abc import Awaitable, Callable
+from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
@@ -212,6 +213,9 @@ if TYPE_CHECKING:
     from agentd.retrieval.artifact_client import RetrievalArtifactClient
 
 logger = logging.getLogger(__name__)
+
+# Requests whose turn ids are remembered for episode settling.
+_REQUEST_TURNS_LIMIT = 512
 
 
 @dataclass(frozen=True)
@@ -633,6 +637,8 @@ class ChatController:
         # turn is dead anyway (the transcript + pending_controller_gates survive in sqlite).
         self._active_turns: dict[str, asyncio.Task] = {}
         self._online_evaluator: OnlineEvaluator | None = None
+        # The turns each request ran, so its episode is judged on its own agents and teams.
+        self._request_turns: OrderedDict[str, set[str]] = OrderedDict()
         # The ControllerLoop currently running for a thread, so the mid-turn durable
         # writers (_write_breadcrumb, _edit_record_cb) can tell it a message just landed
         # in the transcript — see _mark_pills_boundary. Registered/released around
@@ -1030,17 +1036,27 @@ class ChatController:
             forced_skills=list(forced) if isinstance(forced, list) else None,
             image_attachments=self._message_image_refs(thread_id, message_id))
 
-    def episode_settled(self, thread_id: str) -> bool:
-        """Whether the request's episode has ended: no turn running or about to run, and no
-        agent or team still working (observability spec §6.3)."""
+    def episode_settled(self, thread_id: str, request_id: str | None = None) -> bool:
+        """Whether a request's episode (default: the newest) has ended: no turn running or
+        about to run, and no agent or team started by the request's turns still working
+        (observability spec §6.3). With the request's turns unknown (a restart), every agent
+        and team of the thread counts."""
         if thread_id in self._active_turns or thread_id in self._wake_timers:
             return False
         if any(n.delivery == "wake" for n in self._store.unclaimed_notices(thread_id)):
             return False
-        if any(a.status in LIVE_STATUSES for a in self._store.list_agents(thread_id)):
+        request = request_id or self.latest_user_message_id(thread_id)
+        turns = self._request_turns.get(request) if request is not None else None
+        agents = self._store.list_agents(thread_id)
+        if turns is not None:
+            agents = [a for a in agents if a.turn_id in turns]
+        if any(a.status in LIVE_STATUSES for a in agents):
             return False
-        return not any(t.phase in LIVE_TEAM_PHASES
-                       for t in self._store.teams.list_teams(thread_id))
+        teams = self._store.teams.list_teams(thread_id)
+        if turns is not None:
+            started = set(self._store.teams.teams_for_turns(thread_id, sorted(turns)))
+            teams = [t for t in teams if t.team_id in started]
+        return not any(t.phase in LIVE_TEAM_PHASES for t in teams)
 
     def latest_user_message_id(self, thread_id: str) -> str | None:
         """The id of the thread's newest user message: the request a turn belongs to, so
@@ -1069,6 +1085,11 @@ class ChatController:
         turn_kind: TurnKind = (
             "notice" if notice_turn else "continuation" if continuation else "user")
         request_id = self.latest_user_message_id(thread_id)
+        if request_id is not None and turn_id:
+            self._request_turns.setdefault(request_id, set()).add(turn_id)
+            self._request_turns.move_to_end(request_id)
+            while len(self._request_turns) > _REQUEST_TURNS_LIMIT:
+                self._request_turns.popitem(last=False)
         with turn_span(thread_id=thread_id, turn_id=turn_id or "", request_id=request_id,
                        turn_kind=turn_kind, goal=goal) as traced:
             info = _TurnInfo(
@@ -3422,9 +3443,10 @@ class ChatController:
         self._rearm_notices(thread_id)
         if self._online_evaluator is not None:
             try:
+                request_id = self.latest_user_message_id(thread_id)
                 self._online_evaluator.maybe_judge(
-                    thread_id, self.latest_user_message_id(thread_id),
-                    settled=self.episode_settled(thread_id),
+                    thread_id, request_id,
+                    settled=self.episode_settled(thread_id, request_id),
                     access_stopped=thread_id in self._provider_access)
             except Exception:  # noqa: BLE001 — evaluation never touches a turn
                 logger.debug("[controller] online evaluation hook failed", exc_info=True)
