@@ -237,6 +237,28 @@ async def _load_token_encoding() -> None:
 # The first load may download the encoding, so it must not hold up /health.
 app.router.add_event_handler("startup", in_background(_load_token_encoding, "token-encoding"))
 
+
+async def _start_tracing() -> None:
+    # Off by default; with it off nothing imports OpenTelemetry (observability spec §4).
+    from importlib.metadata import PackageNotFoundError, version
+
+    from agentd.telemetry.config import TracingConfig
+    from agentd.telemetry.tracer import init_tracing
+    try:
+        package_version = version("crucible-agentd")
+    except PackageNotFoundError:
+        package_version = "unknown"
+    init_tracing(TracingConfig.from_env(), version=package_version, backend=reasoning_backend)
+
+
+async def _stop_tracing() -> None:
+    from agentd.telemetry.tracer import shutdown_tracing
+    await shutdown_tracing()
+
+
+app.router.add_event_handler("startup", _start_tracing)
+app.router.add_event_handler("shutdown", _stop_tracing)
+
 if _semantic_index is not None:
     _warm_target = _semantic_index
 
