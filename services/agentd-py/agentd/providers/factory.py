@@ -346,4 +346,4 @@ def build_transport(
 ) -> ModelJsonTransport:
     """Every transport the process builds goes through the shared limiter (spec §3.11)."""
     return RateLimitedTransport(  # type: ignore[return-value]
-        _build_raw_transport(backend, credentials), PROCESS_LIMITER)
+        _build_raw_transport(backend, credentials), PROCESS_LIMITER, backend=backend)

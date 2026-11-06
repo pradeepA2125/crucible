@@ -30,6 +30,7 @@ from agentd.providers.plan_access import ProviderAccessStopped
 from agentd.providers.reasoning_effort import EFFORT_OVERRIDE, ReasoningEffort
 from agentd.providers.usage import METER, USAGE_OWNER, Usage
 from agentd.reasoning.react_common import accepts_kwarg
+from agentd.telemetry.context import CALL_PURPOSE
 
 logger = logging.getLogger(__name__)
 
@@ -251,12 +252,14 @@ class AutoJudge:
         # Malformed output propagates like any other failure, so a model that keeps
         # answering badly trips the breaker instead of costing a call per command.
         token = USAGE_OWNER.set(owner)
+        purpose_token = CALL_PURPOSE.set("auto_judge")
         effort_token = EFFORT_OVERRIDE.set(await _low_effort(transport, model))
         try:
             return await asyncio.wait_for(
                 self._run(transport, model, request, action, record), self._timeout_sec)
         finally:
             EFFORT_OVERRIDE.reset(effort_token)
+            CALL_PURPOSE.reset(purpose_token)
             USAGE_OWNER.reset(token)
 
     async def _run(self, transport: Any, model: str, request: JudgeRequest,

@@ -14,6 +14,7 @@ Capability-loading tests opt in with "1".
 import asyncio
 from collections.abc import Iterator
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -72,3 +73,20 @@ def _fresh_shared_models() -> Iterator[None]:
     clear_shared_models()
     yield
     clear_shared_models()
+
+
+@pytest.fixture
+def test_exporter() -> Iterator[Any]:
+    """An in-memory span exporter with content capture on (observability spec §6.1)."""
+    from agentd.telemetry import tracer
+    exporter = tracer.install_test_exporter(capture_content=True)
+    yield exporter
+    tracer.reset_for_tests()
+
+
+@pytest.fixture
+def test_exporter_no_content() -> Iterator[Any]:
+    from agentd.telemetry import tracer
+    exporter = tracer.install_test_exporter(capture_content=False)
+    yield exporter
+    tracer.reset_for_tests()

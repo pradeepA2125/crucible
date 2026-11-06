@@ -30,6 +30,7 @@ from agentd.providers.contracts import ModelJsonTransport
 from agentd.providers.plan_access import find_access_stop
 from agentd.providers.request_budget import RequestBudgetExhausted
 from agentd.reasoning.react_common import accepts_kwarg
+from agentd.telemetry.context import CALL_PURPOSE
 
 logger = logging.getLogger(__name__)
 
@@ -588,10 +589,14 @@ def make_engine_summarizer(
         payload: dict[str, object] = {"transcript": _render_transcript(old_anchor, evicted_text)}
         # Use the same schema/native-call contract as other memory work. A local
         # validation failure must not silently resend a six-figure-token prompt.
-        raw = await transport.generate_json(
-            model=model, schema_name="compaction_summary", schema=SUMMARY_SCHEMA,
-            system_instructions=_SUMMARY_SYSTEM, user_payload=payload,
-        )
+        purpose = CALL_PURPOSE.set("memory_summary")
+        try:
+            raw = await transport.generate_json(
+                model=model, schema_name="compaction_summary", schema=SUMMARY_SCHEMA,
+                system_instructions=_SUMMARY_SYSTEM, user_payload=payload,
+            )
+        finally:
+            CALL_PURPOSE.reset(purpose)
         value = raw.get("summary_markdown") if isinstance(raw, dict) else None
         summary = _extract_summary(value) if isinstance(value, str) else ""
         # Common Markdown emphasis is presentation, not a malformed heading.

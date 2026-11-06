@@ -16,6 +16,7 @@ from typing import Any
 from agentd.performance import profile_async, span
 from agentd.providers.request_budget import REQUEST_ADMISSION
 from agentd.providers.usage import METER, USAGE_OWNER
+from agentd.telemetry.spans import llm_span
 
 CALL_PRIORITY: ContextVar[str] = ContextVar("crucible_call_priority", default="main")
 
@@ -71,9 +72,11 @@ class RateLimitedTransport:
     """Wraps any ModelJsonTransport. Attribute reads and writes go to the inner transport, so
     hot-swap, capability flags and reasoning-effort setters keep working."""
 
-    def __init__(self, inner: Any, limiter: Any) -> None:
+    def __init__(self, inner: Any, limiter: Any, backend: str = "") -> None:
         object.__setattr__(self, "_inner", inner)
         object.__setattr__(self, "_limiter", limiter)
+        # The backend id names the provider on model-call spans (observability spec §6.2).
+        object.__setattr__(self, "_backend", backend)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -88,7 +91,7 @@ class RateLimitedTransport:
         setattr(self._inner, name, value)
 
     @profile_async("provider.rate_limit_wait")
-    async def _admit(self) -> None:
+    async def _admit(self) -> float:
         waited = await self._limiter.acquire(CALL_PRIORITY.get())
         # No await between this shared-budget check and reservation in METER. Calls
         # waiting for rate-limit capacity must recheck when they actually enter.
@@ -96,13 +99,25 @@ class RateLimitedTransport:
         if admission is not None:
             admission()
         METER.record(USAGE_OWNER.get(), requests=1, wait_ms=int(waited * 1000))
+        return float(waited)
 
     async def generate_json(self, **kwargs: Any) -> Any:
-        await self._admit()
-        with span("provider.request"):
-            return await self._inner.generate_json(**kwargs)
+        return await self._call("generate_json", kwargs)
 
     async def generate_text(self, **kwargs: Any) -> Any:
-        await self._admit()
-        with span("provider.request"):
-            return await self._inner.generate_text(**kwargs)
+        return await self._call("generate_text", kwargs)
+
+    async def _call(self, method: str, kwargs: dict[str, Any]) -> Any:
+        # The span opens before admission, so queue wait is part of the call it delays.
+        with llm_span(backend=self._backend, model=str(kwargs.get("model", "")),
+                      schema_name=kwargs.get("schema_name"),
+                      system=kwargs.get("system_instructions"),
+                      payload=kwargs.get("user_payload")) as traced:
+            waited = await self._admit()
+            if traced is not None:
+                traced.set_queue_wait(int(waited * 1000))
+            with span("provider.request"):
+                result = await getattr(self._inner, method)(**kwargs)
+            if traced is not None:
+                traced.set_output(result)
+            return result

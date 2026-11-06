@@ -32,6 +32,7 @@ from agentd.memory.store import MemoryStore
 from agentd.providers.plan_access import find_access_stop
 from agentd.providers.usage import METER, USAGE_OWNER
 from agentd.subagents.framing import TOOL_KIND, unwrap_frames
+from agentd.telemetry.context import CALL_PURPOSE
 
 logger = logging.getLogger(__name__)
 MAX_INPUT_TOKENS = 24_000
@@ -234,6 +235,7 @@ class Curator:
         thread_id = thread.thread_id
         owner = f"curator:{thread_id}"
         owner_token = USAGE_OWNER.set(owner)
+        purpose_token = CALL_PURPOSE.set("memory_curator")
         provider_epoch = self._provider_epoch
         state = self.evidence.curation_state(thread_id)
         generation = state["generation"]
@@ -314,6 +316,7 @@ class Curator:
             )
             logger.warning("[memory] curator failed thread=%s", thread_id, exc_info=True)
         finally:
+            CALL_PURPOSE.reset(purpose_token)
             USAGE_OWNER.reset(owner_token)
             self.threads.add_thread_usage(thread_id, METER.take(owner))
 

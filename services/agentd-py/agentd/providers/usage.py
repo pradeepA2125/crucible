@@ -6,6 +6,8 @@ from __future__ import annotations
 from contextvars import ContextVar
 from dataclasses import dataclass
 
+from agentd.telemetry.spans import note_usage
+
 USAGE_OWNER: ContextVar[str | None] = ContextVar("crucible_usage_owner", default=None)
 
 
@@ -25,6 +27,9 @@ class UsageMeter:
 
     def record(self, owner: str | None, *, requests: int = 0, prompt: int = 0,
                completion: int = 0, wait_ms: int = 0, cached: int = 0) -> None:
+        if prompt or completion or cached:
+            # The model call in progress gets the same counts, owner or not.
+            note_usage(prompt=prompt, completion=completion, cached=cached)
         if owner is None:
             return
         usage = self._by_owner.setdefault(owner, Usage())
