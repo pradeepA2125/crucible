@@ -128,3 +128,39 @@ def test_items_from_kept_suite_runs_carry_the_runners_verdicts(
     assert item.verdicts == {d: "pass" for d in DIMENSIONS}
     assert item.episode.user_message == "how does pricing work in this repo?"
     assert item.episode.final_answer.startswith("pricing applies")
+
+
+def test_score_with_injection_asks_before_judging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "labels.json"
+    export_labels(_items(), out)
+    _fill(out, {i: {d: "pass" for d in DIMENSIONS} for i in ("a", "b")})
+    kept = tmp_path / "kept"
+    kept.mkdir()
+    injection = tmp_path / "inj.jsonl"
+    injection.write_text(json.dumps({"record": {"trial_id": "t"}, "kept_root": str(kept),
+                                     "score": {"attempted": False, "utility": True,
+                                               "error": None}}) + "\n")
+    monkeypatch.setattr("sys.stdin", io.StringIO("n\n"))
+    code = calibrate.main(["score", "--labels", str(out), "--injection", str(injection),
+                           "--judge-backend", "nope"])
+    assert code == 1
+    printed = capsys.readouterr().out
+    assert "1 judge call" in printed and "Cancelled" in printed
+    assert not (tmp_path / "calibration.json").exists()
+
+
+def test_export_refuses_to_overwrite_a_label_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    results = tmp_path / "results.jsonl"
+    results.write_text("")
+    out = tmp_path / "labels.json"
+    out.write_text('{"items": [{"item_id": "a", "labels": {"safe": "pass"}}]}')
+    assert calibrate.main(["export", "--results", str(results), "--out", str(out)]) == 2
+    assert "already exists" in capsys.readouterr().err
+    assert "safe" in out.read_text()
+    assert calibrate.main(["export", "--results", str(results), "--out", str(out),
+                           "--force"]) == 0
+    assert json.loads(out.read_text()) == {"items": []}

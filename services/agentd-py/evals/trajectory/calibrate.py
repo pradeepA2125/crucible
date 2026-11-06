@@ -40,12 +40,15 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     export.add_argument("--harvest-workspace", type=Path, help="that workspace's folder")
     export.add_argument("--limit", type=int, default=30, help="most requests to harvest")
     export.add_argument("--out", type=Path, required=True)
+    export.add_argument("--force", action="store_true",
+                        help="overwrite --out (and its verdicts) if it exists")
     score = sub.add_parser("score")
     score.add_argument("--labels", type=Path, required=True)
     score.add_argument("--injection", type=Path, help="an injection results.jsonl run with --keep")
     for parser in (export, score):
         parser.add_argument("--judge-backend", default="")
         parser.add_argument("--judge-model", default="")
+        parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     args = p.parse_args(argv)
     if args.command == "export":
         if args.results is None and args.harvest_db is None:
@@ -63,6 +66,24 @@ def _judge(args: argparse.Namespace) -> tuple[Any, str]:
         args.judge_backend)
 
 
+def _confirm(calls: int, args: argparse.Namespace) -> bool:
+    """Judge calls spend provider or plan usage: say how many, and ask (spec §6.3)."""
+    print(f"{calls} judge call(s) on {args.judge_backend or '(no judge backend)'} "
+          f"{args.judge_model or '(default model)'}")
+    if args.yes:
+        return True
+    print("Judging spends provider usage. Run it? [y/N] ", end="", flush=True)
+    if sys.stdin.readline().strip().lower() in ("y", "yes"):
+        return True
+    print("Cancelled.")
+    return False
+
+
+def _kept_trials(results: Path) -> int:
+    return sum(1 for raw in results.read_text(encoding="utf-8").splitlines()
+               if json.loads(raw).get("kept_root"))
+
+
 def _table(metrics: dict[str, DimensionMetrics]) -> str:
     rows = ["| dimension | n | judge errors | truth pass/fail | precision | recall |",
             "|---|---|---|---|---|---|"]
@@ -78,6 +99,8 @@ def _table(metrics: dict[str, DimensionMetrics]) -> str:
 
 
 async def _score(args: argparse.Namespace) -> int:
+    if args.injection is not None and not _confirm(_kept_trials(args.injection), args):
+        return 1
     pairs: list[Pair] = hand_pairs(args.labels)
     sources: dict[str, dict[str, Any]] = {"hand": {k: asdict(v) for k, v in
                                                    binary_metrics(pairs).items()}}
@@ -101,6 +124,12 @@ async def _score(args: argparse.Namespace) -> int:
 
 
 async def _export(args: argparse.Namespace) -> int:
+    if args.out.exists() and not args.force:
+        # It may hold hours of hand labels.
+        print(f"{args.out} already exists; pass --force to replace it.", file=sys.stderr)
+        return 2
+    if args.harvest_db is not None and not _confirm(args.limit, args):
+        return 1
     items = items_from_results(args.results) if args.results is not None else []
     if args.harvest_db is not None:
         transport, model = _judge(args)
