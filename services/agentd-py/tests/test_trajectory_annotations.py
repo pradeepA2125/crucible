@@ -87,3 +87,13 @@ async def test_phoenix_errors_are_logged_never_raised() -> None:
 @pytest.mark.asyncio
 async def test_nothing_to_post_makes_no_request() -> None:
     assert await post_span_annotations("http://localhost:1", []) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_non_json_reply_counts_as_nothing_posted() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>proxy page</html>")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        assert await post_span_annotations(
+            "http://localhost:6006", annotations_for(RESULT, "ab" * 8), client=client) == 0

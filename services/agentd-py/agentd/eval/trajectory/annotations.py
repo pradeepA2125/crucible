@@ -64,5 +64,10 @@ async def post_span_annotations(base_url: str, annotations: Sequence[SpanAnnotat
         logger.warning("[eval] Phoenix refused annotations (%s): %s", response.status_code,
                        response.text[:300])
         return 0
-    data = response.json().get("data")
+    try:
+        data = response.json().get("data")
+    except (ValueError, AttributeError):
+        logger.warning("[eval] Phoenix answered annotations with a non-JSON body: %s",
+                       response.text[:200])
+        return 0
     return len(data) if isinstance(data, list) else 0
