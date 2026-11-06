@@ -203,9 +203,10 @@ async def test_resolve_mode_edit_honors_remembered_step_review(tmp_path: Path):
     captured: dict[str, object] = {}
 
     async def fake_run_loop(thread_id, channel_id, goal, *, seed_history, step_review,
-                            phase=None, turn_id=None):
+                            phase=None, turn_id=None, continuation=False):
         captured["step_review"] = step_review
         captured["phase"] = phase
+        captured["continuation"] = continuation
         return ControllerOutcome(kind="submit_changes", text="")
 
     async def fake_finish(*args, **kwargs):
@@ -219,6 +220,7 @@ async def test_resolve_mode_edit_honors_remembered_step_review(tmp_path: Path):
 
     assert captured["step_review"] is True  # NOT the old hardcoded False
     assert captured["phase"] == "ACTIVE"
+    assert captured["continuation"] is True  # traced as a continuation of its user turn
 
 
 @pytest.mark.asyncio
