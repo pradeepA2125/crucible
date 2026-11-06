@@ -162,3 +162,17 @@ async def test_case_turns_run_as_registered_turns_like_production(
         env_overrides=_SCRIPTED)
     assert result.error is None, result.error
     assert seen == [True]
+
+
+def test_the_judge_uses_the_agents_model_on_the_same_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import agentd.providers.factory as factory
+
+    def no_default(backend: str) -> str:
+        raise RuntimeError(f"{backend} has no default model")
+
+    monkeypatch.setattr(factory, "build_transport", lambda backend: f"transport:{backend}")
+    monkeypatch.setattr(factory, "resolve_model", no_default)
+    args = run._parse(["--backend", "chatgpt", "--model", "gpt-5.6-luna"])
+    assert run._judge(args) == ("transport:chatgpt", "gpt-5.6-luna")

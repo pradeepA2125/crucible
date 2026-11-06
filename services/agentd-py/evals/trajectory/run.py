@@ -65,7 +65,11 @@ def _select(ids: list[str]) -> list[Case]:
 def _judge(args: argparse.Namespace) -> tuple[Any, str]:
     from agentd.providers.factory import build_transport, resolve_model
     backend = args.judge_backend or args.backend
-    return build_transport(backend), args.judge_model or resolve_model(backend)
+    # On the agent's own backend the judge defaults to the agent's model: some backends
+    # (the ChatGPT plan) have no default model at all.
+    same = backend == args.backend
+    model = args.judge_model or (args.model if same and args.model else resolve_model(backend))
+    return build_transport(backend), model
 
 
 def main(argv: list[str] | None = None, engine_factory: EngineFactory | None = None,
