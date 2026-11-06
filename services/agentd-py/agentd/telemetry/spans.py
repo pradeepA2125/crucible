@@ -147,6 +147,8 @@ class LlmSpan:
                 value if isinstance(value, str) else _json(value))))
 
     def _write_tokens(self) -> None:
+        if not (self.prompt or self.completion or self.cached):
+            return  # the provider reported no usage: unknown, not free
         _set(self._span, LLM_PROMPT, self.prompt)
         _set(self._span, LLM_COMPLETION, self.completion)
         _set(self._span, LLM_TOTAL, self.prompt + self.completion)

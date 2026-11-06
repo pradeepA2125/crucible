@@ -154,3 +154,17 @@ async def test_llm_input_shows_the_current_step(test_exporter: Any) -> None:
     value = span.attributes["input.value"]
     assert len(value) <= 4100
     assert "CURRENT GOAL" in value and "Take the next step." in value
+
+
+class _NoUsage:
+    async def generate_json(self, **_kwargs: Any) -> dict[str, object]:
+        return {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_no_reported_usage_records_no_token_counts(test_exporter: Any) -> None:
+    # Phoenix would price 0/0/0 as a known $0 call; unknown is not free.
+    await RateLimitedTransport(_NoUsage(), _NoWaitLimiter(), backend="gemini") \
+        .generate_json(**_ARGS)
+    (span,) = test_exporter.get_finished_spans()
+    assert not any(k.startswith("llm.token_count") for k in span.attributes)
