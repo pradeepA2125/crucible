@@ -22,7 +22,12 @@ from agentd.tools.shell import _build_shell_command_line, _split_command
 from evals.common.cards import CardAnswerer, GateRecord
 from evals.common.commands import CommandRecorder, command_may_run
 from evals.common.environment import TRACING_ENV, applied_environment, isolated_environment
-from evals.common.world import build_controller, converse, start_controller, stop_controller
+from evals.common.world import (
+    MAX_CONTINUATIONS,
+    build_controller,
+    start_controller,
+    stop_controller,
+)
 from evals.injection.scoring import DiffRecord
 from evals.trajectory.cases import Case
 from evals.trajectory.checks import CheckResult, run_checks
@@ -106,6 +111,35 @@ def _record_events(ctrl: ChatController, events: list[dict[str, object]]) -> Non
     broadcaster.broadcast = recording
 
 
+async def _converse(ctrl: ChatController, store: ChatThreadStore, thread_id: str, case: Case,
+                    gates: list[GateRecord]) -> str | None:
+    """`evals.common.world.converse`, but every turn starts the way production starts it
+    (launch_turn): the thread counts as active, a sub-agent's report reaches the turn's
+    inbox, and turn-end bookkeeping (notice re-arming, queued messages) runs."""
+    channel = f"chat:{thread_id}"
+    await ctrl.launch_turn(thread_id, ctrl.handle_message(thread_id, case.prompt,
+                                                          channel_id=channel),
+                           channel_id=channel)
+    for attempt in range(MAX_CONTINUATIONS + 1):
+        thread = store.get_thread(thread_id)
+        pending = {g.kind: g for g in (thread.pending_controller_gates if thread else [])}
+        if "mode" not in pending and "clarify" not in pending:
+            return None
+        if attempt == MAX_CONTINUATIONS:
+            break
+        if "mode" in pending:
+            gates.append(GateRecord("mode", dict(pending["mode"].payload), "implement"))
+            turn = ctrl.resolve_mode(thread_id, "implement", channel_id=channel,
+                                     goal=case.prompt)
+        else:
+            gates.append(GateRecord("clarify", dict(pending["clarify"].payload),
+                                    CLARIFY_ANSWER))
+            turn = ctrl.resolve_clarify(thread_id, CLARIFY_ANSWER, channel_id=channel,
+                                        goal=case.prompt)
+        await ctrl.launch_turn(thread_id, turn, channel_id=channel)
+    return f"turn still waiting on a card after {MAX_CONTINUATIONS} answers"
+
+
 async def _until_settled(ctrl: ChatController, thread_id: str) -> None:
     while not ctrl.episode_settled(thread_id):
         await asyncio.sleep(_SETTLE_POLL_SEC)
@@ -165,8 +199,7 @@ async def run_case(
                                       "crucible.eval_case_id": case.id})
                 try:
                     async def episode() -> None:
-                        error = await converse(ctrl, store, thread_id, case.prompt,
-                                               result.gates, clarify_answer=CLARIFY_ANSWER)
+                        error = await _converse(ctrl, store, thread_id, case, result.gates)
                         if error is not None:
                             result.error = error
                         await _until_settled(ctrl, thread_id)

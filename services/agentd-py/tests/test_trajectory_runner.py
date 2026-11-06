@@ -137,3 +137,28 @@ async def test_full_access_case_applies_the_fix_and_its_test_command_passes(
     assert [(r.check.kind, r.passed) for r in result.checks] == [
         ("command_passes", True), ("edits_only_in", True)], [r.detail for r in result.checks]
     assert result.episode_dir == tmp_path / "r"
+
+
+
+@pytest.mark.asyncio
+async def test_case_turns_run_as_registered_turns_like_production(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Production starts every turn with launch_turn: the thread counts as active, a
+    # sub-agent's report goes to the turn's inbox, and turn-end bookkeeping runs.
+    from agentd.chat.controller import ChatController
+    seen: list[bool] = []
+    original = ChatController.handle_message
+
+    async def recording(self: Any, thread_id: str, *args: Any, **kwargs: Any) -> Any:
+        seen.append(thread_id in self._active_turns)  # noqa: SLF001
+        return await original(self, thread_id, *args, **kwargs)
+
+    monkeypatch.setattr(ChatController, "handle_message", recording)
+    result = await run_case(
+        _case("explain"), tmp_path / "r", repeat=0, run_id="r1",
+        engine=ScriptedReasoningEngine(None, [], controller_step_responses=[ANSWER]),
+        backend="scripted", model="m", judge_transport=None, judge_model="",
+        env_overrides=_SCRIPTED)
+    assert result.error is None, result.error
+    assert seen == [True]
