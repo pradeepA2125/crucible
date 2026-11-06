@@ -96,3 +96,14 @@ def test_fixture_has_exactly_one_failing_test(tmp_path: Path) -> None:
 
 def test_cases_dir_is_beside_the_fixtures() -> None:
     assert CASES_DIR.parent == FIXTURES_DIR.parent
+
+
+def test_command_check_never_sees_secret_env(tmp_path: Path,
+                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    # The command runs code the agent may have edited: it must not see provider keys.
+    monkeypatch.setenv("OPENAI_API_KEY", "probe-not-a-real-key")
+    probe = ("python -c \"import os,sys; "
+             "sys.exit(1 if os.environ.get('OPENAI_API_KEY') else 0)\"")
+    (result,) = run_checks(_case(Check(kind="command_passes", command=probe)), tmp_path,
+                           [], {}, "", [])
+    assert result.passed is True, result.detail

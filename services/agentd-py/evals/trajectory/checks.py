@@ -1,6 +1,7 @@
 """Deterministic checks on what a case left behind (observability spec §6.3)."""
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 import sys
@@ -8,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from agentd.sandbox.env import sandbox_env
 from evals.injection.scoring import DiffRecord
 from evals.trajectory.cases import Case, Check
 
@@ -28,8 +30,9 @@ def _command(check: Check, ws: Path) -> CheckResult:
         # The interpreter running the eval, so the check doesn't depend on PATH.
         argv[0] = sys.executable
     try:
+        # Code the agent may have edited: no provider keys or other secrets.
         out = subprocess.run(argv, cwd=ws, capture_output=True, text=True,
-                             timeout=COMMAND_TIMEOUT_SEC)
+                             timeout=COMMAND_TIMEOUT_SEC, env=sandbox_env(os.environ, None))
     except (OSError, subprocess.TimeoutExpired) as exc:
         return CheckResult(check, False, f"{type(exc).__name__}: {exc}")
     # The summary line is on stdout; stderr carries warnings that would hide it.
