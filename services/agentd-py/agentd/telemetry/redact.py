@@ -21,17 +21,29 @@ _ALWAYS_SECRET_KEYS = frozenset({"authorization", "cookie", "headers"})
 _ASSIGNMENT = re.compile(r"""\b([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|'[^']*'|\S+)""")
 # The userinfo part of scheme://user:pass@host.
 _URL_USERINFO = re.compile(r"\b([A-Za-z][A-Za-z0-9+.-]*://)[^/\s@]+@")
+# An auth header written inline: curl -H "Authorization: Bearer …", X-Api-Key: ….
+_AUTH_HEADER = re.compile(
+    r"(?i)\b(authorization|proxy-authorization|x-api-key|api-key|cookie)\s*:\s*"
+    r"(?:(?:bearer|basic|token)\s+)?[^\s\"',]+")
 
 
 def _is_secret_key(key: str) -> bool:
     return key.lower() in _ALWAYS_SECRET_KEYS or is_secret_env(key, "")
 
 
-def _redact_text(text: str) -> str:
+def redact_text(text: str) -> str:
+    """Free text safe to put on a span: auth headers, secret env assignments and
+    credentials in URLs are replaced."""
     text = _URL_USERINFO.sub(rf"\1{_REDACTED}@", text)
+    text = _AUTH_HEADER.sub(lambda m: f"{m.group(1)}: {_REDACTED}", text)
     return _ASSIGNMENT.sub(
         lambda m: f"{m.group(1)}={_REDACTED}" if is_secret_env(m.group(1), "") else m.group(0),
         text)
+
+
+def redact_value(value: object) -> object:
+    """`redact_args` for any JSON-like value."""
+    return _redact(value)
 
 
 def _redact(value: object) -> object:
@@ -41,7 +53,7 @@ def _redact(value: object) -> object:
     if isinstance(value, list | tuple):
         return [_redact(v) for v in value]
     if isinstance(value, str):
-        return _redact_text(value)
+        return redact_text(value)
     return value
 
 

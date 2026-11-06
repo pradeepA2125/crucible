@@ -23,7 +23,7 @@ from agentd.telemetry.context import (
     remember_turn,
     turn_link,
 )
-from agentd.telemetry.redact import cap_text, redact_args
+from agentd.telemetry.redact import cap_text, redact_args, redact_text, redact_value
 from agentd.telemetry.tracer import capture_content, get_tracer
 
 logger = logging.getLogger(__name__)
@@ -143,8 +143,8 @@ class LlmSpan:
 
     def set_output(self, value: object) -> None:
         if capture_content():
-            _set(self._span, OUTPUT_VALUE, cap_text(value if isinstance(value, str)
-                                                    else _json(value)))
+            _set(self._span, OUTPUT_VALUE, cap_text(redact_text(
+                value if isinstance(value, str) else _json(value))))
 
     def _write_tokens(self) -> None:
         _set(self._span, LLM_PROMPT, self.prompt)
@@ -152,6 +152,31 @@ class LlmSpan:
         _set(self._span, LLM_TOTAL, self.prompt + self.completion)
         if self.cached:
             _set(self._span, LLM_CACHE_READ, self.cached)
+
+
+# History entries shown on an LLM span: the most recent ones, which the step is about.
+_RECENT_HISTORY = 4
+# Payload fields that say what this step is; shown first so the cap never cuts them.
+_STEP_FIELDS = ("goal", "instruction")
+
+
+def _llm_input(payload: object, system: str | None) -> str:
+    """What a model call was asked, capped from its useful end: the current step, then the
+    most recent history, then the rest. The controller payload puts the thread's whole
+    history first (for prompt caching), so a plain head cap would show the same oldest
+    entries on every call."""
+    if isinstance(payload, Mapping):
+        shown: dict[str, object] = {k: payload[k] for k in _STEP_FIELDS if k in payload}
+        history = payload.get("conversation_history")
+        if isinstance(history, list):
+            shown["recent_history"] = history[-_RECENT_HISTORY:]
+            shown["earlier_history_entries"] = max(0, len(history) - _RECENT_HISTORY)
+        shown.update({k: v for k, v in payload.items()
+                      if k not in _STEP_FIELDS and k != "conversation_history"})
+    else:
+        shown = {"payload": payload}
+    shown["system"] = system
+    return cap_text(_json(redact_value(shown)))
 
 
 _CURRENT_LLM: ContextVar[LlmSpan | None] = ContextVar("crucible_current_llm", default=None)
@@ -166,8 +191,7 @@ def llm_span(*, backend: str, model: str, schema_name: str | None, system: str |
         "crucible.billing": "plan" if backend in PLAN_BILLED_BACKENDS else None,
     }
     if capture_content():
-        # The payload first: its tail (the current step) matters more than the system prompt.
-        attributes[INPUT_VALUE] = cap_text(_json({"payload": payload, "system": system}))
+        attributes[INPUT_VALUE] = _llm_input(payload, system)
     span = _start(f"llm {schema_name or 'text'}", "LLM", attributes)
     if span is None:
         yield None
@@ -227,7 +251,7 @@ class TurnSpan:
     def set_outcome(self, kind: str, text: str, *, failed: bool = False) -> None:
         _set(self._span, "crucible.outcome_kind", kind)
         if capture_content():
-            _set(self._span, OUTPUT_VALUE, cap_text(text))
+            _set(self._span, OUTPUT_VALUE, cap_text(redact_text(text)))
         if failed:
             _mark_failed(self._span, "turn ended with a failure notice")
 
@@ -243,7 +267,7 @@ def turn_span(*, thread_id: str, turn_id: str, request_id: str | None, turn_kind
         "crucible.request_id": request_id, "crucible.turn_kind": turn_kind,
         **EVAL_TAGS.get()}
     if capture_content():
-        attributes[INPUT_VALUE] = cap_text(goal)
+        attributes[INPUT_VALUE] = cap_text(redact_text(goal))
     try:
         links = _links([last_user_turn_link(thread_id)]) if turn_kind == "continuation" else None
         span = _start("chat.turn", "AGENT", attributes, context=_new_root(), links=links)
@@ -274,7 +298,7 @@ class ToolSpan:
 
     def set_result(self, output: str, is_error: bool) -> None:
         if capture_content():
-            _set(self._span, OUTPUT_VALUE, cap_text(output))
+            _set(self._span, OUTPUT_VALUE, cap_text(redact_text(output)))
         if is_error:
             _mark_failed(self._span, "tool returned an error")
 

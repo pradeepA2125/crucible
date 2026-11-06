@@ -91,3 +91,22 @@ async def test_content_off_keeps_tool_name_only(
                 if s.name == "read_file")
     assert tool.attributes["tool.name"] == "read_file"
     assert "tool.parameters" not in tool.attributes and "output.value" not in tool.attributes
+
+
+def test_redacts_inline_auth_headers() -> None:
+    out = redact_args({"command": 'curl -H "Authorization: Bearer sk-abc123" https://x.io',
+                       "args": ["-H", "Authorization: Bearer sk-abc123", "-H",
+                                "X-Api-Key: k-999"]})
+    text = json.dumps(out)
+    assert "sk-abc123" not in text and "k-999" not in text
+    assert "Authorization: [redacted]" in text
+
+
+def test_tool_output_is_redacted(test_exporter: Any) -> None:
+    from agentd.telemetry.spans import tool_span
+    with tool_span("run_command", {"command": "cat", "args": [".env"]}) as traced:
+        assert traced is not None
+        traced.set_result("OPENAI_API_KEY=sk-live-XYZ\nDEBUG=1", False)
+    (span,) = test_exporter.get_finished_spans()
+    assert "sk-live-XYZ" not in span.attributes["output.value"]
+    assert "DEBUG=1" in span.attributes["output.value"]

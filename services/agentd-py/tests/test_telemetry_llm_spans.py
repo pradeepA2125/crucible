@@ -123,3 +123,34 @@ def test_attribute_names_match_openinference() -> None:
     assert spans.LLM_CACHE_READ == SpanAttributes.LLM_TOKEN_COUNT_PROMPT_DETAILS_CACHE_READ
     assert spans.LLM_TOTAL == SpanAttributes.LLM_TOKEN_COUNT_TOTAL
     assert spans.TOOL_PARAMETERS == SpanAttributes.TOOL_PARAMETERS
+
+
+def _history_payload(entries: int) -> dict[str, object]:
+    history: list[dict[str, object]] = [
+        {"role": "assistant", "content": '{"type": "tool_calls", "calls": [{"tool": '
+         '"run_command", "args": {"command": "GITHUB_TOKEN=ghp_SECRET123 gh pr list"}}]}'},
+        {"role": "tool_result", "content": "OPENAI_API_KEY=sk-live-XYZ"},
+    ]
+    history += [{"role": "user", "content": "x" * 400} for _ in range(entries)]
+    return {"workspace_path": "/ws", "conversation_history": history,
+            "goal": "CURRENT GOAL", "instruction": "Take the next step."}
+
+
+@pytest.mark.asyncio
+async def test_llm_input_redacts_secrets_from_earlier_history(test_exporter: Any) -> None:
+    t = RateLimitedTransport(_FakeInner(), _NoWaitLimiter(), backend="openai")
+    await t.generate_json(**{**_ARGS, "user_payload": _history_payload(0)})
+    (span,) = test_exporter.get_finished_spans()
+    value = span.attributes["input.value"]
+    assert "ghp_SECRET123" not in value and "sk-live-XYZ" not in value
+    assert "GITHUB_TOKEN=[redacted]" in value
+
+
+@pytest.mark.asyncio
+async def test_llm_input_shows_the_current_step(test_exporter: Any) -> None:
+    t = RateLimitedTransport(_FakeInner(), _NoWaitLimiter(), backend="openai")
+    await t.generate_json(**{**_ARGS, "user_payload": _history_payload(50)})
+    (span,) = test_exporter.get_finished_spans()
+    value = span.attributes["input.value"]
+    assert len(value) <= 4100
+    assert "CURRENT GOAL" in value and "Take the next step." in value

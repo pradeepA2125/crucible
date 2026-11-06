@@ -169,3 +169,14 @@ async def test_eval_tags_land_on_the_turn_span(
     (turn,) = _turns(test_exporter)
     assert turn.attributes["crucible.eval_run_id"] == "r1"
     assert turn.attributes["crucible.eval_case_id"] == "c1"
+
+
+@pytest.mark.asyncio
+async def test_turn_span_redacts_a_secret_in_the_message(
+    test_exporter: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CRUCIBLE_ARTIFACTS_ROOT", raising=False)
+    ctrl, _store, tid = _controller(tmp_path, _scripted(ANSWER))
+    await ctrl.handle_message(tid, "use GITHUB_TOKEN=ghp_abc123 to list PRs", channel_id="c1")
+    (turn,) = _turns(test_exporter)
+    assert "ghp_abc123" not in turn.attributes["input.value"]
