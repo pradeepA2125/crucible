@@ -22,7 +22,7 @@ from agentd.telemetry.context import (
     last_user_turn_link,
     remember_turn,
 )
-from agentd.telemetry.redact import cap_text
+from agentd.telemetry.redact import cap_text, redact_args
 from agentd.telemetry.tracer import capture_content, get_tracer
 
 logger = logging.getLogger(__name__)
@@ -258,6 +258,41 @@ def turn_span(*, thread_id: str, turn_id: str, request_id: str | None, turn_kind
     try:
         with _current(span):
             yield traced
+    except BaseException as exc:
+        _mark_error(span, exc)
+        raise
+    finally:
+        _end(span)
+
+
+# ---- tools ----------------------------------------------------------------------------------
+
+class ToolSpan:
+    def __init__(self, span: Any) -> None:
+        self._span = span
+
+    def set_result(self, output: str, is_error: bool) -> None:
+        if capture_content():
+            _set(self._span, OUTPUT_VALUE, cap_text(output))
+        if is_error:
+            _mark_failed(self._span, "tool returned an error")
+
+
+@contextmanager
+def tool_span(name: str, args: Mapping[str, object]) -> Iterator[ToolSpan | None]:
+    if get_tracer() is None:
+        yield None
+        return
+    attributes: dict[str, object] = {TOOL_NAME: name}
+    if capture_content():
+        attributes[TOOL_PARAMETERS] = cap_text(_json(redact_args(args)))
+    span = _start(name, "TOOL", attributes)
+    if span is None:
+        yield None
+        return
+    try:
+        with _current(span):
+            yield ToolSpan(span)
     except BaseException as exc:
         _mark_error(span, exc)
         raise

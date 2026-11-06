@@ -47,6 +47,7 @@ from agentd.skills.config import skills_body_max_chars
 from agentd.subagents.framing import frame
 from agentd.subagents.write_log import canonical_path
 from agentd.teams.tools import MAIN_TOOL_NAMES, MEMBER_TOOL_NAMES
+from agentd.telemetry.spans import tool_span
 from agentd.trust.config import is_injection_defense_enabled
 from agentd.trust.tool_output import frame_tool_output, retrieval_refresh_content
 from agentd.trust.turn_taint import TurnTaint
@@ -1150,7 +1151,11 @@ class ControllerLoop:
                         {"tool": call.tool}, "tool_calls", self._render_ctx))
                 if correction:
                     return ToolOutput(correction, True)
-                return await prepared()
+                with tool_span(call.tool, call.args) as traced:
+                    out = await prepared()
+                    if traced is not None:
+                        traced.set_result(out.output, out.is_error)
+                    return out
 
             return checked_run
 

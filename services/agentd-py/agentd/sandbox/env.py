@@ -30,6 +30,11 @@ def _is_secret(name: str, value: str) -> bool:
             or _CREDENTIAL_URL.match(value) is not None)
 
 
+def is_secret_env(name: str, value: str) -> bool:
+    """Whether an environment variable (or an argument named like one) holds a secret."""
+    return _is_secret(name, value)
+
+
 def _is_proxy_var(name: str) -> bool:
     return name.upper() in (*_PROXY_VARS, "NO_PROXY")
 
