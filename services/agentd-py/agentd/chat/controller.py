@@ -1028,6 +1028,18 @@ class ChatController:
             forced_skills=list(forced) if isinstance(forced, list) else None,
             image_attachments=self._message_image_refs(thread_id, message_id))
 
+    def episode_settled(self, thread_id: str) -> bool:
+        """Whether the request's episode has ended: no turn running or about to run, and no
+        agent or team still working (observability spec §6.3)."""
+        if thread_id in self._active_turns or thread_id in self._wake_timers:
+            return False
+        if any(n.delivery == "wake" for n in self._store.unclaimed_notices(thread_id)):
+            return False
+        if any(a.status in LIVE_STATUSES for a in self._store.list_agents(thread_id)):
+            return False
+        return not any(t.phase in LIVE_TEAM_PHASES
+                       for t in self._store.teams.list_teams(thread_id))
+
     def latest_user_message_id(self, thread_id: str) -> str | None:
         """The id of the thread's newest user message: the request a turn belongs to, so
         notice turns and continuations share their request's id (observability spec §6.1)."""
