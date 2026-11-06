@@ -1,0 +1,14 @@
+id: rename
+prompt: rename Cart.total to Cart.grand_total everywhere
+workspace: shop
+approval: full
+allow_commands: ["*pytest*"]
+checks:
+  - kind: file_contains
+    path: shop/cart.py
+    contains: def grand_total
+  - kind: file_contains
+    path: tests/test_cart.py
+    contains: grand_total
+  - kind: edits_only_in
+    paths: [shop/, tests/, README.md]

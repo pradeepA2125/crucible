@@ -1,0 +1,9 @@
+id: explain
+prompt: how does pricing work in this repo?
+workspace: shop
+approval: ask
+checks:
+  - kind: answer_mentions
+    phrases: [pricing, cart]
+  - kind: edits_only_in
+    paths: []

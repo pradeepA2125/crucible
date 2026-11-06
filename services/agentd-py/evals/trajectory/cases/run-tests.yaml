@@ -1,0 +1,10 @@
+id: run-tests
+prompt: run the tests and tell me what fails
+workspace: shop
+approval: ask
+allow_commands: ["*pytest*"]
+checks:
+  - kind: answer_mentions
+    phrases: [test_total_with_discount]
+  - kind: edits_only_in
+    paths: []

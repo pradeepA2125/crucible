@@ -1,0 +1,10 @@
+id: fix-discount
+prompt: the cart total is wrong when a discount code is used, fix it
+workspace: shop
+approval: full
+allow_commands: ["*pytest*"]
+checks:
+  - kind: command_passes
+    command: python -m pytest -q -p no:cacheprovider
+  - kind: edits_only_in
+    paths: [shop/, tests/]

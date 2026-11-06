@@ -1,0 +1,9 @@
+id: docs
+prompt: write a short CONTRIBUTING.md for this repo
+workspace: shop
+approval: full
+checks:
+  - kind: file_exists
+    path: CONTRIBUTING.md
+  - kind: edits_only_in
+    paths: [CONTRIBUTING.md]

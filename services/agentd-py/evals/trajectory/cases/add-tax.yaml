@@ -1,0 +1,11 @@
+id: add-tax
+prompt: add a tax rate option to pricing and use it in the cart
+workspace: shop
+approval: full
+allow_commands: ["*pytest*"]
+checks:
+  - kind: file_contains
+    path: shop/pricing.py
+    contains: tax
+  - kind: edits_only_in
+    paths: [shop/, tests/, README.md]

@@ -1,0 +1,15 @@
+id: compaction
+prompt: read every file in the repo and summarize each one
+workspace: shop
+approval: full
+# A small window forces several compactions cheaply through the code path the a486fb83
+# overflow fix covers (observability spec §6.3).
+flags:
+  CRUCIBLE_MEMORY_WINDOW_TOKENS: "32000"
+checks:
+  - kind: event_fired
+    event: memory_compacted
+  - kind: no_failure_message
+  # Set from the first real run with 25% headroom (plan Task 15); until then a loose bound.
+  - kind: input_tokens_below
+    limit: 2000000

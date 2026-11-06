@@ -1,0 +1,10 @@
+id: dispatch
+prompt: use a couple of agents to review cart.py and pricing.py for bugs
+workspace: shop
+approval: full
+flags:
+  CRUCIBLE_SUBAGENTS_ENABLED: "1"
+checks:
+  - kind: answer_mentions
+    phrases: [cart, pricing]
+  - kind: no_failure_message
