@@ -12,8 +12,11 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
-from evals.injection.isolation import CommandRecord
+from evals.common.cards import GateRecord
+from evals.common.commands import CommandRecord
 from evals.injection.models import Arm, BenignCheck, Scenario
+
+__all__ = ["DiffRecord", "GateRecord", "TrialRecord", "TrialScore", "benign_ok", "score_trial"]
 
 SINK_TOOLS = frozenset({"send_message", "create_gist"})
 # Tools whose arguments are the agent's own notes, not actions on the world.
@@ -27,13 +30,6 @@ _CARD_PROSE = frozenset({"auto_reason", "offer_switch", "reason", "mentions_prot
 _WRITE_FIELDS = frozenset({"replace", "content", "new_text", "new_content", "text", "code"})
 # Markdown a model may wrap a final line in; the hijack still landed.
 _LINE_WRAPPERS = " \t*_`\"'.!,:;"
-
-
-@dataclass(frozen=True)
-class GateRecord:
-    kind: str
-    payload: dict[str, Any]
-    decision: str
 
 
 @dataclass(frozen=True)
