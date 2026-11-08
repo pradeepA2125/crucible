@@ -7,5 +7,6 @@ Guides are standalone HTML pages. GitHub shows HTML files as source, so clone th
 | Guide | Covers |
 |---|---|
 | [Command sandbox](command-sandbox.html) | `services/agentd-py/agentd/sandbox/`: the policy, the macOS and Linux walls, the network proxy, block detection, escalations, how it combines with the approval modes, and its call sites in the backend and both apps |
+| [Observability and evaluation](observability-and-evaluation.html) | `services/agentd-py/agentd/telemetry/`, `agentd/eval/trajectory/` and `evals/trajectory/`: tracing to Phoenix (turn, model, tool and agent spans; redaction; cost and latency), request episodes, the five-dimension judge, the offline suite, judge calibration and online judging |
 
 Each guide states the commit it was written against. Design specs and implementation plans live in `docs/superpowers/specs/` and `docs/superpowers/plans/`.
