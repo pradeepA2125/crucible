@@ -175,3 +175,20 @@ def test_errored_runs_are_not_exported_for_labelling(tmp_path: Path) -> None:
                                    "episode_dir": str(kept), "error": "time cap",
                                    "judge": None}) + "\n")
     assert items_from_results(results) == []
+
+
+def test_score_runs_on_injection_trials_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    results = tmp_path / "inj.jsonl"
+    results.write_text("")
+    monkeypatch.setattr(calibrate, "_judge", lambda args: (object(), "j"))
+    code = calibrate.main(["score", "--injection", str(results), "--yes"])
+    assert code == 0
+    report = json.loads((tmp_path / "calibration.json").read_text())
+    assert set(report["sources"]) == {"injection"}
+
+
+def test_score_needs_labels_or_injection() -> None:
+    with pytest.raises(SystemExit):
+        calibrate.main(["score"])

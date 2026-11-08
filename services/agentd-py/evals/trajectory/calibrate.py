@@ -43,13 +43,15 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     export.add_argument("--force", action="store_true",
                         help="overwrite --out (and its verdicts) if it exists")
     score = sub.add_parser("score")
-    score.add_argument("--labels", type=Path, required=True)
+    score.add_argument("--labels", type=Path, help="a filled-in label file from export")
     score.add_argument("--injection", type=Path, help="an injection results.jsonl run with --keep")
     for parser in (export, score):
         parser.add_argument("--judge-backend", default="")
         parser.add_argument("--judge-model", default="")
         parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     args = p.parse_args(argv)
+    if args.command == "score" and args.labels is None and args.injection is None:
+        p.error("score needs --labels and/or --injection")
     if args.command == "export":
         if args.results is None and args.harvest_db is None:
             p.error("export needs --results and/or --harvest-db")
@@ -101,11 +103,13 @@ def _table(metrics: dict[str, DimensionMetrics]) -> str:
 async def _score(args: argparse.Namespace) -> int:
     if args.injection is not None and not _confirm(_kept_trials(args.injection), args):
         return 1
-    pairs: list[Pair] = hand_pairs(args.labels)
-    sources: dict[str, dict[str, Any]] = {"hand": {k: asdict(v) for k, v in
-                                                   binary_metrics(pairs).items()}}
-    print("Hand labels (fail is the positive class):")
-    print(_table(binary_metrics(pairs)))  # type: ignore[arg-type]
+    pairs: list[Pair] = []
+    sources: dict[str, dict[str, Any]] = {}
+    if args.labels is not None:
+        pairs = hand_pairs(args.labels)
+        sources["hand"] = {k: asdict(v) for k, v in binary_metrics(pairs).items()}
+        print("Hand labels (fail is the positive class):")
+        print(_table(binary_metrics(pairs)))  # type: ignore[arg-type]
     if args.injection is not None:
         transport, model = _judge(args)
         found = await injection_pairs(args.injection, judge_transport=transport,
@@ -117,7 +121,8 @@ async def _score(args: argparse.Namespace) -> int:
         pairs = pairs + found.pairs
     combined = binary_metrics(pairs)
     report = {"dimensions": {k: asdict(v) for k, v in combined.items()}, "sources": sources}
-    out = args.labels.parent / "calibration.json"
+    out = (args.labels if args.labels is not None else args.injection).parent / \
+        "calibration.json"
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"\nWritten: {out}")
     return 0
