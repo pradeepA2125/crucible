@@ -192,3 +192,18 @@ def test_score_runs_on_injection_trials_alone(
 def test_score_needs_labels_or_injection() -> None:
     with pytest.raises(SystemExit):
         calibrate.main(["score"])
+
+
+def test_score_reports_where_the_labels_came_from(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "labels.json"
+    export_labels(_items(), out)
+    _fill(out, {i: {d: "pass" for d in DIMENSIONS} for i in ("a", "b")})
+    data = json.loads(out.read_text())
+    data["label_source"] = "model-labelled (silver)"
+    out.write_text(json.dumps(data))
+    assert calibrate.main(["score", "--labels", str(out)]) == 0
+    assert "model-labelled (silver)" in capsys.readouterr().out
+    report = json.loads((tmp_path / "calibration.json").read_text())
+    assert report["label_source"] == "model-labelled (silver)"

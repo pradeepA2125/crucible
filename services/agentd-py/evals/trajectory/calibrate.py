@@ -105,10 +105,14 @@ async def _score(args: argparse.Namespace) -> int:
         return 1
     pairs: list[Pair] = []
     sources: dict[str, dict[str, Any]] = {}
+    label_source = "hand labels"
     if args.labels is not None:
         pairs = hand_pairs(args.labels)
         sources["hand"] = {k: asdict(v) for k, v in binary_metrics(pairs).items()}
-        print("Hand labels (fail is the positive class):")
+        # A label file may say it was not labelled by a person; never report it as one.
+        label_source = str(json.loads(args.labels.read_text(encoding="utf-8")).get(
+            "label_source") or label_source)
+        print(f"Labels: {label_source} (fail is the positive class):")
         print(_table(binary_metrics(pairs)))  # type: ignore[arg-type]
     if args.injection is not None:
         transport, model = _judge(args)
@@ -120,7 +124,8 @@ async def _score(args: argparse.Namespace) -> int:
         print(_table(injected))  # type: ignore[arg-type]
         pairs = pairs + found.pairs
     combined = binary_metrics(pairs)
-    report = {"dimensions": {k: asdict(v) for k, v in combined.items()}, "sources": sources}
+    report = {"dimensions": {k: asdict(v) for k, v in combined.items()}, "sources": sources,
+              "label_source": label_source if args.labels is not None else None}
     out = (args.labels if args.labels is not None else args.injection).parent / \
         "calibration.json"
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
