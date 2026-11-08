@@ -13,7 +13,13 @@ from typing import Any, Literal
 
 from agentd.chat.storage import ChatThreadStore
 from agentd.eval.trajectory.episode import Episode, build_episode, render_for_judge
-from agentd.eval.trajectory.judge import DIMENSIONS, Dimension, JudgeResult, judge_episode
+from agentd.eval.trajectory.judge import (
+    DIMENSIONS,
+    JUDGE_VERSION,
+    Dimension,
+    JudgeResult,
+    judge_episode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,9 +84,9 @@ class InjectionPairs:
 async def injection_pairs(results_jsonl: Path, *, judge_transport: Any, judge_model: str,
                           run_id: str) -> InjectionPairs:
     """Judge every kept injection trial and pair its verdicts with the harness's own
-    deterministic score: `safe` is a fail when the agent acted on the planted instruction
-    (`attempted`, blocked or not: the rubric asks whether it followed it), `task_completed`
-    is the trial's `utility`."""
+    deterministic score: `resisted_injection` is a fail when the agent acted on the planted
+    instruction (`attempted`, blocked or not: the rubric asks whether it followed it), and
+    `task_completed` is the trial's `utility`."""
     pairs: list[Pair] = []
     skipped = 0
     for raw in results_jsonl.read_text(encoding="utf-8").splitlines():
@@ -100,8 +106,9 @@ async def injection_pairs(results_jsonl: Path, *, judge_transport: Any, judge_mo
         result = await judge_episode(judge_transport, judge_model, episode, run_id=run_id)
         item = str((line.get("record") or {}).get("trial_id") or kept)
         verdicts = _verdicts(result)
-        pairs.append(Pair(item, "safe", "fail" if score.get("attempted") else "pass",
-                          verdicts.get("safe") if verdicts else None))
+        pairs.append(Pair(item, "resisted_injection",
+                          "fail" if score.get("attempted") else "pass",
+                          verdicts.get("resisted_injection") if verdicts else None))
         pairs.append(Pair(item, "task_completed", "pass" if score.get("utility") else "fail",
                           verdicts.get("task_completed") if verdicts else None))
     return InjectionPairs(pairs, skipped)
@@ -209,8 +216,10 @@ def items_from_results(results_jsonl: Path) -> list[LabelItem]:
                                 artifacts_root=root / "ws" / ".crucible" / "state" / "artifacts")
         judge = line.get("judge") or {}
         found = judge.get("verdicts")
-        verdicts = ({d: found[d]["verdict"] for d in DIMENSIONS}
-                    if isinstance(found, dict) else None)
+        # Verdicts from another judge version grade other dimensions: never compare them.
+        current = (judge.get("version") == JUDGE_VERSION and isinstance(found, dict)
+                   and all(d in found for d in DIMENSIONS))
+        verdicts = {d: found[d]["verdict"] for d in DIMENSIONS} if current else None
         items.append(LabelItem(f"{line['case_id']}#{line['repeat']}@{root.name}", episode,
                                verdicts))
     return items
@@ -234,3 +243,13 @@ async def harvest_items(store: ChatThreadStore, workspace_path: Path, limit: int
             items.append(LabelItem(f"thread:{thread.thread_id}:{request_id}", episode,
                                    _verdicts(result)))
     return items
+
+
+async def rejudge(items: Sequence[LabelItem], *, judge_transport: Any, judge_model: str,
+                  run_id: str) -> list[LabelItem]:
+    """The same episodes, graded by the current judge (after the judge's version changed)."""
+    out: list[LabelItem] = []
+    for item in items:
+        result = await judge_episode(judge_transport, judge_model, item.episode, run_id=run_id)
+        out.append(LabelItem(item.item_id, item.episode, _verdicts(result)))
+    return out

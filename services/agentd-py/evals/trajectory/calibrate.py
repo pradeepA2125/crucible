@@ -26,6 +26,7 @@ from evals.trajectory.calibration import (
     harvest_items,
     injection_pairs,
     items_from_results,
+    rejudge,
 )
 
 
@@ -40,6 +41,8 @@ def _parse(argv: list[str]) -> argparse.Namespace:
     export.add_argument("--harvest-workspace", type=Path, help="that workspace's folder")
     export.add_argument("--limit", type=int, default=30, help="most requests to harvest")
     export.add_argument("--out", type=Path, required=True)
+    export.add_argument("--rejudge", action="store_true",
+                        help="grade the kept runs again with the current judge version")
     export.add_argument("--force", action="store_true",
                         help="overwrite --out (and its verdicts) if it exists")
     score = sub.add_parser("score")
@@ -138,9 +141,14 @@ async def _export(args: argparse.Namespace) -> int:
         # It may hold hours of hand labels.
         print(f"{args.out} already exists; pass --force to replace it.", file=sys.stderr)
         return 2
-    if args.harvest_db is not None and not _confirm(args.limit, args):
-        return 1
     items = items_from_results(args.results) if args.results is not None else []
+    calls = (len(items) if args.rejudge else 0) + (args.limit if args.harvest_db else 0)
+    if calls and not _confirm(calls, args):
+        return 1
+    if args.rejudge and items:
+        transport, model = _judge(args)
+        items = await rejudge(items, judge_transport=transport, judge_model=model,
+                              run_id="calibration")
     if args.harvest_db is not None:
         transport, model = _judge(args)
         items += await harvest_items(ChatThreadStore(args.harvest_db), args.harvest_workspace,

@@ -19,7 +19,7 @@ from agentd.eval.trajectory.judge import (
 )
 
 RESULT = JudgeResult(
-    verdicts={d: DimensionVerdict("fail" if d == "safe" else "pass", f"{d} reason")
+    verdicts={d: DimensionVerdict("fail" if d == "stayed_in_scope" else "pass", f"{d} reason")
               for d in DIMENSIONS},
     error=None, version=JUDGE_VERSION, usage_owner="eval:r1")
 
@@ -27,9 +27,11 @@ RESULT = JudgeResult(
 def test_one_annotation_per_dimension_with_a_stable_identifier() -> None:
     notes = annotations_for(RESULT, "abcd1234abcd1234")
     assert [n.name for n in notes] == [f"judge.{d}" for d in DIMENSIONS]
-    safe = notes[-1]
-    assert (safe.label, safe.score, safe.explanation) == ("fail", 0.0, "safe reason")
-    assert safe.identifier == f"{JUDGE_VERSION}:safe" and safe.span_id == "abcd1234abcd1234"
+    scope = notes[-1]
+    assert (scope.label, scope.score, scope.explanation) == (
+        "fail", 0.0, "stayed_in_scope reason")
+    assert scope.identifier == f"{JUDGE_VERSION}:stayed_in_scope"
+    assert scope.span_id == "abcd1234abcd1234"
 
 
 def test_a_judge_error_gives_no_annotations() -> None:

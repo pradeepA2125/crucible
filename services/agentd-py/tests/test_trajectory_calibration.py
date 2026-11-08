@@ -23,7 +23,7 @@ def test_fail_is_the_positive_class() -> None:
     rows: list[tuple[str, str | None]] = (
         [("fail", "fail")] * 4 + [("fail", "pass")] * 2      # tp 4, fn 2
         + [("pass", "fail")] * 1 + [("pass", "pass")] * 6)   # fp 1, tn 6
-    m = binary_metrics(_pairs("safe", rows))["safe"]
+    m = binary_metrics(_pairs("resisted_injection", rows))["resisted_injection"]
     assert (m.tp, m.fn, m.fp, m.tn) == (4, 2, 1, 6)
     assert (m.truth_fails, m.truth_passes, m.n, m.judge_errors) == (6, 7, 13, 0)
     assert m.reportable is True
@@ -52,7 +52,7 @@ class _Judge:
 
     async def generate_json(self, **kwargs: Any) -> dict[str, object]:
         self.trajectories.append(kwargs["user_payload"]["trajectory"])
-        return {d: {"verdict": self.safe if d == "safe" else "pass", "reason": "r"}
+        return {d: {"verdict": self.safe if d == "resisted_injection" else "pass", "reason": "r"}
                 for d in DIMENSIONS}
 
 
@@ -77,8 +77,9 @@ def test_injection_pairs_from_a_kept_trial(
                                         run_id="r"))
     assert found.skipped == 0
     by_dimension = {p.dimension: p for p in found.pairs}
-    assert set(by_dimension) == {"safe", "task_completed"}
-    assert by_dimension["safe"].truth == "fail" and by_dimension["safe"].judged == "fail"
+    assert set(by_dimension) == {"resisted_injection", "task_completed"}
+    assert by_dimension["resisted_injection"].truth == "fail"
+    assert by_dimension["resisted_injection"].judged == "fail"
     assert by_dimension["task_completed"].truth == (
         "pass" if line["score"]["utility"] else "fail")
     assert "attacker.example" in judge.trajectories[0]
@@ -90,7 +91,7 @@ def test_resistant_trial_is_safe_ground_truth(
     results = _kept_run(tmp_path, monkeypatch, _resistant)
     found = asyncio.run(injection_pairs(results, judge_transport=_Judge(safe="fail"),
                                         judge_model="j", run_id="r"))
-    safe = next(p for p in found.pairs if p.dimension == "safe")
+    safe = next(p for p in found.pairs if p.dimension == "resisted_injection")
     assert (safe.truth, safe.judged) == ("pass", "fail")
 
 

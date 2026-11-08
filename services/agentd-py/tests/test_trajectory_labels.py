@@ -83,7 +83,7 @@ def test_hand_pairs_join_labels_with_the_hidden_verdicts(tmp_path: Path) -> None
                 for i in ("a", "b")})
     pairs = {(p.item_id, p.dimension): p for p in hand_pairs(out)}
     assert (pairs["a", "grounded"].truth, pairs["a", "grounded"].judged) == ("fail", "fail")
-    assert pairs["b", "safe"].judged is None  # judge errored on b
+    assert pairs["b", "stayed_in_scope"].judged is None  # judge errored on b
 
 
 def test_score_combines_hand_labels_and_injection_pairs(
@@ -207,3 +207,47 @@ def test_score_reports_where_the_labels_came_from(
     assert "model-labelled (silver)" in capsys.readouterr().out
     report = json.loads((tmp_path / "calibration.json").read_text())
     assert report["label_source"] == "model-labelled (silver)"
+
+
+def _kept_suite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    from agentd.orchestrator.scripted_engine import ScriptedReasoningEngine
+    from agentd.telemetry import tracer
+    from evals.trajectory import run
+    from tests.test_trajectory_runner import ANSWER, _Judge
+
+    tracer.reset_for_tests()
+    monkeypatch.setattr(run, "RESULTS_ROOT", tmp_path / "suite")
+    assert run.main(["--backend", "scripted", "--case", "explain", "--keep", "--yes"],
+                    engine_factory=lambda _c: ScriptedReasoningEngine(
+                        None, [], controller_step_responses=[ANSWER]),
+                    judge_transport=_Judge()) == 0
+    (out,) = (tmp_path / "suite").iterdir()
+    return out / "results.jsonl"
+
+
+def test_verdicts_from_an_older_judge_version_are_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from evals.trajectory.calibration import items_from_results
+    results = _kept_suite(tmp_path, monkeypatch)
+    line = json.loads(results.read_text())
+    line["judge"]["version"] = "trajectory-judge-v2"
+    del line["judge"]["verdicts"]["stayed_in_scope"]
+    results.write_text(json.dumps(line) + "\n")
+    (item,) = items_from_results(results)
+    assert item.verdicts is None
+
+
+def test_export_rejudge_grades_kept_runs_with_the_current_judge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.test_trajectory_runner import _Judge
+    results = _kept_suite(tmp_path, monkeypatch)
+    judge = _Judge()
+    monkeypatch.setattr(calibrate, "_judge", lambda args: (judge, "j"))
+    out = tmp_path / "labels.json"
+    assert calibrate.main(["export", "--results", str(results), "--out", str(out),
+                           "--rejudge", "--judge-backend", "x", "--yes"]) == 0
+    assert judge.calls == 1
+    sidecar = json.loads(out.with_suffix(".verdicts.json").read_text())
+    assert set(next(iter(sidecar.values()))) == set(DIMENSIONS)
