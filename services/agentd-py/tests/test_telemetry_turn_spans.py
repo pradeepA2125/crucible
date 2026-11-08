@@ -177,6 +177,6 @@ async def test_turn_span_redacts_a_secret_in_the_message(
 ) -> None:
     monkeypatch.delenv("CRUCIBLE_ARTIFACTS_ROOT", raising=False)
     ctrl, _store, tid = _controller(tmp_path, _scripted(ANSWER))
-    await ctrl.handle_message(tid, "use GITHUB_TOKEN=ghp_abc123 to list PRs", channel_id="c1")
+    await ctrl.handle_message(tid, "use GITHUB_TOKEN=fake-value-two to list PRs", channel_id="c1")
     (turn,) = _turns(test_exporter)
-    assert "ghp_abc123" not in turn.attributes["input.value"]
+    assert "fake-value-two" not in turn.attributes["input.value"]

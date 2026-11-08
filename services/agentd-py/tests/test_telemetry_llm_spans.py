@@ -128,8 +128,8 @@ def test_attribute_names_match_openinference() -> None:
 def _history_payload(entries: int) -> dict[str, object]:
     history: list[dict[str, object]] = [
         {"role": "assistant", "content": '{"type": "tool_calls", "calls": [{"tool": '
-         '"run_command", "args": {"command": "GITHUB_TOKEN=ghp_SECRET123 gh pr list"}}]}'},
-        {"role": "tool_result", "content": "OPENAI_API_KEY=sk-live-XYZ"},
+         '"run_command", "args": {"command": "GITHUB_TOKEN=fake-value-one gh pr list"}}]}'},
+        {"role": "tool_result", "content": "OPENAI_API_KEY=fake-value-four"},
     ]
     history += [{"role": "user", "content": "x" * 400} for _ in range(entries)]
     return {"workspace_path": "/ws", "conversation_history": history,
@@ -142,7 +142,7 @@ async def test_llm_input_redacts_secrets_from_earlier_history(test_exporter: Any
     await t.generate_json(**{**_ARGS, "user_payload": _history_payload(0)})
     (span,) = test_exporter.get_finished_spans()
     value = span.attributes["input.value"]
-    assert "ghp_SECRET123" not in value and "sk-live-XYZ" not in value
+    assert "fake-value-one" not in value and "fake-value-four" not in value
     assert "GITHUB_TOKEN=[redacted]" in value
 
 

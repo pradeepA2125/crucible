@@ -24,7 +24,7 @@ def test_is_secret_env_is_public() -> None:
 
 
 def test_redacts_secret_named_keys_and_env_assignments() -> None:
-    out = redact_args({"command": "GITHUB_TOKEN=ghp_x123 gh pr list",
+    out = redact_args({"command": "GITHUB_TOKEN=fake-value-three gh pr list",
                        "headers": {"Authorization": "Bearer abc"}, "path": "a.py"})
     assert out["command"] == "GITHUB_TOKEN=[redacted] gh pr list"
     assert out["headers"] == "[redacted]" and out["path"] == "a.py"
@@ -94,11 +94,11 @@ async def test_content_off_keeps_tool_name_only(
 
 
 def test_redacts_inline_auth_headers() -> None:
-    out = redact_args({"command": 'curl -H "Authorization: Bearer sk-abc123" https://x.io',
-                       "args": ["-H", "Authorization: Bearer sk-abc123", "-H",
+    out = redact_args({"command": 'curl -H "Authorization: Bearer fake-value-five" https://x.io',
+                       "args": ["-H", "Authorization: Bearer fake-value-five", "-H",
                                 "X-Api-Key: k-999"]})
     text = json.dumps(out)
-    assert "sk-abc123" not in text and "k-999" not in text
+    assert "fake-value-five" not in text and "k-999" not in text
     assert "Authorization: [redacted]" in text
 
 
@@ -106,7 +106,7 @@ def test_tool_output_is_redacted(test_exporter: Any) -> None:
     from agentd.telemetry.spans import tool_span
     with tool_span("run_command", {"command": "cat", "args": [".env"]}) as traced:
         assert traced is not None
-        traced.set_result("OPENAI_API_KEY=sk-live-XYZ\nDEBUG=1", False)
+        traced.set_result("OPENAI_API_KEY=fake-value-four\nDEBUG=1", False)
     (span,) = test_exporter.get_finished_spans()
-    assert "sk-live-XYZ" not in span.attributes["output.value"]
+    assert "fake-value-four" not in span.attributes["output.value"]
     assert "DEBUG=1" in span.attributes["output.value"]
