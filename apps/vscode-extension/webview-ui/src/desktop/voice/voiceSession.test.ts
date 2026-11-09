@@ -23,12 +23,23 @@ vi.mock("./voiceAudio", () => ({
   },
 }));
 
-function fixture(transcript = "Use SQLite") {
+type Decision = { turn: string; action: string; say: string; request: string };
+const REPLY: Decision = { turn: "complete", action: "reply", say: "Sure.", request: "" };
+
+function fixture(transcript = "Use SQLite", decision: Decision = REPLY) {
   let subscriber: ((event: VoiceEvent) => void) | undefined;
   const unsubscribe = vi.fn(() => { subscriber = undefined; });
-  const request = vi.fn(async (command: VoiceCommand): Promise<unknown> => command.type === "start"
-    ? { sessionId: "session" }
-    : command.type === "decode" ? { text: transcript } : {});
+  let decisions = 0;
+  const current = { decision };
+  const request = vi.fn(async (command: VoiceCommand): Promise<unknown> => {
+    switch (command.type) {
+      case "start": return { sessionId: "session" };
+      case "decode": return { text: transcript };
+      case "decide": return { ...current.decision, decisionId: `d${++decisions}` };
+      case "commit": return { action: current.decision.action };
+      default: return {};
+    }
+  });
   const bridge: VoiceBridge = { request, subscribe: callback => { subscriber = callback; return unsubscribe; } };
   const callbacks = {
     state: vi.fn(), utterance: vi.fn(), reply: vi.fn(), receipt: vi.fn(), error: vi.fn(), ended: vi.fn(),
@@ -36,8 +47,12 @@ function fixture(transcript = "Use SQLite") {
   return {
     request, unsubscribe, callbacks, session: new VoiceSession(bridge, callbacks),
     emit(event: VoiceEvent) { subscriber?.(event); },
+    decide(next: Decision) { current.decision = next; },
+    sent: (type: VoiceCommand["type"]) => request.mock.calls.map(([command]) => command).filter(command => command.type === type),
   };
 }
+
+const settle = () => new Promise(resolve => setTimeout(resolve, 0));
 
 function frames(count: number, rms: number) {
   const { onFrame } = audio.openMicrophone.mock.calls[0][0];
@@ -95,14 +110,18 @@ describe("desktop voice session", () => {
     if (snapshot?.type !== "snapshot") throw new Error("Expected a snapshot at speech onset");
     feed(125, 0);
     await vi.waitFor(() => expect(voice.request).toHaveBeenCalledWith({
-      type: "submit", sessionId: "session", utteranceId: snapshot.utteranceId, text: "Use SQLite", intent: "auto",
+      type: "commit", sessionId: "session", utteranceId: snapshot.utteranceId, decisionId: "d1",
     }));
+    expect(voice.sent("decide")).toEqual([{ type: "decide", sessionId: "session", utteranceId: snapshot.utteranceId,
+      text: "Use SQLite", silenceMs: expect.any(Number), finalCall: false }]);
+    expect(voice.callbacks.utterance).toHaveBeenCalledExactlyOnceWith(snapshot.utteranceId, "Use SQLite");
 
     voice.session.mute();
     feed(8, 0.03);
     feed(28, 0);
     expect(voice.request.mock.calls.filter(([command]) => command.type === "snapshot")).toHaveLength(1);
-    expect(voice.request.mock.calls.filter(([command]) => command.type === "submit")).toHaveLength(1);
+    expect(voice.sent("commit")).toHaveLength(1);
+    expect(voice.sent("submit")).toHaveLength(0);
     voice.session.close();
   });
 
@@ -130,14 +149,16 @@ describe("desktop voice session", () => {
     expect(commands()).not.toContain("decode");
     voice.session.sendNow();
     expect(audio.setMicrophoneEnabled).toHaveBeenLastCalledWith(false);
-    await vi.waitFor(() => expect(commands()).toContain("submit"));
+    await vi.waitFor(() => expect(commands()).toContain("commit"));
+    expect(voice.sent("decide")).toEqual([expect.objectContaining({ finalCall: true })]);
     feed(10, 0.03);
     expect(commands().filter(command => command === "snapshot")).toHaveLength(1);
     voice.session.beginHold();
     feed(10, 0.03);
     voice.session.cancelHold();
     voice.session.sendNow();
-    expect(commands().filter(command => command === "submit")).toHaveLength(1);
+    await settle();
+    expect(commands().filter(command => command === "commit")).toHaveLength(1);
     voice.session.close();
   });
 
@@ -178,27 +199,6 @@ describe("desktop voice session", () => {
     voice.session.close();
   });
 
-  it("keeps an uncertain transcript for review without speaking a repeat prompt", async () => {
-    vi.clearAllMocks();
-    const voice = fixture("Switch to the");
-    await voice.session.start("thread", "whisper-small", "system");
-    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
-    frames(12, 0.03);
-    frames(28, 0);
-    await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenCalledWith({ partial: "Switch to the" }));
-    expect(voice.callbacks.utterance).not.toHaveBeenCalled();
-    frames(197, 0);
-    await vi.waitFor(() => expect(voice.callbacks.state)
-      .toHaveBeenCalledWith({ reviews: [{ id: expect.any(String), transcript: "Switch to the" }] }));
-    expect(voice.request).not.toHaveBeenCalledWith(expect.objectContaining({ type: "clarify" }));
-    expect(voice.callbacks.utterance).not.toHaveBeenCalled();
-    const id = voice.callbacks.state.mock.lastCall?.[0].reviews[0].id;
-    voice.session.sendReviewed(id);
-    voice.session.sendReviewed(id);
-    await vi.waitFor(() => expect(voice.callbacks.utterance).toHaveBeenCalledExactlyOnceWith(expect.any(String), "Switch to the"));
-    voice.session.close();
-  });
-
   it("returns to listening when transcription fails without a transcript to review", async () => {
     vi.clearAllMocks();
     const voice = fixture();
@@ -209,9 +209,9 @@ describe("desktop voice session", () => {
     await voice.session.start("thread", "whisper-small", "system");
     await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
     frames(12, 0.03);
-    frames(225, 0);
+    frames(400, 0);
     await vi.waitFor(() => expect(voice.callbacks.state)
-      .toHaveBeenLastCalledWith({ capturing: false, checking: false, partial: "" }));
+      .toHaveBeenLastCalledWith({ capturing: false, checking: false, waiting: false, partial: "" }));
     expect(voice.request).not.toHaveBeenCalledWith(expect.objectContaining({ type: "clarify" }));
     expect(voice.callbacks.utterance).not.toHaveBeenCalled();
 
@@ -220,107 +220,6 @@ describe("desktop voice session", () => {
     frames(125, 0);
     await vi.waitFor(() => expect(voice.callbacks.utterance)
       .toHaveBeenCalledExactlyOnceWith(expect.any(String), "Use SQLite"));
-    voice.session.close();
-  });
-
-  it("keeps a thought open when the speaker resumes after two seconds", async () => {
-    vi.clearAllMocks();
-    const voice = fixture();
-    const defaultRequest = voice.request.getMockImplementation()!;
-    let text = "Use Postgres for the test.";
-    voice.request.mockImplementation(command => command.type === "decode"
-      ? Promise.resolve({ text }) : defaultRequest(command));
-    await voice.session.start("thread", "whisper-small", "system");
-    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
-    frames(12, 0.03);
-    frames(100, 0);
-    await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenCalledWith({ partial: text }));
-    expect(voice.callbacks.utterance).not.toHaveBeenCalled();
-    text = "Use Postgres for the test, actually use SQLite instead.";
-    frames(15, 0.03);
-    frames(125, 0);
-    await vi.waitFor(() => expect(voice.callbacks.utterance).toHaveBeenCalledExactlyOnceWith(expect.any(String), text));
-    expect(voice.request.mock.calls.filter(([command]) => command.type === "snapshot")).toHaveLength(1);
-    voice.session.close();
-  });
-
-  it.each(["Use SQLite.", "What does the greeting function return?"])("sends a stable transcript after the pause settles: %s", async transcript => {
-    vi.clearAllMocks();
-    const voice = fixture(transcript);
-    await voice.session.start("thread", "whisper-small", "system");
-    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
-    frames(12, 0.03);
-    frames(75, 0);
-    const finalDecodes = () => voice.request.mock.calls.filter(([command]) => command.type === "decode" && command.final);
-    await vi.waitFor(() => expect(finalDecodes()).toHaveLength(2));
-    expect(voice.callbacks.utterance).not.toHaveBeenCalled();
-    frames(50, 0);
-    await vi.waitFor(() => expect(voice.callbacks.utterance).toHaveBeenCalledExactlyOnceWith(expect.any(String), transcript));
-    expect(voice.request).not.toHaveBeenCalledWith(expect.objectContaining({ type: "clarify" }));
-    voice.session.close();
-  });
-
-  it("does not send when a borderline transcript changes during the recheck", async () => {
-    vi.clearAllMocks();
-    const voice = fixture("Run the migration now.");
-    const defaultRequest = voice.request.getMockImplementation()!;
-    let decodes = 0;
-    voice.request.mockImplementation(command => command.type === "decode"
-      ? Promise.resolve({ text: ++decodes === 1 ? "Run the migration now." : "Do not run the migration now." })
-      : defaultRequest(command));
-    await voice.session.start("thread", "whisper-small", "system");
-    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
-    frames(12, 0.03);
-    frames(75, 0);
-    await vi.waitFor(() => expect(decodes).toBe(2));
-    frames(150, 0);
-    await vi.waitFor(() => expect(voice.callbacks.state)
-      .toHaveBeenCalledWith({ reviews: [{ id: expect.any(String), transcript: "Run the migration now." }] }));
-    expect(voice.callbacks.utterance).not.toHaveBeenCalled();
-    expect(voice.request).not.toHaveBeenCalledWith(expect.objectContaining({ type: "clarify" }));
-    voice.session.close();
-  });
-
-  it("waits for an in-flight second transcription before prompting or sending", async () => {
-    vi.clearAllMocks();
-    const transcript = "What does the greeting function return?";
-    const voice = fixture(transcript);
-    const defaultRequest = voice.request.getMockImplementation()!;
-    let decodes = 0;
-    let complete!: (result: { text: string }) => void;
-    voice.request.mockImplementation(command => command.type === "decode" && ++decodes === 2
-      ? new Promise(resolve => { complete = resolve; })
-      : defaultRequest(command));
-    await voice.session.start("thread", "whisper-small", "system");
-    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
-    frames(12, 0.03);
-    frames(225, 0);
-    await vi.waitFor(() => expect(decodes).toBe(2));
-    expect(voice.request).not.toHaveBeenCalledWith(expect.objectContaining({ type: "clarify" }));
-    expect(voice.callbacks.utterance).not.toHaveBeenCalled();
-    complete({ text: transcript });
-    await vi.waitFor(() => expect(voice.callbacks.utterance).toHaveBeenCalledExactlyOnceWith(expect.any(String), transcript));
-    expect(voice.request).not.toHaveBeenCalledWith(expect.objectContaining({ type: "clarify" }));
-    voice.session.close();
-  });
-
-  it("holds the request when the recognizer changes a filename at the pause", async () => {
-    vi.clearAllMocks();
-    const voice = fixture();
-    const defaultRequest = voice.request.getMockImplementation()!;
-    voice.request.mockImplementation(command => command.type === "decode"
-      ? Promise.resolve({ text: command.final ? "Read draft vault.tsb" : "ReadDraftVault.com" })
-      : defaultRequest(command));
-    await voice.session.start("thread", "whisper-small", "system");
-    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
-    frames(40, 0.03);
-    await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenCalledWith({ partial: "ReadDraftVault.com" }));
-    frames(40, 0);
-    await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenCalledWith({ partial: "Read draft vault.tsb" }));
-    expect(voice.callbacks.utterance).not.toHaveBeenCalled();
-    frames(185, 0);
-    await vi.waitFor(() => expect(voice.callbacks.state)
-      .toHaveBeenCalledWith({ reviews: [{ id: expect.any(String), transcript: "Read draft vault.tsb" }] }));
     voice.session.close();
   });
 
@@ -379,17 +278,16 @@ describe("desktop voice session", () => {
       else if (held) {
         await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenCalledWith({ partial: transcript }));
         await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenLastCalledWith({ checking: false }));
-        frames(197, 0);
+        frames(372, 0);
         await vi.waitFor(() => expect(voice.callbacks.state)
           .toHaveBeenCalledWith({ reviews: [{ id: expect.any(String), transcript }] }));
-        expect(voice.request).not.toHaveBeenCalledWith(expect.objectContaining({ type: "clarify" }));
+        expect(voice.sent("decide")).toHaveLength(0);
       } else {
-        await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenCalledWith({ capturing: false, checking: false, partial: "" }));
+        await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenCalledWith({ capturing: false, checking: false, waiting: false, partial: "" }));
       }
-      const spoken = voice.request.mock.calls.map(([command]) => command)
-        .filter(command => command.type === "submit" && command.intent === "auto");
-      expect(spoken).toHaveLength(submitted ? 1 : 0);
-      if (submitted) expect(spoken[0]).toMatchObject({ text: transcript });
+      await settle();
+      expect(voice.sent("commit")).toHaveLength(submitted ? 1 : 0);
+      if (submitted) expect(voice.sent("decide")[0]).toMatchObject({ text: transcript });
       if (playback) {
         expect(audio.stopPlayback).toHaveBeenCalledTimes(keepsSpeaking ? 1 : 2);
         expect(audio.playing).toBe(keepsSpeaking === true);
@@ -426,6 +324,9 @@ describe("desktop voice session", () => {
       const draft = voice.callbacks.state.mock.calls.find(([patch]) => patch.reviews?.length)?.[0].reviews[0];
       expect(draft).toBeDefined();
       final = "Switch to the";
+      const answer = voice.request.getMockImplementation()!;
+      voice.request.mockImplementation(command => command.type === "decide"
+        ? Promise.resolve({ refused: "voice_agent_unavailable" }) : answer(command));
       frames(8, 0.03);
       frames(225, 0);
       await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenLastCalledWith({ reviews: [
@@ -450,7 +351,8 @@ describe("desktop voice session", () => {
     const voice = fixture("Switch to the");
     const request = voice.request.getMockImplementation()!;
     voice.request.mockImplementation(command => command.type === "submit"
-      ? Promise.reject(new Error("The coding turn changed.")) : request(command));
+      ? Promise.reject(new Error("The coding turn changed."))
+      : command.type === "decide" ? Promise.resolve({ refused: "voice_agent_unavailable" }) : request(command));
     await voice.session.start("thread", "whisper-small", "system");
     await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
     frames(12, 0.03);
@@ -493,12 +395,216 @@ describe("desktop voice session", () => {
       voice.emit(chunk);
       expect(audio.play).toHaveBeenCalledOnce();
       frames(218, 0);
-      await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenLastCalledWith({ capturing: false, checking: false, partial: "" }));
+      await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenLastCalledWith({ capturing: false, checking: false, waiting: false, partial: "" }));
       expect(voice.request.mock.calls.filter(([command]) => command.type === "submit")).toHaveLength(1);
     } finally {
       audio.playing = false;
       voice.session.close();
     }
+  });
+
+  it("decides at the pause and listens on an unfinished turn", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("I want you to", { turn: "cut_off", action: "listen", say: "", request: "" });
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(12, 0.03);
+    frames(28, 0);
+    await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenCalledWith({ waiting: true }));
+    frames(150, 0);
+    await settle();
+    expect(voice.sent("decide")).toEqual([expect.objectContaining({ text: "I want you to", finalCall: false })]);
+    expect(voice.sent("commit")).toHaveLength(0);
+    expect(voice.callbacks.utterance).not.toHaveBeenCalled();
+    voice.session.close();
+  });
+
+  it("asks again with finalCall at the wait limit", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("so the narration", { turn: "thinking", action: "listen", say: "", request: "" });
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(12, 0.03);
+    frames(28, 0);
+    await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(1));
+    await settle();
+    voice.decide({ turn: "complete", action: "clarify", say: "Go on?", request: "" });
+    frames(371, 0);
+    await settle();
+    expect(voice.sent("decide")).toHaveLength(1);
+    frames(1, 0);
+    await vi.waitFor(() => expect(voice.sent("commit")).toHaveLength(1));
+    expect(voice.sent("decide")[1]).toMatchObject({ finalCall: true, silenceMs: 8000 });
+    voice.session.close();
+  });
+
+  it("resumed speech drops an in-flight decision", async () => {
+    vi.clearAllMocks();
+    const voice = fixture();
+    const answer = voice.request.getMockImplementation()!;
+    let decodes = 0, release!: (value: unknown) => void;
+    voice.request.mockImplementation(command => {
+      if (command.type === "decode") return Promise.resolve({ text: ++decodes === 1 ? "Review the" : "Review the voice feature" });
+      if (command.type === "decide" && !release) return new Promise(resolve => { release = resolve; });
+      return answer(command);
+    });
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(12, 0.03);
+    frames(28, 0);
+    await vi.waitFor(() => expect(release).toBeDefined());
+    frames(10, 0.03);
+    release({ ...REPLY, decisionId: "stale" });
+    frames(40, 0);
+    await vi.waitFor(() => expect(voice.sent("commit")).toHaveLength(1));
+    expect(voice.sent("commit")[0]).not.toMatchObject({ decisionId: "stale" });
+    expect(voice.sent("decide")[1]).toMatchObject({ text: "Review the voice feature" });
+    voice.session.close();
+  });
+
+  it("commits a complete reply only after the floor", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("How is it going?");
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(12, 0.03);
+    frames(28, 0);
+    await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(1));
+    await settle();
+    frames(6, 0);
+    await settle();
+    expect(voice.sent("commit")).toHaveLength(0);
+    frames(1, 0);
+    await vi.waitFor(() => expect(voice.sent("commit")).toHaveLength(1));
+    voice.session.close();
+  });
+
+  it("holds a task for two seconds and merges a continuation", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("", { turn: "complete", action: "start_task", say: "On it.", request: "x" });
+    const answer = voice.request.getMockImplementation()!;
+    let decodes = 0;
+    voice.request.mockImplementation(command => command.type === "decode" && command.final
+      ? Promise.resolve({ text: ++decodes === 1 ? "Add a readme" : "Add a readme with a license section" })
+      : command.type === "decode" ? Promise.resolve({ text: "" }) : answer(command));
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(12, 0.03);
+    frames(28, 0);
+    await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(1));
+    await settle();
+    frames(80, 0);
+    await settle();
+    expect(voice.sent("commit")).toHaveLength(0);
+    frames(10, 0.03);
+    frames(28, 0);
+    await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(2));
+    expect(voice.sent("decide")[1]).toMatchObject({ text: "Add a readme with a license section" });
+    expect(voice.sent("commit")).toHaveLength(0);
+    voice.session.close();
+  });
+
+  it("start_task commits after the hold", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Add a readme", { turn: "complete", action: "start_task", say: "On it.", request: "Add a README" });
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(12, 0.03);
+    frames(28, 0);
+    await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(1));
+    await settle();
+    frames(106, 0);
+    await settle();
+    expect(voice.sent("commit")).toHaveLength(0);
+    frames(1, 0);
+    await vi.waitFor(() => expect(voice.sent("commit")).toHaveLength(1));
+    voice.session.close();
+  });
+
+  it("turn_active on commit re-decides once with finalCall", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Add a readme", { turn: "complete", action: "start_task", say: "On it.", request: "Add a README" });
+    const answer = voice.request.getMockImplementation()!;
+    let commits = 0;
+    voice.request.mockImplementation(command => command.type === "commit" && ++commits === 1
+      ? Promise.resolve({ refused: "turn_active" }) : answer(command));
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(12, 0.03);
+    frames(150, 0);
+    await vi.waitFor(() => expect(voice.sent("commit")).toHaveLength(2));
+    expect(voice.sent("decide")).toEqual([
+      expect.objectContaining({ finalCall: false }), expect.objectContaining({ finalCall: true, text: "Add a readme" })]);
+    expect(voice.sent("commit")[1]).toMatchObject({ decisionId: "d2" });
+    voice.session.close();
+  });
+
+  it.each(["mute", "close"] as const)("%s during the hold sends no commit", async action => {
+    vi.clearAllMocks();
+    const voice = fixture("Add a readme", { turn: "complete", action: "start_task", say: "On it.", request: "Add a README" });
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(12, 0.03);
+    frames(28, 0);
+    await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(1));
+    await settle();
+    frames(50, 0);
+    if (action === "mute") voice.session.mute(); else voice.session.close();
+    frames(200, 0);
+    await settle();
+    expect(voice.sent("commit")).toHaveLength(0);
+    if (action === "mute") voice.session.close();
+  });
+
+  it("a backchannel at a pause never decides", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Mm-hmm.");
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(12, 0.03);
+    frames(150, 0);
+    await settle();
+    expect(voice.sent("decide")).toHaveLength(0);
+    expect(voice.sent("commit")).toHaveLength(0);
+    voice.session.close();
+  });
+
+  it("rollover keeps one request across 30 seconds", async () => {
+    vi.clearAllMocks();
+    const voice = fixture();
+    const answer = voice.request.getMockImplementation()!;
+    let finals = 0;
+    voice.request.mockImplementation(command => command.type === "decode" && command.final
+      ? Promise.resolve({ text: ++finals === 1 ? "First I want the timer gone" : "and then the narration fixed." })
+      : command.type === "decode" ? Promise.resolve({ text: "" }) : answer(command));
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(1475, 0.03);
+    frames(40, 0.03);
+    frames(60, 0);
+    await vi.waitFor(() => expect(voice.sent("commit")).toHaveLength(1));
+    expect(voice.callbacks.error).not.toHaveBeenCalled();
+    expect(voice.sent("decide")).toEqual([expect.objectContaining({
+      text: "First I want the timer gone and then the narration fixed." })]);
+    expect(voice.request.mock.calls.filter(([command]) => command.type === "snapshot")).toHaveLength(1);
+    voice.session.close();
+  });
+
+  it("decide unavailable keeps the draft for review", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Use SQLite for the tests");
+    const answer = voice.request.getMockImplementation()!;
+    voice.request.mockImplementation(command => command.type === "decide"
+      ? Promise.resolve({ refused: "voice_agent_unavailable" }) : answer(command));
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(12, 0.03);
+    frames(28, 0);
+    await vi.waitFor(() => expect(voice.callbacks.state)
+      .toHaveBeenCalledWith({ reviews: [{ id: expect.any(String), transcript: "Use SQLite for the tests" }] }));
+    expect(voice.callbacks.error).toHaveBeenCalledOnce();
+    expect(voice.sent("commit")).toHaveLength(0);
+    voice.session.close();
   });
 
   it("closes a session that finishes starting after the renderer has been disposed", async () => {

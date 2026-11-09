@@ -28,7 +28,36 @@ export type VoiceCommand =
   | ({ type: "stop" | "interrupt" } & SessionCommand)
   | ({ type: "snapshot" } & UtteranceCommand)
   | ({ type: "decode"; pcm: ArrayBuffer; final: boolean } & UtteranceCommand)
-  | ({ type: "submit"; text: string; intent: VoiceIntent } & UtteranceCommand);
+  | ({ type: "submit"; text: string; intent: VoiceIntent } & UtteranceCommand)
+  | ({ type: "decide"; text: string; silenceMs: number; finalCall: boolean } & UtteranceCommand)
+  | ({ type: "commit"; decisionId: string } & UtteranceCommand);
+
+export type VoiceAction = "listen" | "reply" | "clarify" | "start_task" | "steer";
+export interface VoiceDecision {
+  decisionId: string;
+  turn: "complete" | "cut_off" | "thinking";
+  action: VoiceAction;
+  say: string;
+  request: string;
+}
+/** A refusal the host reports as data: nothing happened, so the session may act again. */
+export type VoiceRefusal = "turn_active" | "turn_not_active" | "voice_agent_unavailable";
+
+const ACTIONS: readonly VoiceAction[] = ["listen", "reply", "clarify", "start_task", "steer"];
+const TURNS: readonly VoiceDecision["turn"][] = ["complete", "cut_off", "thinking"];
+
+export function refusalOf(result: Record<string, unknown>): VoiceRefusal | undefined {
+  const refused = result.refused;
+  return refused === "turn_active" || refused === "turn_not_active" || refused === "voice_agent_unavailable"
+    ? refused : undefined;
+}
+
+export function decisionOf(result: Record<string, unknown>): VoiceDecision | undefined {
+  const { decisionId, turn, action, say, request } = result;
+  if (typeof decisionId !== "string" || !decisionId || typeof say !== "string" || typeof request !== "string"
+    || !TURNS.includes(turn as VoiceDecision["turn"]) || !ACTIONS.includes(action as VoiceAction)) return undefined;
+  return { decisionId, turn: turn as VoiceDecision["turn"], action: action as VoiceAction, say, request };
+}
 
 export type VoiceEvent =
   | ({ type: "audio"; replyId: string; pcm: ArrayBuffer; sampleRate: number } & UtteranceCommand)

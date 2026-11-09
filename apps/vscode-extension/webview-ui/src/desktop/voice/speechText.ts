@@ -6,27 +6,6 @@ function words(text: string): string[] {
   return text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
-export function soundsUnfinished(text: string): boolean {
-  const tokens = words(text);
-  const last = tokens.at(-1);
-  return !/\s/u.test(text) || last === undefined ||
-    /^(?:and|or|but|because|with|to|the|a|an|in|of|for|before|after|until|unless|when|if|uh|um)$/u.test(last) ||
-    /^(?:before|after|until|unless|when|if) (?:i|you|we|they|it)$/u.test(tokens.slice(-2).join(" "));
-}
-
-export function hasConflictingReferences(partial: string, final: string): boolean {
-  const references = (text: string): string[] =>
-    text.toLowerCase().match(/[\p{L}\p{N}_-]+\.[\p{L}\p{N}_-]+/gu) ?? [];
-  const previous = references(partial);
-  const current = references(final);
-  return current.length > 0 && previous.some(reference => !current.includes(reference));
-}
-
-export function isStableTranscript(first: string, second: string): boolean {
-  const normalize = (text: string) => text.trim().replace(/[.!?]+$/u, "").replace(/\s+/gu, " ");
-  return hasSubstantiveSpeech(first) && normalize(first) === normalize(second);
-}
-
 export function clearOverlapRequest(text: string): boolean {
   // A short reply to playback can be misheard as an instruction. Require a
   // recognizable correction cue or instruction after the audio has cleared.

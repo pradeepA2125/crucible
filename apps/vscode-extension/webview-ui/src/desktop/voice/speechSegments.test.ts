@@ -3,8 +3,8 @@ import { CAPTURE_FRAME_BYTES, SpeechSegments } from "./speechSegments";
 
 function fixture() {
   const callbacks = {
-    start: vi.fn(), partial: vi.fn(), pause: vi.fn(), settle: vi.fn(), recheck: vi.fn(), resume: vi.fn(), pauseExpired: vi.fn(),
-    finish: vi.fn(), discard: vi.fn(), tooLong: vi.fn(),
+    start: vi.fn(), partial: vi.fn(), pause: vi.fn(), resume: vi.fn(), waitLimit: vi.fn(),
+    rollover: vi.fn(), finish: vi.fn(), discard: vi.fn(),
   };
   const segments = new SpeechSegments(callbacks);
   return {
@@ -64,17 +64,28 @@ describe("speech segmentation", () => {
     speech.feed(70, 0.03);
     speech.feed(100, 0);
     expect(speech.pause).toHaveBeenCalledOnce();
-    expect(speech.settle).not.toHaveBeenCalled();
+    expect(speech.segments.silenceMs).toBe(2000);
     speech.feed(12, 0.03);
-    expect(speech.resume).toHaveBeenCalledOnce();
-    speech.feed(224, 0);
+    expect(speech.resume).toHaveBeenCalledExactlyOnceWith(2000);
+    expect(speech.segments.silenceMs).toBe(0);
+    speech.feed(399, 0);
     expect(speech.pause).toHaveBeenCalledTimes(2);
-    expect(speech.settle).toHaveBeenCalledOnce();
-    expect(speech.pauseExpired).not.toHaveBeenCalled();
+    expect(speech.waitLimit).not.toHaveBeenCalled();
     expect(speech.finish).not.toHaveBeenCalled();
     speech.feed(1, 0);
+    expect(speech.waitLimit).toHaveBeenCalledOnce();
+    speech.feed(100, 0);
+    expect(speech.waitLimit).toHaveBeenCalledOnce();
     expect(speech.start).toHaveBeenCalledOnce();
-    expect(speech.pauseExpired).toHaveBeenCalledOnce();
+  });
+
+  it("does not reach the wait limit when speech resumes just before it", () => {
+    const speech = fixture();
+    speech.feed(20, 0.03);
+    speech.feed(399, 0);
+    speech.feed(5, 0.03);
+    speech.feed(10, 0);
+    expect(speech.waitLimit).not.toHaveBeenCalled();
   });
 
   it("extends a short unfinished phrase and allows an explicit send", () => {
@@ -86,14 +97,30 @@ describe("speech segmentation", () => {
     expect(speech.finish).toHaveBeenCalledOnce();
   });
 
-  it("discards an overlong capture and waits for silence before starting again", () => {
+  it("rolls a long capture over into the next segment without starting a new turn", () => {
     const speech = fixture();
-    speech.feed(1500, 0.03);
-    expect(speech.tooLong).toHaveBeenCalledOnce();
-    expect(speech.finish).not.toHaveBeenCalled();
-    expect(speech.start).toHaveBeenCalledOnce();
+    speech.feed(1474, 0.03, 1);
+    expect(speech.rollover).not.toHaveBeenCalled();
+    speech.feed(1, 0.03, 1);
+    expect(speech.rollover).toHaveBeenCalledOnce();
+    const [pcm] = speech.rollover.mock.calls[0] as [ArrayBuffer];
+    expect(pcm.byteLength).toBe(1475 * CAPTURE_FRAME_BYTES);
+    speech.feed(40, 0.03, 2);
     speech.feed(28, 0);
-    speech.feed(4, 0.03);
-    expect(speech.start).toHaveBeenCalledTimes(2);
+    expect(speech.start).toHaveBeenCalledOnce();
+    expect(speech.pause).toHaveBeenCalledOnce();
+    const [segment] = speech.pause.mock.calls[0] as [ArrayBuffer];
+    expect(segment.byteLength).toBe((40 + 8) * CAPTURE_FRAME_BYTES);
+    expect(new DataView(segment).getInt16(0, true)).toBe(2);
+  });
+
+  it("never emits a negative segment when a rollover lands in a pause", () => {
+    const speech = fixture();
+    speech.feed(1470, 0.03);
+    speech.feed(30, 0);
+    expect(speech.rollover).toHaveBeenCalledOnce();
+    expect(speech.pause).toHaveBeenCalledOnce();
+    const [segment] = speech.pause.mock.calls[0] as [ArrayBuffer];
+    expect(segment.byteLength).toBeGreaterThanOrEqual(0);
   });
 });

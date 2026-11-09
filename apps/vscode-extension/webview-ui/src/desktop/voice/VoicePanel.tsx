@@ -29,7 +29,8 @@ interface VoiceTurn {
 }
 
 function phase(state: VoiceSessionState, pushToTalk: boolean) {
-  if (state.checking) return "Checking the pause";
+  if (state.waiting) return "Still listening…";
+  if (state.checking) return "Thinking about that";
   if (state.capturing) return "Hearing you";
   if (state.speaking) return "Speaking";
   if (state.microphone === "starting") return "Opening microphone";
