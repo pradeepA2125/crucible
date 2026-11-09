@@ -224,6 +224,12 @@ export interface DiffService {
 
 export type BackendClientFactory = (baseUrl: string) => BackendTaskClient;
 
+type VoiceChatHooks = {
+  chunk(text: string): void;
+  finish(): void;
+  recover(): void;
+};
+
 export class CrucibleController {
   private session: TaskSessionState | null = null;
   private latestTask: TaskView | null = null;
@@ -1438,6 +1444,7 @@ await this.runProjectWork(this.activeThreadId ?? "", "task", undefined, async (v
     imageAttachments?: { name: string; mediaType: string; dataUrl: string; bytes: number }[],
     draftId?: string,
     originalDraftText?: string,
+    voice?: VoiceChatHooks,
   ): Promise<void> {
 const originThread = this.activeThreadId, originWorkspace = this.ui.getWorkspacePath(), originUrl = this.settings.getBackendBaseUrl();
 let entered = false;
@@ -1452,12 +1459,14 @@ entered = true;
     const currentSend = () => !this.disposed && this.contextState.current(sendEpoch, this.settings.getBackendBaseUrl()) && this.ui.getWorkspacePath() === workspacePath;
     // InputArea already cleared the draft: every refusal gives the text back (spec §5.3).
     const restoreDraft = () => {
+      if (voice) { voice.recover(); return; }
       const recovery = draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined;
       if (currentSend()) this.ui.restoreDraft(originalDraftText ?? text, recovery);
       else this.ui.staleDraft?.(originalDraftText ?? text, recovery);
     };
     const staleSend = () => {
       if (currentSend()) return false;
+      if (voice) { voice.recover(); return true; }
       this.ui.staleDraft?.(originalDraftText ?? text, draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined);
       return true;
     };
@@ -1568,6 +1577,7 @@ entered = true;
         ...(imageAttachments?.length ? { imageAttachments } : {}),
         ...(planMode !== undefined ? { planMode } : {}),
         messageId,
+        ...(voice ? { voiceRequiresIdle: true } : {}),
       });
     } catch (error) {
       if (this.disposed) { this.finishTurn(owner); return; }
@@ -1607,6 +1617,7 @@ entered = true;
     this.admitTurn(owner);
     if (!currentSend()) { this.finishTurn(owner); return; }
     if (result.kind === "queued") {
+      voice?.recover();
       // A notice turn took the message; its relay is already live (spec §5.3). The
       // bubble says it is queued until that turn takes it.
       this.ui.markQueued(messageId);
@@ -1614,7 +1625,7 @@ entered = true;
       this.ui.setChatInputEnabled(true);
       return;
     }
-    try { await this.streamTurn(result.events, owner); }
+    try { await this.streamTurn(result.events, owner, voice); }
     catch (error) {
       // Revalidate after the outer await: navigation may occur in the microtask
       // between iterator failure and this caller receiving its rejection.
@@ -1624,6 +1635,7 @@ entered = true;
   
 });
 if (!entered) {
+  if (voice) { voice.recover(); return; }
   const recovery = draftId ? { draftId, imageAttachments: imageAttachments ?? [], ...(mentionedPaths ? { mentionedPaths } : {}) } : undefined;
   if (originThread === this.activeThreadId && originWorkspace === this.ui.getWorkspacePath() && originUrl === this.settings.getBackendBaseUrl()) this.ui.restoreDraft(originalDraftText ?? text, recovery);
   else this.ui.staleDraft?.(originalDraftText ?? text, recovery);
@@ -1635,7 +1647,7 @@ if (!entered) {
    * and the controller mode-decision dispatch — both stream the same chat events.
    * The caller disables input + sets `turnAbort`; this owns the loop and teardown.
    */
-  private async streamTurn(stream: AsyncIterable<StreamEvent>, owner: TurnOperation): Promise<void> {
+  private async streamTurn(stream: AsyncIterable<StreamEvent>, owner: TurnOperation, voice?: VoiceChatHooks): Promise<void> {
     const epoch = owner.epoch;
     const url = owner.url;
     const streamEpoch = ++this.streamEpoch;
@@ -1707,6 +1719,7 @@ if (!entered) {
         } else if (event.type === "chat_response") {
           const chunk = (event.payload["chunk"] as string) ?? "";
           this.ui.appendChatChunk(chunk);
+          if (chunk) voice?.chunk(chunk);
         } else if (event.type === "chat_breadcrumb") {
           // Controller decisions (mode choice, edit accept/reject) broadcast their
           // breadcrumbs on THIS turn stream. streamTurn previously had no branch for
@@ -1872,6 +1885,7 @@ if (!entered) {
       }
     } finally {
       if (current() && !owner.unknown) {
+      voice?.finish();
       if (!completed) { this.contextState.fail(epoch, url); this.renderContext(); }
       this.openToolEvent = {}; // clear cross-turn stale ids
       this.ui.updateWorkbar(null);

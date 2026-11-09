@@ -1473,6 +1473,17 @@ def build_controller_step_payload(
     if isinstance(recalled, list) and recalled:
         payload["recalled_memories"] = recalled
     payload["goal"] = plan_context.get("goal", "")
+    corrections = plan_context.get("goal_corrections")
+    if isinstance(corrections, list) and corrections:
+        payload["goal_corrections"] = {
+            "instruction": (
+                "These are the user's corrections for this turn, oldest first. Apply them "
+                "to the goal and the final answer. The newest correction takes precedence "
+                "where they conflict. If the user narrowed the scope, omit the superseded "
+                "work and examples even if they appear in the original goal or prior history."
+            ),
+            "messages": corrections,
+        }
     if plan_context.get("memory_v2") and phase != "AGENT":
         payload["memory_recap"] = {
             "previous": str(plan_context.get("memory_recap", "")),

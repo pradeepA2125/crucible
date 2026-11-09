@@ -24,6 +24,7 @@ REVIEWED_READ_ONLY_GET_ROUTES = frozenset({
     # Bounded no-follow read of a path the checkpoint itself recorded.
     ("api/routes.py", "/chat/threads/{thread_id}/checkpoints/{seq}/baseline/file"),
     ("api/routes.py", "/chat/threads/{thread_id}/live"),
+    ("api/routes.py", "/chat/threads/{thread_id}/conversation/{message_id}"),
     ("api/routes.py", "/chat/threads/{thread_id}/rewind-preview"),
     ("api/routes.py", "/chat/threads/{thread_id}/sessions/{session_id}/transcript"),
     ("api/routes.py", "/chat/threads/{thread_id}/usage"),

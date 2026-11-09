@@ -6,6 +6,7 @@
   "main": "dist/main.cjs",
   "scripts": {
     "build": "node build.mjs",
+    "build:voice": "bash voice-native/build.sh dist/voice-native",
     "start": "electron .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --maxWorkers=2",

@@ -12,6 +12,7 @@ import { AgentsSection } from "./sections/AgentsSection";
 import { InstructionsSection } from "./sections/InstructionsSection";
 import { SandboxSection } from "./sections/SandboxSection";
 import { PoliciesSection } from "./sections/PoliciesSection";
+import { VoiceSection } from "./sections/VoiceSection";
 import { RuntimeSection } from "./sections/RuntimeSection";
 import { AppearanceSection } from "./sections/AppearanceSection";
 import { isAccent, isAppearance, type Accent, type Appearance } from "../theme";
@@ -143,6 +144,7 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
               </BtnPrimary>
             </div>
           )}
+          {desktop && section === "voice" && <VoiceSection />}
           <div hidden={!desktop || section !== "desktop"}><DesktopPreferences hostDesktop={desktop} /></div>
           <div hidden={!desktop || section !== "updates"}><DesktopUpdates hostDesktop={desktop} /></div>
           <div hidden={!desktop || section !== "drafts"}><DraftPersistence hostDesktop={desktop} /></div>
@@ -150,7 +152,7 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
             {section === "appearance" && local && (
               <AppearanceSection appearance={local.appearance} accent={local.accent} busy={busy} send={send} />
             )}
-            {section !== "appearance" && section !== "drafts" && section !== "desktop" && section !== "updates" && !props && (
+            {section !== "appearance" && section !== "drafts" && section !== "desktop" && section !== "updates" && section !== "voice" && !props && (
               <div className="grid justify-items-start gap-3">
                 <p className="text-text-2">Can’t reach the Crucible backend, so this section can’t load.</p>
                 {error && <p className="text-text-3" style={{ fontSize: "var(--fs-meta)" }}>{error}</p>}

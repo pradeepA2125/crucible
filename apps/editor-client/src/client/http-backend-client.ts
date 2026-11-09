@@ -24,6 +24,9 @@ import {
   ChatEventSchema,
   ChatMessageSchema,
   ThreadLiveStateSchema,
+  ConversationReceiptSchema,
+  type ConversationReceipt,
+  type ConversationRequest,
   approvalFromWire,
   SandboxConfigSchema,
   ProjectTrustSchema,
@@ -1133,6 +1136,7 @@ export class HttpBackendClient implements BackendTaskClient {
       pendingGates: rawGates.map(toGate),
       plan: raw["plan"] ?? null,
       turnActive: raw["turn_active"] ?? false,
+      activeTurnId: raw["active_turn_id"] ?? null,
       failureSummary: this.toFailureSummary(raw),
       runSummary: this.toRunSummary(raw),
       taskNarrative: this.toTaskNarrative(raw),
@@ -1743,6 +1747,25 @@ export class HttpBackendClient implements BackendTaskClient {
     return raw.map((m) => MemoryViewSchema.parse(mapMemoryView(m)));
   }
 
+  async submitConversation(threadId: string, request: ConversationRequest, signal: AbortSignal): Promise<ConversationReceipt> {
+    return ConversationReceiptSchema.parse(await this.fetchJsonDetail(
+      `/v1/chat/threads/${encodeURIComponent(threadId)}/conversation`,
+      { method: "POST", body: JSON.stringify(request), signal },
+    ));
+  }
+
+  async conversationReceipt(threadId: string, messageId: string, signal: AbortSignal): Promise<ConversationReceipt | null> {
+    try {
+      return ConversationReceiptSchema.parse(await this.fetchJsonDetail(
+        `/v1/chat/threads/${encodeURIComponent(threadId)}/conversation/${encodeURIComponent(messageId)}`,
+        { signal },
+      ));
+    } catch (error) {
+      if (error instanceof Error && "status" in error && error.status === 404) return null;
+      throw error;
+    }
+  }
+
   async sendChatMessage(threadId: string, message: string, signal?: AbortSignal, options?: SendChatOptions): Promise<SendChatResult> {
     const response = await this.fetchChatAdmission(
       `${this.options.baseUrl}/v1/chat/threads/${encodeURIComponent(threadId)}/message`,
@@ -1751,6 +1774,7 @@ export class HttpBackendClient implements BackendTaskClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           content: message,
+          ...(options?.voiceRequiresIdle ? { voice_requires_idle: true } : {}),
           ...(options?.expectedProcessId ? { expected_process_id: options.expectedProcessId } : {}),
           ...(options?.stepReview !== undefined ? { step_review: options.stepReview } : {}),
           ...(options?.forcedSkills && options.forcedSkills.length

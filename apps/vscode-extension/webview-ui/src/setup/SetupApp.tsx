@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CardShell } from "../components/shared/CardShell";
-import { BtnPrimary } from "../components/shared/buttons";
+import { BtnGhost, BtnPrimary } from "../components/shared/buttons";
 import { Icon } from "../components/Icon";
 import { FIELD } from "../settings/ui";
 import { ContinueWithClaudeButton } from "../components/shared/ClaudeBrand";
@@ -71,9 +71,29 @@ const NO_PROVIDER_STATE: SettingsState = {
   envFlags: {}, restartRequired: false,
 };
 
+type SetupVoicePort = { request(command: { type: "status" | "install" | "cancelInstall"; model?: "whisper-small" }): Promise<unknown> };
+function setupVoice(): SetupVoicePort | undefined {
+  return (window as unknown as { crucibleVoice?: SetupVoicePort }).crucibleVoice;
+}
+
 export default function SetupApp() {
   const [step, setStep] = useState<Step>("welcome");
   const [localModels, setLocalModels] = useState(true);
+  const [voiceAvailable, setVoiceAvailable] = useState(false);
+  const [localVoice, setLocalVoice] = useState(false);
+  const [voiceInstall, setVoiceInstall] = useState<"idle" | "working" | "ready" | "failed" | "cancelled">("idle");
+  const voiceDownload = useRef(0);
+
+  useEffect(() => {
+    let current = true;
+    void setupVoice()?.request({ type: "status" }).then(status => {
+      if (current && typeof status === "object" && status && "available" in status) {
+        setVoiceAvailable(status.available === true);
+      }
+    }, () => {});
+    return () => { current = false; voiceDownload.current++; };
+  }, []);
+
   const [runtimePath, setRuntimePath] = useState("~/.crucible/runtime");
   const localModelsChosen = useRef(false);
   const [progress, setProgress] = useState<Record<string, ProgressRow>>({});
@@ -172,6 +192,17 @@ export default function SetupApp() {
     setBusy(true);
     setError(null);
     vscode.postMessage({ type: "setup/install", localModels });
+    if (localVoice && voiceInstall !== "working" && voiceInstall !== "ready") {
+      const port = setupVoice();
+      if (!port) return;
+      const id = ++voiceDownload.current;
+      setVoiceInstall("working");
+      void port.request({ type: "install", model: "whisper-small" }).then(
+        () => { if (id === voiceDownload.current) setVoiceInstall("ready"); },
+        () => { if (id === voiceDownload.current) setVoiceInstall("failed"); },
+      );
+    }
+
   };
 
   const continueWithChatGPT = () => {
@@ -259,6 +290,15 @@ export default function SetupApp() {
               You can change the choice later in Settings.
             </p>
           </CardShell>
+          {voiceAvailable && <CardShell icon="spark" title="Local voice">
+            <label className="flex items-center gap-3 px-3 py-3 text-sm">
+              <input type="checkbox" checked={localVoice} onChange={event => setLocalVoice(event.target.checked)} />
+              Enable local voice
+            </label>
+            <p className="px-3 pb-3 text-xs text-text-3">
+              Optional 465 MiB speech recognition download. Microphone access is requested when you start a voice session.
+            </p>
+          </CardShell>}
           <BtnPrimary className="self-start" icon="bolt" onClick={startInstall}>
             Install runtime
           </BtnPrimary>
@@ -287,6 +327,19 @@ export default function SetupApp() {
           </CardShell>
         </div>
       )}
+
+      {voiceInstall !== "idle" && (step === "install" || step === "provider") &&
+        <div className="flex items-center gap-3 rounded-control border border-border px-3 py-2 text-meta text-text-2" role="status">
+          <span>{voiceInstall === "working" ? "Downloading the optional voice model…"
+            : voiceInstall === "ready" ? "Local voice is ready."
+              : voiceInstall === "cancelled" ? "Voice download cancelled. You can enable it later."
+                : "Voice download failed. You can retry from the voice controls."}</span>
+          {voiceInstall === "working" && <BtnGhost onClick={() => {
+            voiceDownload.current++;
+            setVoiceInstall("cancelled");
+            void setupVoice()?.request({ type: "cancelInstall" }).catch(() => {});
+          }}>Cancel voice download</BtnGhost>}
+        </div>}
 
       {step === "provider" && (
         <div className="anim-section flex flex-col gap-3">

@@ -292,6 +292,9 @@ class ThreadLiveState(BaseModel):
     # Which kind of main turn is running (spec §5.3): the composer stays usable during a
     # notice turn. None when no turn is running.
     turn_kind: Literal["user", "notice"] | None = None
+    # The running turn a conversation message (status question / correction) can address,
+    # sent back as `expected_turn_id`. None between turns: those messages go to /message.
+    active_turn_id: str | None = None
     status: str | None = None
     # Every pending gate, controller gates first (spec §4.5).
     pending_gates: list[PendingGate] = Field(default_factory=list)

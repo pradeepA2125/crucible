@@ -1,0 +1,122 @@
+.desktop-icon.crucible-voice-toggle {
+  width: auto;
+  padding: 0 8px;
+  font: inherit;
+  font-size: var(--fs-caption);
+}
+
+.crucible-voice-panel {
+  flex-shrink: 0;
+  min-width: 0;
+  max-height: 55%;
+  overflow: auto;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-0);
+}
+
+.crucible-voice-body {
+  display: grid;
+  gap: 8px;
+  padding: 8px 12px 12px;
+  color: var(--text-2);
+  font-size: var(--fs-caption);
+}
+
+.crucible-voice-body p { margin: 0; overflow-wrap: anywhere; }
+
+.crucible-voice-actions,
+.crucible-voice-setup,
+.crucible-voice-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.crucible-voice-setup > label,
+.crucible-voice-form > label {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.crucible-voice-form > label:first-child { flex: 1 1 200px; }
+
+.crucible-voice-body select,
+.crucible-voice-body input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--input-border);
+  border-radius: var(--r-control);
+  padding: 6px 8px;
+  background: var(--input-bg);
+  color: var(--input-fg);
+  font: inherit;
+}
+
+.crucible-voice-body select:focus-visible,
+.crucible-voice-transcript:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.crucible-voice-phase {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  color: var(--text-3);
+}
+
+.crucible-voice-phase::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-round);
+  background: currentColor;
+}
+
+.crucible-voice-phase[data-listening="true"] { color: var(--success); }
+
+.crucible-voice-send {
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  font: inherit;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.crucible-voice-send:hover:enabled { background: var(--accent-fill-hover); }
+.crucible-voice-send:disabled { opacity: .5; cursor: default; }
+.crucible-voice-hold { touch-action: none; user-select: none; }
+
+.crucible-voice-transcript {
+  display: grid;
+  gap: 6px;
+  max-height: min(180px, 25vh);
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-control);
+  background: var(--surface-1);
+}
+
+.crucible-voice-transcript ol {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.crucible-voice-transcript li { display: grid; gap: 4px; }
+.crucible-voice-transcript strong { margin-right: 4px; color: var(--text-1); }
+.crucible-voice-partial { color: var(--text-3); }
+.crucible-voice-receipt { color: var(--text-3); }
+.crucible-voice-error { color: var(--danger); }

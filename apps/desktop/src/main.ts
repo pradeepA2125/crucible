@@ -20,6 +20,8 @@ import { join, dirname, basename, isAbsolute, relative } from "node:path";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { APP_ORIGIN, CHANNEL, parseEnvelope, type BridgeContext } from "./contract.js";
+import { VoiceHost } from "./voice/host.js";
+import { VOICE_EVENT, VOICE_REQUEST, voiceRequest } from "./voice/protocol.js";
 import { assertSender, externalURL, containedPath } from "./security.js";
 import { guardContents, secureSession, WINDOW_SECURITY } from "./native-security.js";
 import { NativeFind } from "./native-find.js";
@@ -57,6 +59,7 @@ let finder: NativeFind | undefined;
 let pendingShortcut: DesktopShortcut | undefined;
 let pendingFile: string | undefined;
 let host: ReturnType<typeof createProjectHost> | undefined;
+let voice: VoiceHost | undefined;
 const terminals=new Terminals(()=>utilityProcess.fork(join(__dirname,"terminal-worker.cjs"),[],{env:shellEnvironment(process.env),execArgv:[],stdio:"ignore",serviceName:"Crucible Your shell"}));
 let terminalLaunchPending=false;
 let meta: JsonState;
@@ -102,7 +105,9 @@ let systemShutdown = false;
 const draftFlusher = new DraftFlusher();
 let context: BridgeContext = { v: 1, clientId: randomUUID(), viewId: randomUUID(), projectId: null, threadId: null, processId: null };
 const post = (payload: Record<string, unknown>) => {
+  const previousThread = context.threadId;
   syncBaselineThread(context, payload, () => baselineRequests?.cancel());
+  if (context.threadId !== previousThread) voice?.end("The conversation changed.");
   if (window && !window.isDestroyed()) window.webContents.send(CHANNEL.event, { context:{...context}, payload: payload.type === "desktop/project" ? { ...payload, projectId: context.projectId } : payload });
 };
 const openExternal = async (raw: string) => { const url = externalURL(raw); if (!url) throw new Error("Only secure web links can be opened."); await shell.openExternal(url); };
@@ -187,7 +192,7 @@ async function finishQuit(discard=false):Promise<void>{
   }
   releaseAwake();clearInterval(projectsTimer);
   try{if(systemShutdown){await pendingUpdate?.cancel();pendingUpdate=undefined;installAfterCleanup=undefined;}
-    await windowMemory?.flush();await cleanAll([()=>provisioner.dispose(),()=>updates?.dispose(),()=>disposeReaders(),()=>terminals.dispose(),()=>pool.dispose(discardApproved||systemShutdown)]);
+    await windowMemory?.flush();await cleanAll([()=>provisioner.dispose(),()=>updates?.dispose(),()=>disposeReaders(true),()=>terminals.dispose(),()=>pool.dispose(discardApproved||systemShutdown)]);
     if(installAfterCleanup&&!systemShutdown)await installAfterCleanup();
     for(const notification of notices.values())notification.close();notices.clear();lifecycleWindow?.close();closed=true;app.quit();}
   catch(error){finishing=false;
@@ -217,9 +222,11 @@ const load = async (document: string) => {
 };
 const navigate = (document: string) => { if(closing)return; window?.show(); window?.focus(); void load(document).catch(error => notice(error instanceof Error ? error.message : "Navigation was cancelled.")); };
 const notice = async (message: string) => { if (window) await dialog.showMessageBox(window, { type: "info", title: "Crucible", message }); };
-function disposeReaders(): void {
+function disposeReaders(quitting = false): Promise<void> | undefined {
+  const voiceCleanup = quitting ? voice?.dispose() : voice?.end("The project view changed.");
   baselineRequests?.dispose();baselineRequests=undefined;gitRequests?.dispose();gitRequests=undefined;
   fileRequests?.dispose();fileRequests=undefined;fileActions=undefined;inspectors?.dispose();finder?.stop();pendingFile=undefined;pendingShortcut=undefined;
+  return voiceCleanup;
 }
 async function attachProject(entry: ProjectEntry, selectedHost: ReturnType<typeof createProjectHost>, generation=projectOpenGeneration): Promise<void> {
   const current=()=>!closing&&!closed&&generation===projectOpenGeneration&&pool.get(entry.id)===selectedHost;
@@ -320,6 +327,24 @@ function sender(event: Electron.IpcMainInvokeEvent): void {
   if (!window) throw new Error("Desktop window is closed.");
   assertSender({ id: event.sender.id, frameIsMain: event.senderFrame === window.webContents.mainFrame, url: event.senderFrame?.url ?? "" }, window.webContents.id);
 }
+ipcMain.handle(VOICE_REQUEST, async (event, raw: unknown) => {
+  try {
+    sender(event);
+    if (!voice || closing) throw new Error("Local voice is unavailable.");
+    const document = new URL(event.senderFrame!.url).pathname;
+    const request = voiceRequest.parse(raw);
+    const isSetupAction = request.type === "status" || request.type === "install" || request.type === "cancelInstall";
+    const isSettingsAction = isSetupAction || request.type === "remove";
+    if (document !== "/desktop-app.html" &&
+        !(isSetupAction && document === "/setup.html") &&
+        !(isSettingsAction && document === "/settings.html")) {
+      throw new Error("Open the desktop conversation or setup to use local voice.");
+    }
+    return { value: await voice.request(request) };
+  } catch (error) {
+    return { error: error instanceof Error && error.name !== "ZodError" ? error.message : "Invalid local voice request." };
+  }
+});
 ipcMain.handle(CHANNEL.bootstrap, event => { if (lifecycleWindow?.owns(event.sender.id)) return lifecycleWindow.bootstrap(event); if (inspectors?.owns(event.sender.id)) return inspectors.bootstrap(event); sender(event); return { ...context }; });
 ipcMain.handle(CHANNEL.command, async (event, raw: unknown) => {
   if (lifecycleWindow?.owns(event.sender.id)) return lifecycleWindow.handle(event, raw);
@@ -518,7 +543,7 @@ ipcMain.handle(CHANNEL.command, async (event, raw: unknown) => {
 app.on("before-quit", event => {
   if(closed)return;event.preventDefault();
   if(systemShutdown){void finishQuit();return;}
-  if(closing)return;closing=true;projectOpenGeneration++;openingLease=undefined;opening=false;
+  if(closing)return;closing=true;voice?.end();projectOpenGeneration++;openingLease=undefined;opening=false;
   if(!lifecycleWindow){void finishQuit();return;}
   restoreMainWindow();
   void previewQuit().catch(async error=>{
@@ -539,7 +564,7 @@ else {
       deadline.unref();
       void finishQuit();
     });
-    powerMonitor.on("suspend",()=>{suspended=true;transitions.reset();releaseAwake();});
+    powerMonitor.on("suspend",()=>{voice?.end("The Mac went to sleep.");suspended=true;transitions.reset();releaseAwake();});
     powerMonitor.on("resume",()=>{suspended=true;transitions.reset();void pool.refresh().then(values=>{suspended=false;updateLifecycle(values);});});
     meta = new JsonState(join(app.getPath("userData"), "preferences.json"));
     diagnose=localDiagnostics(app.getPath("userData"));diagnose("main-start");
@@ -552,8 +577,27 @@ else {
       await meta.update("desktop.legacyCredentialCandidate",candidate);
     }
     registry=new ProjectRegistry(join(app.getPath("userData"),"projects.json"),meta.get<string>("lastProject"));
+    voice = new VoiceHost({
+      profile: app.getPath("userData"),
+      helpers: join(__dirname, "voice-native"),
+      platform: process.platform,
+      architecture: process.arch,
+      thread: async id => {
+        const source = host, view = context.viewId;
+        if (!source || id !== context.threadId) throw new Error("Open the intended conversation before starting voice.");
+        const thread = await source.voiceThread(id);
+        return { ...thread, current: () => view === context.viewId && source === host &&
+          id === context.threadId && !closing && thread.current() };
+      },
+      publish: event => {
+        if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) {
+          window.webContents.send(VOICE_EVENT, event);
+        }
+      },
+    });
     const dedicated = session.fromPartition("persist:crucible-desktop");
-    await secureSession(dedicated, await realpath(join(__dirname, "renderer")));
+    await secureSession(dedicated, await realpath(join(__dirname, "renderer")), contents =>
+      !!window && contents === window.webContents && !!voice?.canUseMicrophone);
     const savedWindow=restoredWindow(meta.get("desktop.window"),screen.getAllDisplays().map(d=>d.workArea));
     window = new BrowserWindow({ ...savedWindow.bounds, minWidth: Math.min(720,savedWindow.bounds.width), minHeight: Math.min(560,savedWindow.bounds.height), title: "Crucible", backgroundColor: "#181818",
       webPreferences: { ...WINDOW_SECURITY, preload: join(__dirname, "preload.cjs"), session: dedicated, devTools: !app.isPackaged },
@@ -567,9 +611,9 @@ else {
     app.on("activate",restoreMainWindow);
     finder = new NativeFind(window.webContents,()=>context.viewId,post);
     window.webContents.on("found-in-page",(_event,result)=>finder?.result(result));
-    window.webContents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) { finder?.stop(); baselineRequests?.cancel(); gitRequests?.cancel(); fileRequests?.cancelSearch(); host?.abandonPreparedDraft(); context.viewId = randomUUID(); if(context.projectId){const slot=slots.get(context.projectId);if(slot)slot.viewId=context.viewId;} sequence = 0; draftReady = false; } });
-    window.webContents.on("render-process-gone", (_event,details) => { diagnose("renderer-gone",{code:details.exitCode,reason:details.reason}); rendererAlive = false; baselineRequests?.cancel(); host?.abandonPreparedDraft(); });
-    window.on("unresponsive", () => { diagnose("unresponsive"); rendererAlive = false; });
+    window.webContents.on("did-start-navigation", (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace) { voice?.end("The conversation view closed."); finder?.stop(); baselineRequests?.cancel(); gitRequests?.cancel(); fileRequests?.cancelSearch(); host?.abandonPreparedDraft(); context.viewId = randomUUID(); if(context.projectId){const slot=slots.get(context.projectId);if(slot)slot.viewId=context.viewId;} sequence = 0; draftReady = false; } });
+    window.webContents.on("render-process-gone", (_event,details) => { diagnose("renderer-gone",{code:details.exitCode,reason:details.reason}); voice?.end(); rendererAlive = false; baselineRequests?.cancel(); host?.abandonPreparedDraft(); });
+    window.on("unresponsive", () => { diagnose("unresponsive"); voice?.end("The conversation window stopped responding."); rendererAlive = false; });
     window.on("responsive", () => { diagnose("responsive"); rendererAlive = true; });
     const reload = () => {
       if(closing)return;

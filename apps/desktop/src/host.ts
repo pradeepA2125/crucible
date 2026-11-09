@@ -31,6 +31,7 @@ import { JsonState, EncryptedSecrets, type Encryption } from "./store.js";
 import { createDesktopRuntime, assertInstalledLocalModels, INSTALL_NOTICE } from "./runtime.js";
 import { projectFiles } from "./project-files.js";
 import type { Payload } from "./contract.js";
+import type { VoiceThread } from "./voice/host.js";
 import type { ThemeSettings } from "../../vscode-extension/src/theme-settings.js";
 export interface HostPorts {
   draftPersistence(): boolean;
@@ -234,6 +235,40 @@ export function createProjectHost(ports: HostPorts) {
     return visible;
   };
   const canDetach=()=>!restoring && handling===0 && !drafts.hasSubmission && controller.canDetachProjectView();
+  const voiceThread = async (threadId: string): Promise<VoiceThread> => {
+    const base = backendURL, generation = backendGeneration, view = ports.viewIdentity();
+    const owner = base ? ownerFor(base) : undefined;
+    const current = () => !disposed && !restoring && !!owner && base === backendURL &&
+      generation === backendGeneration && view === ports.viewIdentity() && ports.isOpen() &&
+      threadId === controller.memoryThreadId() && ownerFor(base) === owner;
+    if (!current()) throw new Error("Open the conversation in the controlling desktop window to start voice.");
+    const access = await readAccess(false);
+    if (!current() || access?.role !== "owner") throw new Error("Only the controlling desktop can use voice in this conversation.");
+    const client = clientFactory(base);
+    return {
+      current,
+      snapshot: async signal => {
+        if (!current()) throw new Error("The voice conversation changed.");
+        const live = await client.getThreadLiveState(threadId, signal);
+        if (!current()) throw new Error("The voice conversation changed.");
+        return { active: live.turnActive, turnId: live.activeTurnId ?? null,
+          processId: live.approval?.supported ? live.approval.processId : live.processId ?? null };
+      },
+      submit: (request, signal) => {
+        if (!current()) throw new Error("The voice conversation changed.");
+        return client.submitConversation(threadId, request, signal);
+      },
+      receipt: (id, signal) => {
+        if (!current()) throw new Error("The voice conversation changed.");
+        return client.conversationReceipt(threadId, id, signal);
+      },
+      sendIdle: (text, hooks) => {
+        if (!current()) throw new Error("The voice conversation changed.");
+        return controller.sendChatMessage(text, undefined, undefined, undefined,
+          runtime.getPlanMode(), undefined, undefined, undefined, hooks);
+      },
+    };
+  };
   const fileRestore=async(threadId:string,raw:RestoreAction)=>{
     const action=restoreAction.parse(raw);
     if(disposed||restoring||!canDetach()||ports.localTerminalBusy?.())throw new Error("Finish project actions and end Your shell before using file recovery.");
@@ -254,6 +289,7 @@ export function createProjectHost(ports: HostPorts) {
     }finally{restoring=false;}
   };
   return { projectId, runtime, activity, canDetach, fileRestore, restoreBusy:()=>restoring,
+    voiceThread,
     terminalLease: async () => {
       if(restoring)throw new Error("Wait for file recovery to finish before launching Your shell.");
       const base=backendURL,generation=backendGeneration,owner=base?ownerFor(base):undefined;

@@ -2,7 +2,7 @@ import type { IconName } from "../../components/Icon";
 import type { SettingsInMsg, SettingsState } from "../types";
 
 export type SectionId =
-  | "updates" | "desktop" | "drafts" | "overview" | "appearance" | "provider" | "mcp" | "skills" | "agents" | "instructions" | "policies" | "sandbox" | "runtime";
+  | "voice" | "updates" | "desktop" | "drafts" | "overview" | "appearance" | "provider" | "mcp" | "skills" | "agents" | "instructions" | "policies" | "sandbox" | "runtime";
 
 export interface SectionMeta {
   id: Exclude<SectionId, "overview">;
@@ -34,7 +34,8 @@ export function sectionsForHost(desktop = false): SectionMeta[] {
     id: "drafts", label: "Drafts", icon: "book",
     blurb: "Encrypted storage and recovery for unsent desktop messages.",
     tint: "var(--color-accent)",
-  }, { id: "updates", label: "Updates", icon: "retry", blurb: "New desktop versions from the project’s GitHub releases.", tint: "var(--color-accent)" }, ...SECTIONS.slice(1)];
+  }, { id: "voice", label: "Local voice", icon: "spark", blurb: "Optional recognition and speech models.", tint: "var(--color-accent)" },
+  { id: "updates", label: "Updates", icon: "retry", blurb: "New desktop versions from the project’s GitHub releases.", tint: "var(--color-accent)" }, ...SECTIONS.slice(1)];
 }
 
 /** Icon tint for the Overview destination (not part of SECTIONS). */

@@ -57,6 +57,7 @@ if TYPE_CHECKING:
 
     from agentd.capabilities.tool_source import CapabilitySession
     from agentd.chat.controller_phase import ControllerPhaseSM
+    from agentd.chat.conversation import TurnSteering
     from agentd.chat.edit_session import TurnEditSession
     from agentd.domain.models import DiffEntry
     from agentd.orchestrator.broadcaster import EventBroadcaster
@@ -1348,6 +1349,7 @@ class ControllerLoop:
         live_work: Callable[[], dict[str, object] | None] | None = None,
         approval_mode: Callable[[], str] | None = None,
         sandbox_state: Callable[[], str] | None = None,
+        steering: TurnSteering | None = None,
     ) -> ControllerOutcome:
         tool_defs = [d.model_dump() for d in self._registry.definitions()]
         history = [dict(m) for m in seed_history] if seed_history else []
@@ -1433,6 +1435,7 @@ class ControllerLoop:
                 live_work=live_work,
                 approval_mode=approval_mode,
                 sandbox_state=sandbox_state,
+                steering=steering,
             )
             if iteration_cb is not None:
                 iteration_cb(history)
@@ -1459,6 +1462,9 @@ class ControllerLoop:
                 outcome.thinking_log = list(segment_thinking)
             return outcome
         finally:
+            if steering is not None:
+                # A correction that reached history but no decision is removed and expired.
+                steering.release(history)
             # The per-turn shadow is discarded at turn end on ANY exit (submit, budget
             # exhaustion, exhaustion-raise, or a patch crash) — no shadow leak.
             if self._edit is not None:
@@ -1508,6 +1514,7 @@ class ControllerLoop:
         live_work: Callable[[], dict[str, object] | None] | None = None,
         approval_mode: Callable[[], str] | None = None,
         sandbox_state: Callable[[], str] | None = None,
+        steering: TurnSteering | None = None,
     ) -> ControllerOutcome:
         pending_salvage: list[str] = []
         # Set when preflight rejects generated code for a SYNTAX error, cleared as soon
@@ -1678,6 +1685,11 @@ class ControllerLoop:
                     author = item.author or item.source_id or "agent"
                     history.append({"role": "user", "content": "New message:\n"
                                     + frame(author, item.kind, item.text)})
+            if steering is not None:
+                # The user's mid-turn corrections for THIS turn, after any running tool or
+                # approval gate has finished (they never interrupt one).
+                history.extend(steering.drain())
+                plan_context["goal_corrections"] = steering.instructions()
             # Live "thinking" status so the chat UI isn't blank during the first model
             # call (the frontend maps chat_agent_thinking → the thinking pane). Only the
             # first iteration: subsequent activity is conveyed by tool pills + the live
@@ -1994,6 +2006,20 @@ class ControllerLoop:
                 # contributes the tokens it burned before failing — otherwise a
                 # retry would silently rewind the turn's counter.
                 _fold_call_tokens_into_turn()
+
+            if steering is not None:
+                # This decision's input carried every correction drained so far.
+                steering.decision_received()
+                if steering.has_pending():
+                    # A correction arrived during the call: the action it chose was decided
+                    # without it and has not started, so it is dropped (never appended to
+                    # history), and the next iteration decides again with the correction.
+                    discarded = str(resp.get("type", "")) or "action"
+                    steering.note_discarded(discarded)
+                    pending_salvage.clear()
+                    logger.info("[controller] iter=%d discarded %s: a correction arrived",
+                                iteration, discarded)
+                    continue
 
             atype = str(resp.get("type", ""))
             # batch_id is loop-owned: _execute_batch stamps a fresh one on every persisted

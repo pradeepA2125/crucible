@@ -52,6 +52,11 @@ from agentd.chat.controller_loop import (
     ControllerOutcome,
 )
 from agentd.chat.controller_phase import ControllerPhaseSM
+from agentd.chat.conversation import (
+    ConversationReceipt,
+    ConversationService,
+    progress_snapshot,
+)
 from agentd.chat.edit_session import TurnEditSession
 from agentd.chat.gate_claims import GateClaim
 from agentd.chat.models import (
@@ -658,6 +663,37 @@ class ChatController:
         # gate id -> (thread, gate) for every pending edit gate, so a flip to auto-accept
         # can resolve them across threads.
         self._pending_edit_gates: dict[str, tuple[str, PendingGate]] = {}
+        # Talking to a running turn (status questions, corrections): receipts plus the
+        # turn a correction may steer, registered for exactly loop.run's lifetime.
+        self._conversation = ConversationService(
+            transport_source=self._conversation_transport,
+            gates_pending=self._main_gate_kinds)
+
+    def _conversation_transport(self) -> tuple[object, str] | None:
+        # Re-read per request: a provider hot-swap mutates the engine in place.
+        transport = getattr(self._reasoning, "_transport", None)
+        if transport is None:
+            return None
+        return transport, str(getattr(self._reasoning, "_model", "") or "")
+
+    def _main_gate_kinds(self, thread_id: str) -> list[str]:
+        thread = self._store.get_thread(thread_id)
+        if thread is None:
+            return []
+        return [g.kind for g in thread.pending_controller_gates if g.is_main()]
+
+    def active_turn_id(self, thread_id: str) -> str | None:
+        """The turn a conversation message can address right now; None between turns."""
+        return self._conversation.active_turn_id(thread_id)
+
+    async def converse(self, thread_id: str, message_id: str, text: str, intent: str,
+                       expected_turn_id: str) -> ConversationReceipt:
+        return await self._conversation.converse(
+            thread_id, message_id, text, intent, expected_turn_id)
+
+    def conversation_receipt(self, thread_id: str, message_id: str
+                             ) -> ConversationReceipt | None:
+        return self._conversation.receipt(thread_id, message_id)
 
     def project_activity(self, requested_workspace: str) -> dict[str, object]:
         from agentd.chat.activity import activity_snapshot
@@ -1323,6 +1359,19 @@ class ChatController:
         pills_cb = partial(self._persist_inflight_pills, thread_id, turn_id) \
             if turn_id else None
         max_iters = int(os.environ.get("CRUCIBLE_CONTROLLER_MAX_ITERS", "500"))
+        steering = None
+        if turn_id:
+            started_at = datetime.now(UTC).isoformat()
+            count_live = getattr(self._store, "count_live_agents", None)
+
+            def snapshot() -> dict[str, object]:
+                return progress_snapshot(
+                    phase=sm.phase, started_at=started_at, calls=loop.tool_calls,
+                    todos=[{"title": i.title, "status": i.status} for i in ledger.items],
+                    waiting_on=self._main_gate_kinds(thread_id),
+                    agents_running=count_live(thread_id) if callable(count_live) else 0)
+
+            steering = self._conversation.open_turn(thread_id, turn_id, snapshot)
         # Reachable by the mid-turn durable writers for exactly the loop's lifetime.
         self._active_loops[thread_id] = loop
         self._provider_access.pop(thread_id, None)  # a new turn: the last stop is history
@@ -1348,7 +1397,7 @@ class ChatController:
                 terminal_guard=partial(self._main_terminal_guard, thread_id),
                 live_work=partial(self._live_work, thread_id),
                 approval_mode=self._approval_mode_value,
-                sandbox_state=self._sandbox_state)
+                sandbox_state=self._sandbox_state, steering=steering)
         except asyncio.CancelledError:
             # /stop cancels the turn's asyncio.Task, raising here BEFORE the normal post-run
             # persistence below ever runs. Capture what the turn accumulated — its exploration
@@ -1430,6 +1479,9 @@ class ChatController:
             self._turn_dispatches.pop(thread_id, None)
             self._announced.pop(thread_id, None)
             self._live_turns.pop(thread_id, None)
+            if turn_id:
+                # Corrections still waiting expire here; none starts a turn of its own.
+                self._conversation.close_turn(thread_id, turn_id)
             self._store.add_thread_usage(thread_id, METER.take(usage_owner))
         self._histories[thread_id] = outcome.history or []
         # Reached for the normal-completion AND generic-exception branches (the

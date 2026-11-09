@@ -1,0 +1,263 @@
+{
+  "source": "https://huggingface.co/FluidInference/pocket-tts-coreml",
+  "revision": "c2e998e269e4d4b51f74061faddb8450cd8f9a9a",
+  "license": "CC-BY-4.0",
+  "relativeRoot": "Models/pocket-tts",
+  "files": [
+    {
+      "path": "encoder_recover_pinv.bin",
+      "bytes": 131072,
+      "sha256": "45f5dd6690b45600d780cde86878a935502c3fa101bbff5d06ac4499ec9e3b8d"
+    },
+    {
+      "path": "v2.1/english_2026-10/cond_prefill.mlmodelc/analytics/coremldata.bin",
+      "bytes": 243,
+      "sha256": "64b461c467d7cc2cdcaff43010c99c69bc6b0e21efd30dea0952f7cf98552390"
+    },
+    {
+      "path": "v2.1/english_2026-10/cond_prefill.mlmodelc/coremldata.bin",
+      "bytes": 1151,
+      "sha256": "42738cb5fdece5760005c15ac5159bf899b83a74cd73c105c1e33b44f070f2eb"
+    },
+    {
+      "path": "v2.1/english_2026-10/cond_prefill.mlmodelc/model.mil",
+      "bytes": 228664,
+      "sha256": "a08be7d1c116b538f6a69a7fc34d515452679c333e226dd4a3204002e537996b"
+    },
+    {
+      "path": "v2.1/english_2026-10/cond_prefill.mlmodelc/weights/weight.bin",
+      "bytes": 133237248,
+      "sha256": "a11f13c7d54191524ddc7042c557419c3e45996be65cad0b05ab5b8fe2fd757e"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/alba.safetensors",
+      "bytes": 6244152,
+      "sha256": "5850f417028fb2bf6de31e5e395e56ee7a21ac0e52ef31aebd4a6a2847d72e9c"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/anna.safetensors",
+      "bytes": 7620408,
+      "sha256": "626a19a37e3cbf5cac1e6893748c3f0dd2081b26b1ce787ae0deb42cb1ddb7f6"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/azelma.safetensors",
+      "bytes": 7178040,
+      "sha256": "3073cbb90cd659fbfe15aa38449ddd4588c6d6c1a1de64fa36422bbb95f96b4e"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/bill_boerst.safetensors",
+      "bytes": 6539064,
+      "sha256": "a4510681c5ca6ac978b9fee83fc8a0d6569f7627b380caab0c5d23c53e4c0607"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/bos_before_voice.bin",
+      "bytes": 4096,
+      "sha256": "2d05b90a2dd5dfb42f0bbb9a9b2b591f0b5a8b64d7458b93811b3c464d7c266f"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/bos_emb.bin",
+      "bytes": 128,
+      "sha256": "993398e25df91902674eff02af42bf0a99eddfe5d6bc064d083484360974ce19"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/caro_davy.safetensors",
+      "bytes": 5064504,
+      "sha256": "90309a130521328aa79f33b5ccc6008ba26163f621967455c0ed5c7b9e2854fd"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/charles.safetensors",
+      "bytes": 6195000,
+      "sha256": "007c66f069aa3a564139974e5d4e1e1902ae95d91e76963bee64f4309a75cf8f"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/cosette.safetensors",
+      "bytes": 6244152,
+      "sha256": "5f0a7ce2562a9320f026bd0694c8cc18f14e8140795f46e08eddb4f1fd410aed"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/daan.safetensors",
+      "bytes": 3884848,
+      "sha256": "7e9ecbae4bb8ec35e0b7ae2f29fa3e1791c53d6435c2033bce63c490ba0cdc18"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/eponine.safetensors",
+      "bytes": 6932280,
+      "sha256": "ea923ff050147966af1c7ebd0978fd16f099ead813dfcd1fd2f927d709307f50"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/estelle.safetensors",
+      "bytes": 7571256,
+      "sha256": "20c008682e0ffff57fc642fa8c61f711b1789bd0f42c50d0d0c5e55ae09fbc67"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/eve.safetensors",
+      "bytes": 6145848,
+      "sha256": "4444e6c2671a068ce385bba95fa6dd079e6432e51979ad1bfccd48d618363412"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/fantine.safetensors",
+      "bytes": 6440760,
+      "sha256": "2c3cde0d2324a9bf4d77dc28f9bfb9fe78e8e1f8c29a412f035fb4855b09fda3"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/george.safetensors",
+      "bytes": 5900088,
+      "sha256": "566330f66e20f95efd4fbea1e399e26dd84cf8e3ab1606e0114604e473dbc9fd"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/giovanni.safetensors",
+      "bytes": 4130608,
+      "sha256": "8a5c588994534e440928faf89b441167edcfecd627b5c2198b89202c7968a45f"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/jane.safetensors",
+      "bytes": 7325496,
+      "sha256": "f802b7b0ce91578dc5448e1cdf4827695e64a34cc6b2f95989dc335082522887"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/javert.safetensors",
+      "bytes": 6145848,
+      "sha256": "2bfe465c053195e9650cbdee889de3c941971ced3f2c69f71ad3e91cde202948"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/jean.safetensors",
+      "bytes": 6096696,
+      "sha256": "61a8e5b72bdffc69d58b6dc070e0b2e46ad9fc70c420916ab19f40fe111287ec"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/juergen.safetensors",
+      "bytes": 6096696,
+      "sha256": "9ef4461c8ba702d1928ae5e75272035a7117efccf6c9fa2378b1da92b252f78f"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/lola.safetensors",
+      "bytes": 5457720,
+      "sha256": "52cd47116d987f6d938ae2450eacaeda93ac26d897325939d6db806383bfd19a"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/marius.safetensors",
+      "bytes": 6244152,
+      "sha256": "05621a1fa88bfe110063dd6fd206d0262891e374a36a04edc309317e961f14c9"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/mary.safetensors",
+      "bytes": 5949240,
+      "sha256": "fc75f7c7cefa8c0b1957ac564037dfaac053dd067ceeffff27982f87314b5a35"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/michael.safetensors",
+      "bytes": 7128888,
+      "sha256": "9f6538650ed3b664ab847d05244f51f04db22ce7ea00e2b285f51d91d6308ce0"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/paul.safetensors",
+      "bytes": 6833976,
+      "sha256": "940ebd4c051aec0a9f7802f5ba36f3265be68029f5ae01c4b1322d50cfb4e03d"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/peter_yearsley.safetensors",
+      "bytes": 3639088,
+      "sha256": "f0eb3f23bb8e2ce5203a27ee4369ebeba07eda564cecebd84ccbdb4d9507cbca"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/rafael.safetensors",
+      "bytes": 6244152,
+      "sha256": "3d9879cf9bf95984ad6de1518e48de5a1165385690c0e98f075210cab61a2296"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/speaker_proj_weight.bin",
+      "bytes": 131072,
+      "sha256": "1c19babcf1e659cce6aa8d850a83c56b53f5472ada32addf9d3b3cb678be49ad"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/stuart_bell.safetensors",
+      "bytes": 5064504,
+      "sha256": "5f1131db588c711127179a65f9eaaeb23b1ff0f5d460352e066c447858abdeb8"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/text_embed_table.bin",
+      "bytes": 16388096,
+      "sha256": "337f52cc1fe1ce97a2dd17c33b1f5bbb11f0950625cceb6642a45f3e3d2574e5"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/tokenizer.model",
+      "bytes": 59339,
+      "sha256": "d461765ae179566678c93091c5fa6f2984c31bbe990bf1aa62d92c64d91bc3f6"
+    },
+    {
+      "path": "v2.1/english_2026-10/constants_bin/vera.safetensors",
+      "bytes": 6686520,
+      "sha256": "fe136ebb9c88b65803e73ab8fc04fcc7faaa5aa790559bdab3d2382826eea44a"
+    },
+    {
+      "path": "v2.1/english_2026-10/flow_decoder_fused.mlmodelc/analytics/coremldata.bin",
+      "bytes": 243,
+      "sha256": "74331c93e5c59f82454b71e8d9e9bbb391da72e2675008062fff066eb2044013"
+    },
+    {
+      "path": "v2.1/english_2026-10/flow_decoder_fused.mlmodelc/coremldata.bin",
+      "bytes": 413,
+      "sha256": "9000e3b727ea6f9b16d969af050ddfd0153768f2500df4b14439f388f7b37a0f"
+    },
+    {
+      "path": "v2.1/english_2026-10/flow_decoder_fused.mlmodelc/model.mil",
+      "bytes": 332925,
+      "sha256": "53bd03fc6359d4ceba7908faf2b3eeb6b702ca013b6999ea6e005df10c0ed267"
+    },
+    {
+      "path": "v2.1/english_2026-10/flow_decoder_fused.mlmodelc/weights/weight.bin",
+      "bytes": 19012608,
+      "sha256": "0f30fe50f3c4f6f4c9aed7c323621b65a04224efb50068f9252827e80e8ee430"
+    },
+    {
+      "path": "v2.1/english_2026-10/flowlm_step.mlmodelc/analytics/coremldata.bin",
+      "bytes": 243,
+      "sha256": "e463134d2a8609ec30abe3d0ce24b11a9e70915f01c00ccf906df5cb43acb989"
+    },
+    {
+      "path": "v2.1/english_2026-10/flowlm_step.mlmodelc/coremldata.bin",
+      "bytes": 1191,
+      "sha256": "8fafa8eff99d080327e3a9eb38ae561e03c0907338a7e8accf99db1d912ad193"
+    },
+    {
+      "path": "v2.1/english_2026-10/flowlm_step.mlmodelc/model.mil",
+      "bytes": 236886,
+      "sha256": "cdd4c089701ed8291775643f6ed398ba9ba46771557a5f0ea56c7dff76ee4b2e"
+    },
+    {
+      "path": "v2.1/english_2026-10/flowlm_step.mlmodelc/weights/weight.bin",
+      "bytes": 152186240,
+      "sha256": "11d36b2cdf2f20f6b430ddc1d8ddb9d1e5d60aa4896e9114a28f9dc4d8a43343"
+    },
+    {
+      "path": "v2.1/english_2026-10/manifest.json",
+      "bytes": 572,
+      "sha256": "bc0c73f2015b0109d428fd04df0f9858b5bf345dafd69b6155e74c05d922727e"
+    },
+    {
+      "path": "v2.1/english_2026-10/mimi_decoder.mlmodelc/analytics/coremldata.bin",
+      "bytes": 243,
+      "sha256": "be4199b44838e2fb199bb44b7649531d28fe847a1a6633fd9f8ca89576c5a7f8"
+    },
+    {
+      "path": "v2.1/english_2026-10/mimi_decoder.mlmodelc/coremldata.bin",
+      "bytes": 1777,
+      "sha256": "9d8644e2caad1513153ac28f1ba8090fcd2facdbd5d2621bf8016186fa932bf8"
+    },
+    {
+      "path": "v2.1/english_2026-10/mimi_decoder.mlmodelc/metadata.json",
+      "bytes": 16844,
+      "sha256": "aaca1b55b078095e72ee4826a94297fc070526d9f4cd3507464e7f2afaa73376"
+    },
+    {
+      "path": "v2.1/english_2026-10/mimi_decoder.mlmodelc/model.mil",
+      "bytes": 107403,
+      "sha256": "f7176b3b3d800de308ac01cb83d1f3e9b555e70b44d299efd4a21c9c27eecc16"
+    },
+    {
+      "path": "v2.1/english_2026-10/mimi_decoder.mlmodelc/weights/weight.bin",
+      "bytes": 41768256,
+      "sha256": "c93d182f9ad8c1042ec8302093aabb4e310d76616932dd12720e03b5d07f7c64"
+    }
+  ]
+}

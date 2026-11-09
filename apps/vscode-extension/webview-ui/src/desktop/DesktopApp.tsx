@@ -32,6 +32,7 @@ import type { LayoutPort } from "./layoutClient";
 import { ResizeHandle } from "./ResizeHandle";
 import { LAYOUT_BOUNDS, DEFAULT_LAYOUT } from "../../../../desktop/src/layout";
 import { layoutGeometry } from "./layoutGeometry";
+import { VoicePanel } from "./voice/VoicePanel";
 import "./desktop.css";
 
 export function desktopThreadStatus(thread: ThreadSummary, active: boolean, turnActive: boolean, gates: number): ThreadSummary["status"] {
@@ -61,6 +62,13 @@ export default function DesktopApp({ draftStore, layoutStore, fileStore, changes
   useEffect(() => { if (typeof files.selection === "string") dispatchWorkspaceTab({ type: "file", path: files.selection }); }, [files.selection, workspaceTabsState.tabs.length]);
   const { sidebarWidth, sidebarMax, workspaceWidth, workspaceMax, compact, isExpanded } = layoutGeometry(viewport, layout, workspaceOpen, expanded);
   const [query, setQuery] = useState(""), [project, setProject] = useState("Project");
+  const [projectId, setProjectId] = useState("");
+  const [voiceScope, setVoiceScope] = useState("");
+  const voiceBridge = window.crucibleVoice;
+  const voiceThread = state.activeThreadId ?? "";
+  const voiceIdentity = JSON.stringify([projectId, voiceThread, state.attachmentGeneration ?? 0]);
+  const voiceOpen = !!voiceThread && voiceScope === voiceIdentity;
+  useEffect(() => setVoiceScope(""), [voiceIdentity]);
   const [readyThread, setReadyThread] = useState("");
   const [openingDelayed, setOpeningDelayed] = useState(false);
   const [retry, setRetry] = useState(0);
@@ -73,7 +81,10 @@ export default function DesktopApp({ draftStore, layoutStore, fileStore, changes
     const receive = (event: MessageEvent) => {
       if (event.data?.type === "desktop/fileOpen" && typeof event.data.path === "string") { files.open(event.data.path); setWorkspaceOpen(true); }
       if (event.data?.type === "liveStatus" && typeof event.data.threadId === "string") setReadyThread(event.data.threadId);
-      if (event.data?.type === "desktop/project" && typeof event.data.name === "string") setProject(event.data.name);
+      if (event.data?.type === "desktop/project" && typeof event.data.name === "string") {
+        setProject(event.data.name);
+        if (typeof event.data.projectId === "string") setProjectId(event.data.projectId);
+      }
       if (event.data?.type === "desktop/draftError") setNavigationError(event.data.message);
     };
     window.addEventListener("message", receive);
@@ -207,10 +218,14 @@ export default function DesktopApp({ draftStore, layoutStore, fileStore, changes
         <h1>{threadNames[state.activeThreadId]?.name ?? selected?.title ?? "New conversation"}</h1>
         {isExpanded && state.liveGates.length > 0 && <button type="button" className="desktop-approval" onClick={() => { setExpanded(false); setWorkspaceOpen(false); }}>Approval needed · Show conversation</button>}
         {state.agentsRunning > 0 && <button type="button" className="desktop-stop" onClick={() => vscode.postMessage({ type: "stopAllAgents" })}><Icon name="stop" size={12} />Stop all agents</button>}
+        {voiceBridge && voiceThread && <button type="button" className={`desktop-icon crucible-voice-toggle${voiceOpen ? " is-active" : ""}`}
+          aria-label={voiceOpen ? "Close local voice" : "Open local voice"} aria-expanded={voiceOpen} aria-controls={voiceOpen ? "desktop-local-voice" : undefined}
+          disabled={!voiceOpen && readyThread !== voiceThread} onClick={() => setVoiceScope(voiceOpen ? "" : voiceIdentity)}>Voice</button>}
         <button type="button" className="desktop-icon" aria-label={summaryOpen ? "Hide pinned summary" : "Show pinned summary"} aria-expanded={summaryOpen} onClick={() => setSummaryOpen(value => !value)}><Icon name="list" size={16} /></button>
         <button type="button" className="desktop-icon" aria-label="Search conversations, files and actions" onClick={() => setPaletteOpen(true)}><Icon name="search" size={16} /></button>
         <button type="button" className={`desktop-icon${workspaceOpen ? " is-active" : ""}`} aria-label={workspaceOpen ? "Close workspace" : "Open workspace"} aria-expanded={workspaceOpen} onClick={() => { if (!workspaceOpen && workspaceTabsState.tabs.find(tab => tab.id === workspaceTabsState.active)?.kind === "new") requestLauncherFocus(); setWorkspaceOpen(value => !value); }} title="Toggle workspace"><Icon name="panel-right" size={17} /></button>
       </header>
+      {voiceBridge && voiceOpen && <VoicePanel key={voiceIdentity} id="desktop-local-voice" bridge={voiceBridge} threadId={voiceThread} />}
       <FindBar open={findOpen} close={closeFind} target={`${state.activeThreadId}:${workspaceOpen}:${isExpanded}:${workspaceTabsState.active}:${changesScope}`} />
       {summaryOpen && <PinnedSummary state={state} changes={changes} review={() => { setChangesScope("conversation"); dispatchWorkspaceTab({type:"tool",kind:"changes"}); setWorkspaceOpen(true); }} />}
       {navigationError && <div role="alert" className="desktop-layout-error">{navigationError}</div>}

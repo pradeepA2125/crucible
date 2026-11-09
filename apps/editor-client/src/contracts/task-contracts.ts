@@ -804,6 +804,26 @@ export const GateDecisionLookupWireSchema = z.discriminatedUnion("found", [
 ]);
 export type GateDecisionLookup = z.infer<typeof GateDecisionLookupWireSchema>;
 
+export const ConversationIntentSchema = z.enum(["auto", "question", "steer"]);
+export type ConversationIntent = z.infer<typeof ConversationIntentSchema>;
+
+export const ConversationReceiptSchema = z.object({
+  message_id: z.string().min(1).max(128),
+  turn_id: z.string().min(1).max(128),
+  kind: z.enum(["reply", "steer", "clarify"]),
+  text: z.string().max(8192),
+  status: z.enum(["answered", "queued", "incorporated", "expired"]),
+});
+export type ConversationReceipt = z.infer<typeof ConversationReceiptSchema>;
+
+export interface ConversationRequest {
+  message_id: string;
+  text: string;
+  intent: ConversationIntent;
+  expected_turn_id: string;
+  expected_process_id: string;
+}
+
 export const ThreadLiveStateSchema = z.object({
   approval: ApprovalStateSchema.optional(),
   gateClaimVersion: z.literal(1).nullable().optional(),
@@ -817,6 +837,7 @@ export const ThreadLiveStateSchema = z.object({
   // True while a controller turn / held-open controller gate is in flight (durable
   // input-disable signal that survives a webview reload). Absent on legacy payloads → false.
   turnActive: z.boolean().default(false),
+  activeTurnId: z.string().min(1).nullable().optional(),
   // Durable lifecycle telemetry (Tier B): drives the Error/Review cards from poll state.
   failureSummary: FailureSummarySchema.nullable().optional(),
   runSummary: RunSummarySchema.nullable().optional(),
@@ -1264,6 +1285,8 @@ export interface SendChatOptions {
   imageAttachments?: ChatImageAttachment[];
   planMode?: boolean;
   messageId?: string;
+  /** Voice captured while idle may not join a turn that began in the meantime. */
+  voiceRequiresIdle?: boolean;
 }
 
 // A message sent during a notice turn is queued, not streamed (spec §5.3).

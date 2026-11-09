@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { APP_ORIGIN, CHANNEL, contextSchema, parsePayload, type BridgeContext } from "./contract.js";
 
+import { VOICE_EVENT, VOICE_REQUEST } from "./voice/protocol.js";
 import { refusalMessages } from "./refusal.js";
 
 let context: BridgeContext | null = null;
@@ -39,3 +40,19 @@ contextBridge.exposeInMainWorld("acquireVsCodeApi", () => Object.freeze({
 }));
 window.addEventListener("dragover", event => { event.preventDefault(); event.stopImmediatePropagation(); }, true);
 window.addEventListener("drop", event => { event.preventDefault(); event.stopImmediatePropagation(); }, true);
+
+// The dedicated port carries bounded PCM via structured clone and exposes no raw Electron API.
+if (typeof location !== "undefined" && location.protocol === "app:" && location.host === "app" && ["/desktop-app.html", "/setup.html", "/settings.html"].includes(location.pathname)) {
+  contextBridge.exposeInMainWorld("crucibleVoice", Object.freeze({
+    request: async (command: unknown) => {
+      const result = await ipcRenderer.invoke(VOICE_REQUEST, command) as { value?: unknown; error?: string };
+      if (result.error) throw new Error(result.error);
+      return result.value;
+    },
+    subscribe: (listener: (event: unknown) => void) => {
+      const relay = (_event: Electron.IpcRendererEvent, payload: unknown) => listener(payload);
+      ipcRenderer.on(VOICE_EVENT, relay);
+      return () => { ipcRenderer.removeListener(VOICE_EVENT, relay); };
+    },
+  }));
+}

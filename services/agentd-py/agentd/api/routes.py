@@ -1688,6 +1688,9 @@ def build_router(
             _turn_kind = getattr(_chat_agent, "turn_kind", None)
             if _turn_kind is not None:
                 live.turn_kind = _turn_kind(thread_id)
+            _active_turn_id = getattr(_chat_agent, "active_turn_id", None)
+            if _active_turn_id is not None:
+                live.active_turn_id = _active_turn_id(thread_id)
             # Exec sessions strip (flag-tolerant: legacy ChatAgent / flag-off has no
             # manager → None). live_summaries rows are deliberately stable — see
             # SessionManager.live_summaries' signature-churn invariant.
@@ -1729,6 +1732,60 @@ def build_router(
                 except Exception:
                     pass  # optional telemetry never drops gates or the handshake
             return live.model_dump()
+
+        @router.post("/chat/threads/{thread_id}/conversation")
+        async def post_chat_conversation(
+                thread_id: str, request: dict[str, object]) -> dict[str, object]:
+            """Talk to the running turn without starting one: a status question is
+            answered from a progress snapshot, a correction is queued for the exact turn
+            named by `expected_turn_id`. Between turns this is a 409: idle messages go to
+            /message. A retried `message_id` returns its original receipt."""
+            from agentd.chat.conversation import (
+                INTENTS,
+                MAX_MESSAGE_ID_CHARS,
+                MAX_TEXT_CHARS,
+                ConversationError,
+                ConversationReceipt,
+            )
+
+            fields = {name: request.get(name) for name in (
+                "message_id", "text", "intent", "expected_turn_id", "expected_process_id")}
+            for name, value in fields.items():
+                if not isinstance(value, str) or not value.strip():
+                    raise HTTPException(
+                        status_code=422, detail=f"{name} must be a nonempty string")
+            message_id, text, intent, expected_turn_id, expected_process_id = (
+                str(v) for v in fields.values())
+            if len(message_id) > MAX_MESSAGE_ID_CHARS:
+                raise HTTPException(status_code=422, detail="message_id is too long")
+            if len(text) > MAX_TEXT_CHARS:
+                raise HTTPException(status_code=422, detail="text is too long")
+            if intent not in INTENTS:
+                raise HTTPException(
+                    status_code=422, detail="intent must be auto, question or steer")
+            require_approval(expected_process_id)
+            if _chat_agent._store.get_thread(thread_id) is None:
+                raise HTTPException(status_code=404, detail="Thread not found")
+            converse = getattr(_chat_agent, "converse", None)
+            if converse is None:
+                raise HTTPException(status_code=409, detail={"code": "conversation_unsupported"})
+            try:
+                receipt: ConversationReceipt = await converse(
+                    thread_id, message_id, text.strip(), intent, expected_turn_id)
+            except ConversationError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+            return receipt.view()
+
+        @router.get("/chat/threads/{thread_id}/conversation/{message_id}")
+        async def get_chat_conversation(thread_id: str, message_id: str) -> dict[str, object]:
+            from agentd.chat.conversation import ConversationReceipt
+
+            read = getattr(_chat_agent, "conversation_receipt", None)
+            receipt: ConversationReceipt | None = (
+                read(thread_id, message_id) if read is not None else None)
+            if receipt is None:
+                raise HTTPException(status_code=404, detail="Conversation message not found")
+            return receipt.view()
 
         @router.get("/chat/threads/{thread_id}/sessions/{session_id}/transcript")
         async def get_session_transcript(thread_id: str, session_id: str) -> dict:
@@ -1817,6 +1874,14 @@ def build_router(
                 # the FE already blocks it via disabled input; isBenignConflict swallows
                 # it). Check+launch have no await between → race-safe in asyncio.
                 if thread_id in _active:
+                    if request.get("voice_requires_idle") is True:
+                        # Speech that began on an idle thread must not be queued into (or
+                        # bounced off) a turn that started since: refuse it before notice
+                        # queue admission so the client can route it as conversation.
+                        _turn_id = getattr(_chat_agent, "active_turn_id", None)
+                        raise HTTPException(status_code=409, detail={
+                            "code": "turn_active",
+                            "active_turn_id": _turn_id(thread_id) if _turn_id else None})
                     _accepts = getattr(_chat_agent, "accepts_queued", None)
                     if _accepts is not None and _accepts(thread_id):
                         # Spec §5.3: a notice turn queues the message instead of refusing it.

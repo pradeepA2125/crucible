@@ -20,6 +20,10 @@ const native=join(dist,`node_modules/node-pty/prebuilds/${platform}`);await acce
 const manifest=opts.manifest?validateReleaseManifest(JSON.parse(await readFile(opts.manifest,"utf8")),platform,{candidate:!opts.preview}):null;
 if(!manifest&&!opts.preview)throw new Error("Candidate packaging requires --manifest. Use --preview only for an explicitly non-release local build.");
 await fileManifest(dist); // source symlinks or unexpected specials cannot leak into a package
+const voiceRoot=join(dist,"voice-native");
+const voiceHelper=async name=>lstat(join(voiceRoot,name)).then(stat=>stat.isFile(),error=>{if(error.code==="ENOENT")return false;throw error;});
+const voiceBundled=platform==="darwin-arm64" && await voiceHelper("crucible-whisper") &&
+ (await voiceHelper("crucible-tts") || await voiceHelper("crucible-pocket-tts"));
 const require=createRequire(import.meta.url),electron=dirname(require.resolve("electron/package.json")),distribution=join(electron,"dist");
 const name=opts.preview?"Crucible Preview":"Crucible",identity=opts.preview?"io.crucible.desktop.preview":"io.crucible.desktop";
 await mkdir(output,{recursive:false});let complete=false;
@@ -31,6 +35,8 @@ try{
  await rm(join(resources,"default_app.asar"),{force:true});const payload=join(resources,"app");await mkdir(payload,{recursive:true});
  await writeFile(join(payload,"package.json"),JSON.stringify({name:"crucible-desktop",productName:name,version:pkg.version,main:"dist/main.cjs",private:true},null,2));
  const target=join(payload,"dist");await mkdir(target);for(const f of ["main.cjs","preload.cjs","terminal-worker.cjs","update-worker.cjs","renderer","resources"])await cp(join(dist,f),join(target,f),{recursive:true});
+ if(voiceBundled)await cp(voiceRoot,join(target,"voice-native"),{recursive:true,
+  filter:file=>!(/^(?:crucible-turn-detector|smart-turn-.*\.onnx|libonnxruntime\..*\.dylib|LICENSE\.(?:SmartTurn|ONNXRuntime)|ThirdPartyNotices\.ONNXRuntime\.txt)$/.test(basename(file)))});
  const pty=join(target,"node_modules/node-pty");await mkdir(pty,{recursive:true});for(const f of ["lib","package.json","LICENSE",`prebuilds/${platform}`])await cp(join(dist,"node_modules/node-pty",f),join(pty,f),{recursive:true});
  if(process.platform!=="win32")await chmod(join(pty,`prebuilds/${platform}/spawn-helper`),0o755);
  if(opts["update-key"]){const keyText=await readFile(resolve(opts["update-key"]),"utf8");if(!keyText.includes("BEGIN PUBLIC KEY")||keyText.includes("PRIVATE KEY"))throw new Error("Provide only the public update verification key.");const key=createPublicKey(keyText);if(key.asymmetricKeyType!=="ed25519")throw new Error("Update verification requires an Ed25519 public key.");await writeFile(join(target,"resources/desktop-update-key.pem"),key.export({type:"spki",format:"pem"}));}
@@ -38,7 +44,8 @@ try{
  if(opts.artifacts){if(!manifest)throw new Error("Embedded artifacts require a pinned manifest.");const mappings={};const assets=join(target,"resources/runtime-assets");await mkdir(assets);for(const [id,s] of Object.entries(manifest.components)){if(id==="lsps")continue;const k=id==="agentd"||id==="jdtls"?"any":platform,url=s.urls[k],file=basename(new URL(url).pathname);if(!/^[a-zA-Z0-9_.+-]+$/.test(file))throw new Error("Invalid embedded artifact filename");const source=join(resolve(opts.artifacts),file);if(!(await lstat(source)).isFile()||(await lstat(source)).isSymbolicLink())throw new Error("Embedded artifact must be a regular file");const bytes=await readFile(source),sha=createHash("sha256").update(bytes).digest("hex");if(sha!==s.sha256[k].toLowerCase())throw new Error(`Embedded ${id} checksum mismatch`);await cp(source,join(assets,file));mappings[url]={file,sha256:sha};}await writeFile(join(target,"resources/runtime-assets.json"),JSON.stringify(mappings,null,2));}
  if(process.platform==="darwin"){
   const plists=[join(app,"Contents/Info.plist")];
-  await exec("/usr/bin/plutil",["-remove","NSAppTransportSecurity.NSAllowsArbitraryLoads",plists[0]]);for(const helper of ["Electron Helper","Electron Helper (GPU)","Electron Helper (Renderer)","Electron Helper (Plugin)"])plists.push(join(app,`Contents/Frameworks/${helper}.app/Contents/Info.plist`));
+  await exec("/usr/bin/plutil",["-remove","NSAppTransportSecurity.NSAllowsArbitraryLoads",plists[0]]);
+  if(voiceBundled)await exec("/usr/bin/plutil",["-replace","NSMicrophoneUsageDescription","-string","Crucible uses your microphone when you start a local voice conversation.",plists[0]]);for(const helper of ["Electron Helper","Electron Helper (GPU)","Electron Helper (Renderer)","Electron Helper (Plugin)"])plists.push(join(app,`Contents/Frameworks/${helper}.app/Contents/Info.plist`));
   for(let i=0;i<plists.length;i++){await exec("/usr/bin/plutil",["-replace","CFBundleIdentifier","-string",i?`${identity}.helper${i}`:identity,plists[i]]);await exec("/usr/bin/plutil",["-replace","CFBundleName","-string",i?`${name} Helper`:name,plists[i]]);await exec("/usr/bin/plutil",["-replace","CFBundleDisplayName","-string",i?`${name} Helper`:name,plists[i]]);}
   await rename(join(app,"Contents/MacOS/Electron"),join(app,"Contents/MacOS",name));
   await exec("/usr/bin/plutil",["-replace","CFBundleExecutable","-string",name,plists[0]]);
@@ -57,7 +64,7 @@ try{
  const executable=process.platform==="darwin"?`Contents/MacOS/${name}`:process.platform==="win32"?`${name}.exe`:"crucible";
  await access(join(app,executable));
  try{await access(join(app,process.platform==="darwin"?"Contents/MacOS/Electron":process.platform==="win32"?"electron.exe":"electron"));throw new Error("Default Electron executable must not remain in a packaged app.");}catch(error){if(error.code!=="ENOENT")throw error;}
- const codeSeal=process.platform==="darwin"?await sealCommunityApp(app):{kind:"none",appleDeveloperId:false,notarized:false,verified:false};
+ const codeSeal=process.platform==="darwin"?await sealCommunityApp(app,{voice:voiceBundled}):{kind:"none",appleDeveloperId:false,notarized:false,verified:false};
  const links=await bundleLinks(app);
  const files=await fileManifest(target);await writeFile(join(output,"package-evidence.json"),JSON.stringify({schemaVersion:1,platform,version:pkg.version,electron:JSON.parse(await readFile(join(electron,"package.json"))).version,identity,executable,preview:opts.preview,signed:false,codeSeal,releaseEligible:false,runtimeTag:manifest?.releaseTag??null,files,bundleLinks:links,distribution:"unsigned-community",remainingGates:["clean-machine-install-use-uninstall","native-pty","both-host-compatibility","accessibility-security-finder-drop","upgrade-preserves-stores","unsigned-install-update-rollback","platform-package-validation","release-key-authentication","macos-logout-wake","unsigned-keychain-notification-behavior","literal-dock-activation"]},null,2));
  const archive=join(output,`crucible-${pkg.version}-${platform}${opts.preview?"-preview":""}.${process.platform==="linux"?"tar.gz":"zip"}`);

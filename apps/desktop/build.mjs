@@ -19,6 +19,12 @@ await Promise.all([build({ entryPoints: [resolve(base, "src/main.ts")], bundle: 
 await build({entryPoints:[resolve(base,"src/terminal-worker.ts")],bundle:true,platform:"node",target:"node22",format:"cjs",external:["node-pty"],outfile:resolve(dist,"terminal-worker.cjs")});
 await build({entryPoints:[resolve(base,"src/update-worker.ts")],bundle:true,platform:"node",target:"node22",format:"cjs",outfile:resolve(dist,"update-worker.cjs")});
 await cp(resolve(base, "../vscode-extension/webview-ui/dist"), resolve(dist, "renderer"), { recursive: true });
+await build({
+  entryPoints: [resolve(base, "../vscode-extension/webview-ui/src/desktop/voice/capture-worklet.ts")],
+  bundle: true, platform: "browser", target: "chrome130", format: "esm",
+  outfile: resolve(dist, "renderer/voice-capture.js"),
+});
+
 await cp(resolve(base, "../vscode-extension/resources"), resolve(dist, "resources"), { recursive: true });
 const desktopRequire=createRequire(import.meta.url),yauzlRoot=dirname(desktopRequire.resolve("yauzl/package.json")),yauzlRequire=createRequire(resolve(yauzlRoot,"package.json"));
 await mkdir(resolve(dist,"resources/licenses"),{recursive:true});
@@ -27,5 +33,5 @@ const csp = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inl
 for (const name of ["index", "setup", "settings", "desktop", "desktop-app", "memory", "graph", "lifecycle"]) {
   const path = resolve(dist, `renderer/${name}.html`);
   const html = await readFile(path, "utf8");
-  await writeFile(path, html.replace("<head>", `<head><meta http-equiv="Content-Security-Policy" content="${name === "graph" ? csp.replace("worker-src 'none'", "worker-src 'self'") : csp}">`));
+  await writeFile(path, html.replace("<head>", `<head><meta http-equiv="Content-Security-Policy" content="${["graph", "desktop-app"].includes(name) ? csp.replace("worker-src 'none'", "worker-src 'self'") : csp}">`));
 }
