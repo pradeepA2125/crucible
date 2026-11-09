@@ -21,5 +21,8 @@ export const voiceRequest = z.discriminatedUnion("type", [
   z.object({ type: z.literal("decode"), ...utterance, pcm, final: z.boolean() }).strict(),
   z.object({ type: z.literal("submit"), ...utterance, text: z.string().trim().min(1).max(4000),
     intent: z.enum(["auto", "question", "steer"]) }).strict(),
+  z.object({ type: z.literal("decide"), ...utterance, text: z.string().trim().min(1).max(4000),
+    silenceMs: z.number().int().min(0).max(600_000), finalCall: z.boolean() }).strict(),
+  z.object({ type: z.literal("commit"), ...utterance, decisionId: id }).strict(),
 ]);
 export type VoiceRequest = z.infer<typeof voiceRequest>;

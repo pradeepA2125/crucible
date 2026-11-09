@@ -3,9 +3,12 @@ import { access, lstat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import type { ConversationIntent, ConversationReceipt, ConversationRequest } from "@crucible/editor-client";
+import type {
+  ConversationIntent, ConversationReceipt, ConversationRequest, VoiceCommitResult, VoiceDecideRequest, VoiceDecision,
+} from "@crucible/editor-client";
 import { VoiceAssets, type VoiceModel } from "./assets.js";
 import type { VoiceRequest } from "./protocol.js";
+import { firstSentences, speakable } from "./speakable.js";
 import { Recognizer, Synthesizer } from "./workers.js";
 
 export interface VoiceSnapshot {
@@ -19,13 +22,27 @@ export interface VoiceThread {
   snapshot(signal: AbortSignal): Promise<VoiceSnapshot>;
   submit(request: ConversationRequest, signal: AbortSignal): Promise<ConversationReceipt>;
   receipt(id: string, signal: AbortSignal): Promise<ConversationReceipt | null>;
-  sendIdle(text: string, hooks: { chunk(text: string): void; finish(): void; recover(): void }): Promise<void>;
+  sendIdle(text: string, voiceRequest: string | undefined, hooks: IdleHooks): Promise<void>;
+  decide(request: VoiceDecideRequest, signal: AbortSignal): Promise<VoiceDecision>;
+  commit(decisionId: string, expectedProcessId: string, signal: AbortSignal): Promise<VoiceCommitResult>;
+  narrate(heard: string, answer: string, expectedProcessId: string, signal: AbortSignal): Promise<string>;
 }
 
+type IdleHooks = { chunk(text: string): void; finish(): void; recover(): void };
 type Identity = { sessionId: string; utteranceId: string };
-type Utterance = { snapshot?: Promise<VoiceSnapshot>; submitted: boolean };
+type Utterance = { snapshot?: Promise<VoiceSnapshot>; submitted: boolean; decisions: Map<string, VoiceDecision> };
 type Reply = { id: string; utteranceId: string; cancel: AbortController; text: string;
-  pending: string; spoken: number; code: boolean; output: Promise<void> };
+  spoken: number; output: Promise<void>; heard: string; processId: string };
+type Refusal = "turn_active" | "turn_not_active" | "voice_agent_unavailable";
+
+/** The backend's structured refusal code on an editor-client error, if any. */
+function refusalOf(error: unknown): Refusal | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const { status, detail } = error as { status?: unknown; detail?: unknown };
+  if (status === 503) return "voice_agent_unavailable";
+  const code = typeof detail === "object" && detail !== null ? (detail as { code?: unknown }).code : undefined;
+  return status === 409 && (code === "turn_active" || code === "turn_not_active") ? code : undefined;
+}
 type Session = {
   id: string;
   thread: VoiceThread;
@@ -110,6 +127,8 @@ export class VoiceHost {
       case "snapshot": this.snapshot(session, request.utteranceId); return {};
       case "decode": return this.decode(session, request, request.pcm, request.final);
       case "submit": return this.submit(session, request.utteranceId, request.text, request.intent);
+      case "decide": return this.decide(session, request.utteranceId, request.text, request.silenceMs, request.finalCall);
+      case "commit": return this.commit(session, request.utteranceId, request.decisionId);
     }
   }
 
@@ -199,7 +218,7 @@ export class VoiceHost {
     }
     const snapshot = session.thread.snapshot(AbortSignal.any([session.signal.signal, AbortSignal.timeout(4000)]));
     void snapshot.catch(() => {});
-    session.utterances.set(id, { snapshot, submitted: false });
+    session.utterances.set(id, { snapshot, submitted: false, decisions: new Map() });
   }
 
   private async decode(session: Session, id: Identity, pcm: ArrayBuffer, _final: boolean) {
@@ -214,19 +233,15 @@ export class VoiceHost {
     const entry = session.utterances.get(id);
     if (!entry?.snapshot || entry.submitted) throw new Error("This voice message is no longer open.");
     entry.submitted = true;
-    const reply = this.newReply(session, id);
     const snapshot = await entry.snapshot;
+    const reply = this.newReply(session, id, text, snapshot.processId ?? "");
     this.requireSession(session.id);
     if (!snapshot.active) {
       if (intent === "steer") throw new Error("There was no active coding turn when this message began.");
       const current = await session.thread.snapshot(AbortSignal.any([session.signal.signal, AbortSignal.timeout(4000)]));
       this.requireSession(session.id);
       if (current.active || !snapshot.processId || snapshot.processId !== current.processId) throw new Error(changedTurn);
-      void session.thread.sendIdle(text, {
-        chunk: text => this.append(session, reply, text, false),
-        finish: () => this.append(session, reply, "", true),
-        recover: () => this.error(session, "The spoken message could not be sent. Review its transcript and try again."),
-      }).catch(() => this.error(session, "The spoken message could not be sent. Review its transcript and try again."));
+      this.startIdle(session, reply, text, undefined);
       return {};
     }
     if (!snapshot.turnId || !snapshot.processId) throw new Error("The runtime could not identify the active coding turn. Wait for it to reconnect.");
@@ -250,8 +265,102 @@ export class VoiceHost {
     this.requireSession(session.id);
     this.deliverReceipt(session, receipt, id, snapshot.turnId);
     this.append(session, reply, receipt.text, true);
+    this.speak(session, reply, receipt.text);
     if (receipt.status === "queued") void this.watchReceipt(session, id, snapshot.turnId);
     return {};
+  }
+
+  private async decide(session: Session, id: string, text: string, silenceMs: number, finalCall: boolean) {
+    const entry = session.utterances.get(id);
+    if (!entry?.snapshot || entry.submitted) throw new Error("This spoken message is no longer open.");
+    const snapshot = await entry.snapshot;
+    this.requireSession(session.id);
+    if (!snapshot.processId) throw new Error("The runtime could not identify this conversation. Wait for it to reconnect.");
+    let decision: VoiceDecision;
+    try {
+      decision = await session.thread.decide({ utterance: text, silenceMs, finalCall, expectedProcessId: snapshot.processId },
+        AbortSignal.any([session.signal.signal, AbortSignal.timeout(15_000)]));
+    } catch (error) {
+      const refused = refusalOf(error);
+      if (refused) return { refused };
+      throw error;
+    }
+    this.requireSession(session.id);
+    entry.decisions.set(decision.decisionId, decision);
+    const { decisionId, turn, action, say, request } = decision;
+    return { decisionId, turn, action, say, request };
+  }
+
+  private async commit(session: Session, id: string, decisionId: string) {
+    const entry = session.utterances.get(id);
+    const decision = entry?.decisions.get(decisionId);
+    if (!entry?.snapshot || !decision || entry.submitted) throw new Error("This voice message is no longer open.");
+    entry.submitted = true;
+    const { processId } = await entry.snapshot;
+    this.requireSession(session.id);
+    let result: VoiceCommitResult;
+    try {
+      if (!processId) throw new Error("The runtime could not identify this conversation. Wait for it to reconnect.");
+      result = await session.thread.commit(decisionId, processId, AbortSignal.any([session.signal.signal, AbortSignal.timeout(10_000)]));
+    } catch (error) {
+      const refused = refusalOf(error);
+      if (refused === "turn_active" || refused === "turn_not_active") {
+        // Nothing happened: the renderer may decide again for the turn as it is now.
+        entry.submitted = false;
+        entry.decisions.delete(decisionId);
+        return { refused };
+      }
+      throw error;
+    }
+    this.requireSession(session.id);
+    entry.decisions.delete(decisionId);
+    if (result.action === "listen") {
+      entry.submitted = false;
+      return { action: result.action };
+    }
+    // `heard` feeds narration, which only a started task reaches.
+    const reply = this.newReply(session, id, result.action === "start_task" ? result.message : "", processId);
+    switch (result.action) {
+      case "reply":
+      case "clarify":
+        this.append(session, reply, decision.say, true);
+        this.speak(session, reply, decision.say);
+        break;
+      case "steer": {
+        const turn = decision.turnId ?? result.receipt.turn_id;
+        this.deliverReceipt(session, result.receipt, decisionId, turn);
+        this.append(session, reply, decision.say, true);
+        this.speak(session, reply, decision.say);
+        if (result.receipt.status === "queued") void this.watchReceipt(session, decisionId, turn);
+        break;
+      }
+      case "start_task":
+        // The acknowledgement is spoken only; the panel shows the agent's own answer.
+        this.speak(session, reply, decision.say);
+        this.startIdle(session, reply, result.message, result.voiceRequest);
+        break;
+    }
+    return { action: result.action };
+  }
+
+  private startIdle(session: Session, reply: Reply, text: string, voiceRequest: string | undefined): void {
+    const failed = () => this.error(session, "The spoken message could not be sent. Review its transcript and try again.");
+    void session.thread.sendIdle(text, voiceRequest, {
+      chunk: chunk => this.append(session, reply, chunk, false),
+      finish: () => this.finishIdle(session, reply),
+      recover: failed,
+    }).catch(failed);
+  }
+
+  /** The written answer stays on screen; the voice agent says what matters. */
+  private finishIdle(session: Session, reply: Reply): void {
+    this.append(session, reply, "", true);
+    const answer = reply.text.trim();
+    if (!answer || !this.currentReply(session, reply)) return;
+    void session.thread.narrate(reply.heard, answer, reply.processId,
+      AbortSignal.any([reply.cancel.signal, AbortSignal.timeout(20_000)]))
+      .catch(() => `${firstSentences(speakable(answer), 2)} The rest is on screen.`)
+      .then(say => { if (this.currentReply(session, reply)) this.speak(session, reply, say); });
   }
 
   private deliverReceipt(session: Session, receipt: ConversationReceipt, id: string, turn: string): void {
@@ -282,10 +391,10 @@ export class VoiceHost {
     } finally { session.receipts--; }
   }
 
-  private newReply(session: Session, id: string): Reply {
+  private newReply(session: Session, id: string, heard: string, processId: string): Reply {
     this.interrupt(session);
     const reply = { id: randomUUID(), utteranceId: id, cancel: new AbortController(), text: "",
-      pending: "", spoken: 0, code: false, output: Promise.resolve() };
+      spoken: 0, output: Promise.resolve(), heard, processId };
     session.reply = reply;
     return reply;
   }
@@ -301,26 +410,10 @@ export class VoiceHost {
     reply.text += next;
     this.options.publish({ type: "reply", sessionId: session.id, utteranceId: reply.utteranceId,
       messageId: reply.id, text: reply.text, final });
-    reply.pending += next;
-    while (reply.pending && reply.spoken < limitSpeech) {
-      const boundary = /[.!?](?:\s|$)|\n/.exec(reply.pending);
-      const codeFence = reply.pending.indexOf("```");
-      const end = codeFence >= 0 && (!boundary || codeFence <= boundary.index)
-        ? codeFence + 3
-        : boundary ? boundary.index + boundary[0].length
-          : reply.pending.length >= 220 ? Math.max(reply.pending.lastIndexOf(" ", 180), 180)
-            : final ? reply.pending.length : 0;
-      if (!end) break;
-      const segment = reply.pending.slice(0, end);
-      reply.pending = reply.pending.slice(end);
-      if (!reply.code) this.speak(session, reply, segment.split("```")[0] ?? "");
-      if (segment.endsWith("```")) reply.code = !reply.code;
-    }
   }
 
   private speak(session: Session, reply: Reply, segment: string): void {
-    const text = segment.replace(/!?\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/https?:\/\/\S+/g, "")
-      .replace(/[`*_#]/g, "").trim().slice(0, limitSpeech - reply.spoken);
+    const text = speakable(segment).slice(0, limitSpeech - reply.spoken);
     if (!text) return;
     reply.spoken += text.length;
     reply.output = reply.output.then(async () => {

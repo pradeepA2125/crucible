@@ -262,10 +262,23 @@ export function createProjectHost(ports: HostPorts) {
         if (!current()) throw new Error("The voice conversation changed.");
         return client.conversationReceipt(threadId, id, signal);
       },
-      sendIdle: (text, hooks) => {
+      sendIdle: (text, voiceRequest, hooks) => {
         if (!current()) throw new Error("The voice conversation changed.");
         return controller.sendChatMessage(text, undefined, undefined, undefined,
-          runtime.getPlanMode(), undefined, undefined, undefined, hooks);
+          runtime.getPlanMode(), undefined, undefined, undefined,
+          voiceRequest ? { ...hooks, voiceRequest } : hooks);
+      },
+      decide: (request, signal) => {
+        if (!current()) throw new Error("The voice conversation changed.");
+        return client.voiceDecide(threadId, request, signal);
+      },
+      commit: (decisionId, expectedProcessId, signal) => {
+        if (!current()) throw new Error("The voice conversation changed.");
+        return client.voiceCommit(threadId, decisionId, expectedProcessId, signal);
+      },
+      narrate: (heard, answer, expectedProcessId, signal) => {
+        if (!current()) throw new Error("The voice conversation changed.");
+        return client.voiceNarrate(threadId, { heard, answer, expectedProcessId }, signal);
       },
     };
   };

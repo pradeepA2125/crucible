@@ -228,6 +228,8 @@ type VoiceChatHooks = {
   chunk(text: string): void;
   finish(): void;
   recover(): void;
+  /** The voice agent's advisory reading of the spoken request; rides to the goal only. */
+  voiceRequest?: string;
 };
 
 export class CrucibleController {
@@ -1578,6 +1580,7 @@ entered = true;
         ...(planMode !== undefined ? { planMode } : {}),
         messageId,
         ...(voice ? { voiceRequiresIdle: true } : {}),
+        ...(voice?.voiceRequest ? { voiceRequest: voice.voiceRequest } : {}),
       });
     } catch (error) {
       if (this.disposed) { this.finishTurn(owner); return; }
