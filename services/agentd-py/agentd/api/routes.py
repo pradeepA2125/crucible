@@ -1787,6 +1787,84 @@ def build_router(
                 raise HTTPException(status_code=404, detail="Conversation message not found")
             return receipt.view()
 
+        def _voice_text(request: dict[str, object], name: str, limit: int) -> str:
+            value = request.get(name)
+            if not isinstance(value, str) or not value.strip():
+                raise HTTPException(status_code=422, detail=f"{name} must be a nonempty string")
+            if len(value) > limit:
+                raise HTTPException(status_code=422, detail=f"{name} is too long")
+            return value.strip()
+
+        def _voice_guard(thread_id: str, request: dict[str, object]) -> None:
+            expected = request.get("expected_process_id")
+            if not isinstance(expected, str) or not expected:
+                raise HTTPException(
+                    status_code=422, detail="expected_process_id must be a nonempty string")
+            require_approval(expected)
+            if _chat_agent._store.get_thread(thread_id) is None:
+                raise HTTPException(status_code=404, detail="Thread not found")
+            if getattr(_chat_agent, "voice_decide", None) is None:
+                raise HTTPException(status_code=409, detail={"code": "voice_unsupported"})
+
+        @router.post("/chat/threads/{thread_id}/voice/decide")
+        async def post_voice_decide(
+                thread_id: str, request: dict[str, object]) -> dict[str, object]:
+            """The voice agent's decision for an utterance at a pause. Side-effect free:
+            nothing happens until /voice/commit, so the client may drop it."""
+            from agentd.chat.conversation import MAX_TEXT_CHARS, ConversationError
+            from agentd.chat.voice_agent import VoiceAgentUnavailable
+
+            utterance = _voice_text(request, "utterance", MAX_TEXT_CHARS)
+            silence_ms, final_call = request.get("silence_ms"), request.get("final_call")
+            if type(silence_ms) is not int or silence_ms < 0:
+                raise HTTPException(
+                    status_code=422, detail="silence_ms must be a nonnegative integer")
+            if not isinstance(final_call, bool):
+                raise HTTPException(status_code=422, detail="final_call must be a boolean")
+            _voice_guard(thread_id, request)
+            try:
+                return await _chat_agent.voice_decide(  # type: ignore[attr-defined, no-any-return]
+                    thread_id, utterance, silence_ms, final_call)
+            except VoiceAgentUnavailable as exc:
+                raise HTTPException(status_code=503, detail={
+                    "code": "voice_agent_unavailable", "message": str(exc)}) from exc
+            except ConversationError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+        @router.post("/chat/threads/{thread_id}/voice/commit")
+        async def post_voice_commit(
+                thread_id: str, request: dict[str, object]) -> dict[str, object]:
+            """Carry out a decision from /voice/decide, at most once."""
+            from agentd.chat.conversation import ConversationError
+
+            decision_id = _voice_text(request, "decision_id", 64)
+            _voice_guard(thread_id, request)
+            try:
+                return _chat_agent.voice_commit(  # type: ignore[attr-defined, no-any-return]
+                    thread_id, decision_id)
+            except ConversationError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+        @router.post("/chat/threads/{thread_id}/voice/narrate")
+        async def post_voice_narrate(
+                thread_id: str, request: dict[str, object]) -> dict[str, object]:
+            """A few spoken sentences for an answer written for the screen."""
+            from agentd.chat.conversation import MAX_TEXT_CHARS, ConversationError
+            from agentd.chat.voice_agent import VoiceAgentUnavailable
+
+            heard = _voice_text(request, "heard", MAX_TEXT_CHARS)
+            answer = _voice_text(request, "answer", 16000)
+            _voice_guard(thread_id, request)
+            try:
+                say = await _chat_agent.voice_narrate(  # type: ignore[attr-defined]
+                    thread_id, heard, answer)
+            except VoiceAgentUnavailable as exc:
+                raise HTTPException(status_code=503, detail={
+                    "code": "voice_agent_unavailable", "message": str(exc)}) from exc
+            except ConversationError as exc:
+                raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+            return {"say": say}
+
         @router.get("/chat/threads/{thread_id}/sessions/{session_id}/transcript")
         async def get_session_transcript(thread_id: str, session_id: str) -> dict:
             """Read-only PTY inspect for the expandable session strip. Served
@@ -1863,6 +1941,11 @@ def build_router(
                 raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
             _raw_plan_mode = request.get("plan_mode")
             plan_mode = _raw_plan_mode if isinstance(_raw_plan_mode, bool) else None
+            _raw_voice_request = request.get("voice_request")
+            voice_request = (_raw_voice_request.strip()
+                             if isinstance(_raw_voice_request, str) else "") or None
+            if voice_request is not None and len(voice_request) > 4000:
+                raise HTTPException(status_code=422, detail="voice_request is too long")
             channel_id = f"chat:{thread_id}"
 
             # Flag-tolerant: only the ChatController detaches turns. The legacy
@@ -1904,6 +1987,8 @@ def build_router(
                         step_review=step_review, forced_skills=forced_skills,
                         mentioned_files=mentioned_files,
                         **({"image_attachments": image_attachments} if image_attachments else {}),
+                        # Only the ChatController reaches this branch; ChatAgent has no voice.
+                        **({"voice_request": voice_request} if voice_request else {}),  # type: ignore[arg-type]
                         plan_mode=plan_mode, message_id=_message_id),
                     channel_id=channel_id,
                 )

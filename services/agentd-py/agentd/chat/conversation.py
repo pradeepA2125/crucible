@@ -306,6 +306,24 @@ class ConversationService:
         active = self._active.get(thread_id)
         return active.turn_id if active is not None else None
 
+    def active_snapshot(self, thread_id: str) -> dict[str, object] | None:
+        """The running turn's progress snapshot (structured state only), or None."""
+        active = self._active.get(thread_id)
+        return active.snapshot() if active is not None else None
+
+    def enqueue_correction(self, thread_id: str, message_id: str, text: str,
+                           expected_turn_id: str) -> ConversationReceipt:
+        """Queue a correction the voice agent already decided on, for exactly the turn it
+        saw. No await between the turn check and the enqueue."""
+        active = self._active.get(thread_id)
+        if active is None or active.turn_id != expected_turn_id:
+            raise ConversationError(409, {
+                "code": "turn_not_active",
+                "active_turn_id": active.turn_id if active is not None else None})
+        receipt = ConversationReceipt(thread_id=thread_id, message_id=message_id,
+                                      turn_id=expected_turn_id, text=text, intent="steer")
+        return self._enqueue_steer(receipt, active)
+
     # --- receipts ----------------------------------------------------------------------
     def receipt(self, thread_id: str, message_id: str) -> ConversationReceipt | None:
         return self._receipts.get((thread_id, message_id))

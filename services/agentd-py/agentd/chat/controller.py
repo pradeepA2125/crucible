@@ -12,8 +12,9 @@ import json
 import logging
 import os
 import shutil
+import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
@@ -53,6 +54,7 @@ from agentd.chat.controller_loop import (
 )
 from agentd.chat.controller_phase import ControllerPhaseSM
 from agentd.chat.conversation import (
+    ConversationError,
     ConversationReceipt,
     ConversationService,
     progress_snapshot,
@@ -81,6 +83,7 @@ from agentd.chat.rewind import RewindStore
 from agentd.chat.todo_ledger import TodoLedger
 from agentd.chat.todo_source import TodoToolSource
 from agentd.chat.turn_control import ChatTurnControl
+from agentd.chat.voice_agent import VoiceAgent, VoiceContext, voice_history
 from agentd.domain.models import (
     ApprovalOutcome,
     CommandDecision,
@@ -453,6 +456,32 @@ def _with_mentioned_files(message: str, mentioned_files: list[dict[str, str]] | 
     return message + referenced_files_block(mentioned_files)
 
 
+_VOICE_LOG_LINES = 6
+_VOICE_DECISION_TTL_SEC = 120.0
+_VOICE_DECISION_LIMIT = 64
+
+
+@dataclass
+class _VoiceDecisionEntry:
+    thread_id: str
+    utterance: str
+    turn_id: str | None
+    action: str
+    say: str
+    request: str
+    created_at: float
+
+
+def voice_request_block(request: str, log: Sequence[dict[str, str]]) -> str:
+    """The goal's note for a spoken request: the voice agent's reading (advisory, after
+    the user's own words) and the recent voice exchange, newest last."""
+    lines = "\n".join(f"{entry['role']}: {' '.join(entry['text'].split())}"
+                      for entry in list(log)[-_VOICE_LOG_LINES:])
+    return ("\n\n---\nSpoken request. The user's words above take precedence over this "
+            f"reading.\nVoice assistant's reading: {request}\nRecent voice conversation:\n"
+            + (lines or "(none)"))
+
+
 # How often a turn may be held open for agent reports that are still arriving (spec §5.2).
 _MAX_ARRIVAL_REDIRECTS = 5
 # After this many approved Auto asks in a row, the next card offers Accept edits.
@@ -668,6 +697,10 @@ class ChatController:
         self._conversation = ConversationService(
             transport_source=self._conversation_transport,
             gates_pending=self._main_gate_kinds)
+        # The voice front-man: decides at a pause, commits separately (spec §1).
+        self._voice = VoiceAgent(self._conversation_transport)
+        self._voice_pending: OrderedDict[str, _VoiceDecisionEntry] = OrderedDict()
+        self._clock: Callable[[], float] = time.monotonic
 
     def _conversation_transport(self) -> tuple[object, str] | None:
         # Re-read per request: a provider hot-swap mutates the engine in place.
@@ -694,6 +727,70 @@ class ChatController:
     def conversation_receipt(self, thread_id: str, message_id: str
                              ) -> ConversationReceipt | None:
         return self._conversation.receipt(thread_id, message_id)
+
+    # --- voice front-man -------------------------------------------------------------
+    def _prune_voice_decisions(self) -> None:
+        cutoff = self._clock() - _VOICE_DECISION_TTL_SEC
+        for key in [k for k, e in self._voice_pending.items() if e.created_at < cutoff]:
+            del self._voice_pending[key]
+        while len(self._voice_pending) > _VOICE_DECISION_LIMIT:
+            self._voice_pending.popitem(last=False)
+
+    async def voice_decide(self, thread_id: str, utterance: str, silence_ms: int,
+                           final_call: bool) -> dict[str, object]:
+        """Side-effect free: the decision is only held until `voice_commit`."""
+        thread = self._store.get_thread(thread_id)
+        if thread is None:
+            raise ConversationError(404, "Thread not found")
+        turn_id = self._conversation.active_turn_id(thread_id)
+        ctx = VoiceContext(
+            utterance=utterance, silence_ms=silence_ms, final_call=final_call,
+            history=voice_history(thread.messages, self._voice.log(thread_id)),
+            progress=self._conversation.active_snapshot(thread_id))
+        decision = await self._voice.decide(thread_id, ctx)
+        decision_id = uuid4().hex
+        self._voice_pending[decision_id] = _VoiceDecisionEntry(
+            thread_id=thread_id, utterance=utterance, turn_id=turn_id,
+            action=decision.action, say=decision.say, request=decision.request,
+            created_at=self._clock())
+        self._prune_voice_decisions()
+        return {"decision_id": decision_id, "turn": decision.turn, "action": decision.action,
+                "say": decision.say, "request": decision.request, "turn_id": turn_id}
+
+    def voice_commit(self, thread_id: str, decision_id: str) -> dict[str, object]:
+        """Carry out a held decision. Sync: the turn checks and the enqueue have no await
+        between them."""
+        self._prune_voice_decisions()
+        entry = self._voice_pending.get(decision_id)
+        if entry is None or entry.thread_id != thread_id:
+            raise ConversationError(404, {"code": "decision_unknown"})
+        del self._voice_pending[decision_id]
+        if entry.action == "listen":
+            return {"action": "listen"}
+        if entry.action == "steer":
+            receipt = self._conversation.enqueue_correction(
+                thread_id, decision_id,
+                f"{entry.utterance}\n\n(Voice assistant's reading, advisory: {entry.request})",
+                entry.turn_id or "")
+            self._voice.record(thread_id, entry.utterance, entry.say)
+            return {"action": "steer", "receipt": receipt.view()}
+        if entry.action == "start_task":
+            if thread_id in self._active_turns:
+                raise ConversationError(409, {
+                    "code": "turn_active",
+                    "active_turn_id": self._conversation.active_turn_id(thread_id)})
+            self._voice.record(thread_id, entry.utterance, entry.say)
+            return {"action": "start_task", "message": entry.utterance,
+                    "voice_request": entry.request}
+        self._voice.record(thread_id, entry.utterance, entry.say)
+        return {"action": entry.action}
+
+    async def voice_narrate(self, thread_id: str, heard: str, answer: str) -> str:
+        if self._store.get_thread(thread_id) is None:
+            raise ConversationError(404, "Thread not found")
+        spoken = await self._voice.narrate(thread_id, heard, answer)
+        self._voice.record(thread_id, heard, spoken)
+        return spoken
 
     def project_activity(self, requested_workspace: str) -> dict[str, object]:
         from agentd.chat.activity import activity_snapshot
@@ -895,6 +992,7 @@ class ChatController:
         plan_mode: bool | None = None,
         message_id: str | None = None,
         _claimed_feedback: PendingGate | None = None,
+        voice_request: str | None = None,
     ) -> None:
         thread = self._store.get_thread(thread_id)
         if thread is None:
@@ -922,8 +1020,11 @@ class ChatController:
         anchor_message_id = self._store.append_message(thread_id, ChatMessage(
             role="user", content=message, id=message_id,
             metadata={**({"mentioned_files": mentioned_paths} if mentioned_paths else {}),
-                      **({"image_attachments": image_attachments} if image_attachments else {})}))
+                      **({"image_attachments": image_attachments} if image_attachments else {}),
+                      **({"voice": True} if voice_request else {})}))
         turn_message = _with_mentioned_files(message, mentioned_files)
+        if voice_request:
+            turn_message += voice_request_block(voice_request, self._voice.log(thread_id))
         await self._run_user_turn(
             thread, thread_id, anchor_message_id, turn_message,
             channel_id, step_review=step_review, plan_mode=plan_mode,
