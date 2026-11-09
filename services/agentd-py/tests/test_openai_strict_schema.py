@@ -192,6 +192,7 @@ def _every_schema_we_send() -> list[tuple[str, dict[str, object]]]:
     from agentd.chat.agent import _EXPLORE_SCHEMA
     from agentd.chat.classifier import _CLASSIFY_SCHEMA
     from agentd.chat.controller_prompts import controller_response_schema
+    from agentd.chat.voice_agent import VOICE_DECISION_SCHEMA
     from agentd.domain.models import PatchDocumentV2, PlanDocument
     from agentd.eval.memory_judge_legacy import JUDGE_SCHEMA
     from agentd.eval.trajectory.judge import TRAJECTORY_JUDGE_SCHEMA
@@ -217,6 +218,7 @@ def _every_schema_we_send() -> list[tuple[str, dict[str, object]]]:
         ("agent_step", AGENT_STEP_RESPONSE_SCHEMA),
         ("planning", planning_response_schema(allow_plan_patch=True)),
         ("planning_no_patch", planning_response_schema(allow_plan_patch=False)),
+        ("voice_decision", VOICE_DECISION_SCHEMA),
     ]
     for phase in ("ACTIVE", "PLAN", "AGENT"):
         out.append((f"controller_{phase}_v2_anyof",
