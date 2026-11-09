@@ -25,6 +25,12 @@ import {
   ChatMessageSchema,
   ThreadLiveStateSchema,
   ConversationReceiptSchema,
+  VoiceCommitResultSchema,
+  VoiceDecisionSchema,
+  type VoiceCommitResult,
+  type VoiceDecideRequest,
+  type VoiceDecision,
+  type VoiceNarrateRequest,
   type ConversationReceipt,
   type ConversationRequest,
   approvalFromWire,
@@ -1754,6 +1760,41 @@ export class HttpBackendClient implements BackendTaskClient {
     ));
   }
 
+  private async voicePost(threadId: string, step: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const path = `/v1/chat/threads/${encodeURIComponent(threadId)}/voice/${step}`;
+    const response = await this.fetchFn(`${this.options.baseUrl}${path}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
+    });
+    if (!response.ok) throw await responseError(response, `Voice ${step} failed (${response.status}) for ${path}`);
+    return await response.json() as Record<string, unknown>;
+  }
+
+  async voiceDecide(threadId: string, request: VoiceDecideRequest, signal?: AbortSignal): Promise<VoiceDecision> {
+    const raw = await this.voicePost(threadId, "decide", {
+      utterance: request.utterance, silence_ms: request.silenceMs, final_call: request.finalCall,
+      expected_process_id: request.expectedProcessId,
+    }, signal);
+    return VoiceDecisionSchema.parse({
+      decisionId: raw["decision_id"], turn: raw["turn"], action: raw["action"], say: raw["say"],
+      request: raw["request"], turnId: raw["turn_id"] ?? null,
+    });
+  }
+
+  async voiceCommit(threadId: string, decisionId: string, expectedProcessId: string, signal?: AbortSignal): Promise<VoiceCommitResult> {
+    const raw = await this.voicePost(threadId, "commit", { decision_id: decisionId, expected_process_id: expectedProcessId }, signal);
+    return VoiceCommitResultSchema.parse(raw["action"] === "start_task"
+      ? { action: "start_task", message: raw["message"], voiceRequest: raw["voice_request"] }
+      : raw);
+  }
+
+  async voiceNarrate(threadId: string, request: VoiceNarrateRequest, signal?: AbortSignal): Promise<string> {
+    const raw = await this.voicePost(threadId, "narrate", {
+      heard: request.heard, answer: request.answer, expected_process_id: request.expectedProcessId,
+    }, signal);
+    return z.string().min(1).parse(raw["say"]);
+  }
+
   async conversationReceipt(threadId: string, messageId: string, signal: AbortSignal): Promise<ConversationReceipt | null> {
     try {
       return ConversationReceiptSchema.parse(await this.fetchJsonDetail(
@@ -1775,6 +1816,7 @@ export class HttpBackendClient implements BackendTaskClient {
         body: JSON.stringify({
           content: message,
           ...(options?.voiceRequiresIdle ? { voice_requires_idle: true } : {}),
+          ...(options?.voiceRequest ? { voice_request: options.voiceRequest } : {}),
           ...(options?.expectedProcessId ? { expected_process_id: options.expectedProcessId } : {}),
           ...(options?.stepReview !== undefined ? { step_review: options.stepReview } : {}),
           ...(options?.forcedSkills && options.forcedSkills.length

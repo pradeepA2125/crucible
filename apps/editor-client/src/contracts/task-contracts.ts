@@ -816,6 +816,37 @@ export const ConversationReceiptSchema = z.object({
 });
 export type ConversationReceipt = z.infer<typeof ConversationReceiptSchema>;
 
+// The voice agent's decision for an utterance at a pause (side-effect free until committed).
+export const VoiceDecisionSchema = z.object({
+  decisionId: z.string().min(1).max(64),
+  turn: z.enum(["complete", "cut_off", "thinking"]),
+  action: z.enum(["listen", "reply", "clarify", "start_task", "steer"]),
+  say: z.string().max(400),
+  request: z.string().max(4000),
+  turnId: z.string().min(1).max(128).nullable(),
+});
+export type VoiceDecision = z.infer<typeof VoiceDecisionSchema>;
+
+export const VoiceCommitResultSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.enum(["listen", "reply", "clarify"]) }),
+  z.object({ action: z.literal("steer"), receipt: ConversationReceiptSchema }),
+  z.object({ action: z.literal("start_task"), message: z.string().min(1).max(4000), voiceRequest: z.string().max(4000) }),
+]);
+export type VoiceCommitResult = z.infer<typeof VoiceCommitResultSchema>;
+
+export interface VoiceDecideRequest {
+  utterance: string;
+  silenceMs: number;
+  finalCall: boolean;
+  expectedProcessId: string;
+}
+
+export interface VoiceNarrateRequest {
+  heard: string;
+  answer: string;
+  expectedProcessId: string;
+}
+
 export interface ConversationRequest {
   message_id: string;
   text: string;
@@ -1287,6 +1318,8 @@ export interface SendChatOptions {
   messageId?: string;
   /** Voice captured while idle may not join a turn that began in the meantime. */
   voiceRequiresIdle?: boolean;
+  /** The voice agent's advisory reading of a spoken request (the goal, not the transcript). */
+  voiceRequest?: string;
 }
 
 // A message sent during a notice turn is queued, not streamed (spec §5.3).
