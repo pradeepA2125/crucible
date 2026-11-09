@@ -8,6 +8,7 @@ import pytest
 from agentd.chat.models import ChatMessage
 from agentd.chat.voice_agent import (
     VOICE_CHECKIN_TEXT,
+    VOICE_IDLE_STEER_TEXT,
     VoiceAgent,
     VoiceAgentUnavailable,
     VoiceContext,
@@ -80,10 +81,12 @@ async def test_task_while_busy_becomes_steer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_steer_while_idle_becomes_task() -> None:
-    agent = _agent(FakeJson(_reply(action="steer", say="On it.", request="use sqlite")))
-    decision = await agent.decide("t1", _ctx(progress=None))
-    assert decision.action == "start_task"
+async def test_steer_while_idle_asks_before_starting_work() -> None:
+    # A correction for a turn that already ended must not silently become a new task.
+    agent = _agent(FakeJson(_reply(action="steer", say="On it.", request="revert that")))
+    decision = await agent.decide("t1", _ctx("stop, revert that", progress=None))
+    assert decision.action == "clarify"
+    assert decision.say == VOICE_IDLE_STEER_TEXT
 
 
 @pytest.mark.asyncio

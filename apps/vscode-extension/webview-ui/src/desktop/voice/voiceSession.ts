@@ -62,11 +62,16 @@ interface SpokenTurn {
   /** Speech over playback that is not yet clearly an instruction: never decided automatically. */
   held?: boolean;
   deciding?: number;
+  /** The revision whose pause transcript is still being decoded. */
+  decodingPause?: number;
+  decodeFailed?: boolean;
   finalWanted?: boolean;
   decision?: VoiceDecision & { revision: number };
 }
 
 const playbackTailMs = 300;
+// After the assistant asks a question, a one-word answer ("okay", "yes") is a real reply.
+const answerWindowMs = 15_000;
 const UNAVAILABLE = "The voice assistant could not decide what to do. Review the transcript and send it.";
 
 function messageOf(error: unknown, fallback: string): string {
@@ -102,6 +107,7 @@ export class VoiceSession {
   private pending = 0;
   /** Pauses after which this speaker kept talking; they set how long to wait (turnTiming). */
   private readonly resumedPauses: number[] = [];
+  private answerExpectedUntil = -Infinity;
 
   constructor(private readonly bridge: VoiceBridge, private readonly events: VoiceSessionCallbacks) {
     this.audio = new VoiceAudio(speaking => {
@@ -296,16 +302,19 @@ export class VoiceSession {
     if (!turn || !sessionId) return;
     const revision = turn.revision;
     const current = () => this.spoken === turn && turn.revision === revision && this.isCaptureCurrent(turn.captureGeneration);
+    turn.decodingPause = revision;
     this.events.state({ checking: true });
     void this.decode(sessionId, turn, pcm, true, current).then(result => {
       if (!current()) return;
+      turn.decodingPause = undefined;
       const heard = typeof result?.text === "string" ? result.text : "";
       if (this.consumePlaybackControl(turn, heard)) {
         this.clearCapture();
         return;
       }
+      const answering = performance.now() < this.answerExpectedUntil;
       const text = joined([...turn.committed, spokenMessage(heard, turn.playback)]);
-      if (!text || isBackchannel(text) || (turn.playback !== undefined && !spokenWordCount(text))) {
+      if (!text || (!answering && isBackchannel(text)) || (turn.playback !== undefined && !spokenWordCount(text))) {
         if (!heard.trim() && turn.playback !== undefined) this.keepForReview(turn, turn.partialText || "");
         this.clearCapture();
         return;
@@ -317,11 +326,21 @@ export class VoiceSession {
       turn.held = turn.playback !== undefined && (cleanSpeechMs < 420 || !clearOverlapRequest(text));
       if (turn.held) {
         this.events.state({ checking: false });
+        if (turn.finalWanted) this.abandonAtLimit(turn);
         return;
       }
-      this.requestDecision(turn, false);
+      // A lone word or filler ("hmm", "yes", Whisper's "you") is not a request unless it answers a question.
+      if (!answering && spokenWordCount(text) < 2) {
+        this.clearCapture();
+        return;
+      }
+      this.requestDecision(turn, turn.finalWanted === true);
     }).catch(() => {
-      if (current()) this.events.state({ checking: false });
+      if (!current()) return;
+      turn.decodingPause = undefined;
+      turn.decodeFailed = true;
+      this.events.state({ checking: false });
+      if (turn.finalWanted) this.abandonAtLimit(turn);
     });
   }
 
@@ -388,6 +407,10 @@ export class VoiceSession {
       turn.deciding = undefined;
       turn.finalWanted = false;
       turn.partialText = undefined;
+      // The next pause transcribes the whole segment again; the old pause's text is a stale prefix.
+      turn.text = undefined;
+      turn.held = false;
+      turn.decodeFailed = false;
     }
     this.events.state({ checking: false, waiting: false });
   }
@@ -395,22 +418,33 @@ export class VoiceSession {
   private reachWaitLimit() {
     const turn = this.spoken;
     if (!turn || turn.decision) return;
-    if (turn.held || !turn.text) {
-      const text = turn.text || turn.partialText || "";
-      this.clearCapture();
-      if (turn.held && this.latestInput === turn.id) this.keepForReview(turn, text);
+    // Still transcribing or deciding: that result asks the final question when it lands.
+    if (turn.decodingPause === turn.revision || turn.deciding !== undefined) {
+      turn.finalWanted = true;
       return;
     }
-    if (turn.deciding !== undefined) turn.finalWanted = true;
-    else this.requestDecision(turn, true);
+    if (turn.held || !turn.text) {
+      this.abandonAtLimit(turn);
+      return;
+    }
+    this.requestDecision(turn, true);
+  }
+
+  /** Nothing can be decided automatically: keep what was heard so it is never lost silently. */
+  private abandonAtLimit(turn: SpokenTurn) {
+    const text = turn.text || turn.partialText || "";
+    this.clearCapture();
+    if (this.latestInput === turn.id) this.keepForReview(turn, text);
+    if (turn.decodeFailed) this.events.error("That spoken message could not be transcribed. Review it or type it below.");
   }
 
   private rollOver(pcm: ArrayBuffer) {
     const turn = this.spoken;
     const sessionId = this.sessionId;
     if (!turn || !sessionId) return;
-    // Survives resumed speech: this audio is final whatever the speaker says next.
-    const current = () => this.spoken === turn && this.isCaptureCurrent(turn.captureGeneration);
+    // Survives resumed speech and an explicit send that clears the turn before this lands:
+    // this audio is final whatever happens next, and a later finish reads `committed`.
+    const current = () => this.isCaptureCurrent(turn.captureGeneration);
     void this.decode(sessionId, turn, pcm, true, current).then(result => {
       if (!current() || typeof result?.text !== "string") return;
       const text = spokenMessage(result.text, turn.playback);
@@ -430,7 +464,7 @@ export class VoiceSession {
     void this.enqueue(async () => {
       if (!this.isCaptureCurrent(turn.captureGeneration)) return;
       await turn.snapshot;
-      await this.commitWith(sessionId, turn, text, decision.decisionId, false);
+      await this.commitWith(sessionId, turn, text, decision, false);
     }).catch(error => this.commitFailed(turn, text, error));
   }
 
@@ -447,7 +481,7 @@ export class VoiceSession {
         this.events.error(UNAVAILABLE);
         return;
       }
-      await this.commitWith(sessionId, turn, text, decided.decisionId, false);
+      await this.commitWith(sessionId, turn, text, decided, false);
     }).catch(error => this.commitFailed(turn, text, error));
   }
 
@@ -459,15 +493,21 @@ export class VoiceSession {
     return refusalOf(result) || !decision || decision.action === "listen" ? undefined : decision;
   }
 
-  private async commitWith(sessionId: string, turn: SpokenTurn, text: string, decisionId: string, retried: boolean) {
+  private async commitWith(sessionId: string, turn: SpokenTurn, text: string, decision: VoiceDecision, retried: boolean) {
     this.events.utterance(turn.id, text);
     this.prepareOutput(turn.id);
-    const result = await voiceRequest(this.bridge, { type: "commit", sessionId, utteranceId: turn.id, decisionId });
-    if (!refusalOf(result)) return;
+    const result = await voiceRequest(this.bridge, {
+      type: "commit", sessionId, utteranceId: turn.id, decisionId: decision.decisionId,
+    });
+    if (!refusalOf(result)) {
+      const asked = decision.action === "clarify" || /\?\s*$/u.test(decision.say);
+      this.answerExpectedUntil = asked ? performance.now() + answerWindowMs : -Infinity;
+      return;
+    }
     // The coding turn changed between deciding and acting: decide once more for the turn as it is now.
     const again = retried ? undefined : await this.decideFinal(sessionId, turn, text);
     if (again && this.isCaptureCurrent(turn.captureGeneration)) {
-      await this.commitWith(sessionId, turn, text, again.decisionId, true);
+      await this.commitWith(sessionId, turn, text, again, true);
       return;
     }
     this.keepForReview(turn, text);
@@ -536,10 +576,12 @@ export class VoiceSession {
     if (!turn || !sessionId) return;
     const current = () => this.isCaptureCurrent(turn.captureGeneration);
     void this.decode(sessionId, turn, pcm, true, current).then(result => {
-      if (!current() || typeof result?.text !== "string" || this.consumePlaybackControl(turn, result.text)) return;
-      const text = joined([...turn.committed, spokenMessage(result.text, turn.playback)]);
+      // An empty final segment (a send just after a rollover) still carries the rolled-over speech.
+      const heard = typeof result?.text === "string" ? result.text : "";
+      if (!current() || this.consumePlaybackControl(turn, heard)) return;
+      const text = joined([...turn.committed, spokenMessage(heard, turn.playback)]);
       if (text) this.finalize(turn, text);
-      else if (!result.text.trim() && turn.playback !== undefined) this.keepForReview(turn, turn.partialText || "");
+      else if (!heard.trim() && turn.playback !== undefined) this.keepForReview(turn, turn.partialText || "");
     }).catch(error => {
       if (!current()) return;
       if (turn.playback !== undefined) this.keepForReview(turn, turn.partialText || "");

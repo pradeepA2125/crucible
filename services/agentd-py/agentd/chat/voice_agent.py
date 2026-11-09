@@ -26,6 +26,7 @@ from agentd.providers.usage import USAGE_OWNER
 logger = logging.getLogger(__name__)
 
 VOICE_CHECKIN_TEXT = "I'm still listening. Do you want to add anything, or should I go ahead?"
+VOICE_IDLE_STEER_TEXT = "That work has already finished. Should I start a new task for it?"
 
 _TURNS = ("complete", "cut_off", "thinking")
 _ACTIONS = ("listen", "reply", "clarify", "start_task", "steer")
@@ -147,7 +148,8 @@ def _normalize(raw: dict[str, object], ctx: VoiceContext) -> VoiceDecision:
     if ctx.progress is not None and action == "start_task":
         action = "steer"
     elif ctx.progress is None and action == "steer":
-        action = "start_task"
+        # The turn it meant to correct has ended: ask, never start work on a correction.
+        action, say = "clarify", VOICE_IDLE_STEER_TEXT
     if action in ("start_task", "steer") and not request:
         request = ctx.utterance
     if action in ("reply", "clarify") and not say:
