@@ -92,19 +92,31 @@ noise, the voice agent decides at each pause. Four gaps remain, in the user's pr
   (`controller_history`), not the visible transcript, and must stay that way for these
   messages. Requests that start work already reach it through `start_task` (the message is the
   user's words plus the voice reading); corrections through `enqueue_correction`.
-- `voice_request_block()` stops appending the "Recent voice conversation" lines to a spoken
-  task's goal: they carry small talk into the coding agent's context. The voice agent's own
-  reading of the request (which it writes with the whole history in view) stays, and carries
-  what "do what we just discussed" refers to.
+- **"Do it" must arrive with its context.** `voice_request_block()` stops appending the last
+  six "Recent voice conversation" lines (they carry small talk). Instead, when the voice agent
+  starts or changes work:
+  - its reading must be **self-contained**: "do it", "that", "what we discussed" are resolved
+    from the conversation into the full request ("Add a contact form to the About page with
+    name, email and message fields"). If it cannot resolve them, it asks instead of starting.
+  - it attaches **only the exchange the request rests on** (for example the user's question
+    about the contact form and its answer), quoted, as context for the coding agent. Nothing
+    else from the voice conversation goes along.
+  - a backend guard: a short referential request ("do it", "go ahead", "yes") whose reading is
+    equally vague does not start a task; it becomes a clarifying question.
+  When "it" refers to something the coding agent itself proposed, its own history already
+  holds it; the reading still names it.
 - Other readers of the visible transcript must ignore voice messages, so saving them changes
   nothing else: the Auto approval judge (`build_judge_context` treats user messages as
   permission; a voice message, possibly misheard, must never authorize a command, as today
   when voice was never saved), the memory closing summary, the latest-user-message id and
   time, and the goal used when a gate card is claimed.
-- A spoken narration of a finished task is not saved as a separate message: the written
-  answer is already in the chat and in the voice agent's history.
-- The voice panel shows only the current exchange and the live line; the conversation's
-  history lives in the chat.
+- A spoken narration of a finished task **is saved**, as a secondary "spoken summary" line
+  attached to the written answer (styled so it doesn't read as a second answer). It often ends
+  with its own question ("Want me to start with those?"), so the voice agent must see it for a
+  following "do it" to resolve. Like other voice messages it stays out of the coding agent's
+  context.
+- The voice panel keeps showing the exchanges, **read from the saved messages** instead of its
+  own in-memory list, so the panel and the chat always agree and survive restarts.
 - The voice agent's own history reads these persisted messages instead of the in-memory log,
   so its memory of the conversation survives a backend restart. Remove the in-memory log if
   nothing else needs it.
@@ -149,13 +161,15 @@ noise, the voice agent decides at each pause. Four gaps remain, in the user's pr
 
 Settled from the user's stated rules or by keeping today's behavior; check these when reading:
 
-1. Spoken task goals lose the "Recent voice conversation" lines (the user's rule: only work
-   requests reach the coding agent).
+1. Spoken task goals lose the "Recent voice conversation" lines; instead the reading is
+   self-contained, carries only the exchange it rests on, and vague "do it" requests are asked
+   about rather than started (agreed with the user after the first draft).
 2. Voice messages never count as user permission for the Auto approval judge (today's behavior).
 3. Spoken playback commands stop the reply for good; no resume command.
 4. The ChatGPT voice default (gpt-6-luna) applies to voice only, not the approval judge.
 5. The voice model setting is per provider; the env var still wins.
-6. Narration is not saved as a message; the voice panel stops keeping its own history.
+6. Narration is saved as a secondary spoken-summary line; the voice panel reads exchanges from
+   the saved messages (agreed with the user after the first draft).
 
 ## Left to the builder
 
