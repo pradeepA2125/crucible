@@ -26,10 +26,27 @@ export function hasSubstantiveSpeech(text: string): boolean {
   return spokenWordCount(text) >= 2;
 }
 
-export function spokenWordCount(text: string): number {
+function spokenWords(text: string): string[] {
   const spoken = text.replace(soundAnnotations, " ");
-  if (isBackchannel(spoken)) return 0;
-  return words(spoken).filter(word => !/^(?:ah|eh|er|hmm|hm|mh|mhm|mm+|oh|uh|um+)$/u.test(word)).length;
+  if (isBackchannel(spoken)) return [];
+  return words(spoken).filter(word => !/^(?:ah|eh|er|hmm|hm|mh|mhm|mm+|oh|uh|um+)$/u.test(word));
+}
+
+export function spokenWordCount(text: string): number {
+  return spokenWords(text).length;
+}
+
+/**
+ * Whether a later transcript of the same turn carries words the earlier one did not. The
+ * recognizer re-transcribes the whole turn each time, and one word can shift between passes
+ * ("won't" / "I don't"), so one extra word counts only when it changes how the turn ends.
+ * Sound labels ("(cars honking)") and fillers never count.
+ */
+export function addsWords(before: string, after: string): boolean {
+  const earlier = spokenWords(before);
+  const later = spokenWords(after);
+  if (later.length >= earlier.length + 2) return true;
+  return later.length > earlier.length && later.at(-1) !== earlier.at(-1);
 }
 
 export function isPlaybackEcho(text: string, playback: string | undefined): boolean {

@@ -194,6 +194,7 @@ describe("desktop voice session", () => {
     await vi.waitFor(() => expect(resolveFirst).toBeDefined());
     frames(15, 0.03);
     resolveFirst({ text: "Use Postgres." });
+    await vi.waitFor(() => expect(voice.trace.mock.calls.some(([, event]) => event === "words_resumed")).toBe(true));
     frames(125, 0);
     await vi.waitFor(() => expect(voice.callbacks.utterance)
       .toHaveBeenCalledExactlyOnceWith(expect.any(String), "Use SQLite instead."));
@@ -457,6 +458,8 @@ describe("desktop voice session", () => {
     await vi.waitFor(() => expect(release).toBeDefined());
     frames(10, 0.03);
     release({ ...REPLY, decisionId: "stale" });
+    frames(1, 0);
+    await vi.waitFor(() => expect(voice.trace.mock.calls.some(([, event]) => event === "words_resumed")).toBe(true));
     frames(40, 0);
     await vi.waitFor(() => expect(voice.sent("commit")).toHaveLength(1));
     expect(voice.sent("commit")[0]).not.toMatchObject({ decisionId: "stale" });
@@ -488,7 +491,8 @@ describe("desktop voice session", () => {
     let decodes = 0;
     voice.request.mockImplementation(command => command.type === "decode" && command.final
       ? Promise.resolve({ text: ++decodes === 1 ? "Add a readme" : "Add a readme with a license section" })
-      : command.type === "decode" ? Promise.resolve({ text: "" }) : answer(command));
+      : command.type === "decode" ? Promise.resolve({ text: decodes ? "Add a readme with a license section" : "" })
+        : answer(command));
     await voice.session.start("thread", "whisper-small", "system");
     await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
     frames(12, 0.03);
@@ -499,6 +503,8 @@ describe("desktop voice session", () => {
     await settle();
     expect(voice.sent("commit")).toHaveLength(0);
     frames(10, 0.03);
+    frames(1, 0);
+    await vi.waitFor(() => expect(voice.trace.mock.calls.some(([, event]) => event === "words_resumed")).toBe(true));
     frames(28, 0);
     await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(2));
     expect(voice.sent("decide")[1]).toMatchObject({ text: "Add a readme with a license section" });
@@ -592,7 +598,7 @@ describe("desktop voice session", () => {
     voice.session.close();
   });
 
-  it("traces levels, the pause, the decision and the resumed speech with the level that resumed it", async () => {
+  it("traces levels, the pause, the decision and the words that resumed the turn", async () => {
     vi.clearAllMocks();
     const voice = fixture("Use SQLite for the tests");
     await voice.session.start("thread", "whisper-small", "system");
@@ -601,8 +607,12 @@ describe("desktop voice session", () => {
     frames(28, 0);
     await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(1));
     await settle();
+    const answer = voice.request.getMockImplementation()!;
+    voice.request.mockImplementation(command => command.type === "decode"
+      ? Promise.resolve({ text: "Use SQLite for the tests and the docs" }) : answer(command));
     frames(4, 0.03);
     frames(10, 0);
+    await vi.waitFor(() => expect(voice.trace.mock.calls.some(([, event]) => event === "resume")).toBe(true));
     const events = voice.trace.mock.calls.map(([sessionId, event, data]) => ({ sessionId, event, data }));
     const named = (name: string) => events.filter(entry => entry.event === name);
     expect(events.every(entry => entry.sessionId === "session")).toBe(true);
@@ -611,11 +621,39 @@ describe("desktop voice session", () => {
     expect(named("transcript")[0].data).toMatchObject({ final: true, text: "Use SQLite for the tests" });
     expect(named("decide")[0].data).toMatchObject({ text: "Use SQLite for the tests", finalCall: false });
     expect(named("decision")[0].data).toMatchObject({ action: "reply", turn: "complete", ms: expect.any(Number) });
-    expect(named("resume")[0].data).toMatchObject({
-      quietMs: expect.any(Number), rms: 0.03, threshold: expect.any(Number), droppedDecision: true });
+    expect(named("words_resumed")[0].data).toMatchObject({ after: "Use SQLite for the tests and the docs" });
+    expect(named("resume")[0].data).toMatchObject({ quietMs: expect.any(Number), droppedDecision: true });
     expect(named("levels")[0].data).toMatchObject({
       peak: expect.any(Number), mean: expect.any(Number), noise: expect.any(Number), loudFrames: expect.any(Number),
       continueAt: expect.any(Number), silenceMs: expect.any(Number), inTurn: true });
+    voice.session.close();
+  });
+
+  it("traffic in a pause never drops the decision: the reply waits for the transcript, then goes ahead", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Use SQLite for the tests");
+    let partials = 0;
+    const answer = voice.request.getMockImplementation()!;
+    voice.request.mockImplementation(command => {
+      if (command.type === "decode" && !command.final) partials += 1;
+      return answer(command);
+    });
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(12, 0.03);
+    frames(28, 0);
+    await vi.waitFor(() => expect(voice.trace.mock.calls.some(([, event]) => event === "decision")).toBe(true));
+    const before = partials;
+    frames(6, 0.05); // a car horn
+    frames(40, 0); // quiet long enough to act, but the horn is not transcribed yet
+    expect(voice.sent("commit")).toHaveLength(0);
+    await vi.waitFor(() => expect(partials).toBeGreaterThan(before));
+    await settle();
+    frames(1, 0);
+    await vi.waitFor(() => expect(voice.sent("commit")).toHaveLength(1));
+    expect(voice.sent("commit")[0]).toMatchObject({ decisionId: "d1" });
+    expect(voice.sent("decide")).toHaveLength(1);
+    expect(voice.trace.mock.calls.some(([, event]) => event === "resume")).toBe(false);
     voice.session.close();
   });
 
@@ -789,7 +827,8 @@ describe("desktop voice session", () => {
       if (command.type === "decode" && command.final) {
         return ++finals === 1 ? Promise.resolve({ text: "Add a readme" }) : new Promise(resolve => { release = resolve; });
       }
-      return command.type === "decode" ? Promise.resolve({ text: "" }) : answer(command);
+      return command.type === "decode" ? Promise.resolve({ text: finals ? "Add a readme with a license" : "" })
+        : answer(command);
     });
     await voice.session.start("thread", "whisper-small", "system");
     await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
@@ -798,6 +837,8 @@ describe("desktop voice session", () => {
     await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(1));
     await settle();
     frames(10, 0.03);
+    frames(1, 0);
+    await vi.waitFor(() => expect(voice.trace.mock.calls.some(([, event]) => event === "words_resumed")).toBe(true));
     frames(400, 0);
     await vi.waitFor(() => expect(release).toBeDefined());
     await settle();

@@ -1,6 +1,6 @@
 import { SpeechSegments } from "./speechSegments";
 import {
-  clearOverlapRequest, hasSubstantiveSpeech, isBackchannel, isPlaybackControl, isPlaybackEcho, spokenMessage,
+  addsWords, clearOverlapRequest, hasSubstantiveSpeech, isBackchannel, isPlaybackControl, isPlaybackEcho, spokenMessage,
   spokenWordCount,
 } from "./speechText";
 import { DISPATCH_HOLD_MS, commitFloorMs } from "./turnTiming";
@@ -73,8 +73,10 @@ interface SpokenTurn {
   decision?: VoiceDecision & { revision: number };
   /** Most words any transcript of this turn has had: growth is the evidence of speech. */
   maxWords: number;
-  /** Set while held for words: the count new speech has to beat. */
-  heldAtWords?: number;
+  /** The turn as heard at its latest pause: a pause ends only on words beyond it. */
+  pauseText?: string;
+  /** Sound came during the pause and no transcript of it is back yet: nothing acts until it is. */
+  awaitingWords?: boolean;
 }
 
 const playbackTailMs = 300;
@@ -91,10 +93,9 @@ export type VoiceTraceValue = string | number | boolean | null;
 export type VoiceTrace = (sessionId: string, event: string, data: Record<string, VoiceTraceValue>) => void;
 
 // Two seconds of sound with no new words is not speech (traffic, clicks, wind: measured
-// 2026-11-10, where it held a turn open for three minutes). Two new words resume a held turn,
-// so a re-transcription that shifts one word ("won't" / "I don't") never does.
+// 2026-11-10, where it held a turn open for three minutes): after that it stops holding the
+// reply. Only new words (addsWords) ever end a pause.
 const STALL_FRAMES = 100;
-const RESUME_WORDS = 2;
 const LEVELS_IN_TURN_FRAMES = 50; // one line per second while a turn is open
 const LEVELS_IDLE_FRAMES = 250; // one per five seconds otherwise
 const round = (value: number) => Math.round(value * 10_000) / 10_000;
@@ -138,6 +139,8 @@ export class VoiceSession {
   private lastPartialTraced = "";
   private meter = { frames: 0, peak: 0, sum: 0, loud: 0 };
   private framesSinceWords = 0;
+  /** A partial asked for while another was decoding: the newer audio, decoded next. */
+  private queuedPartial: ArrayBuffer | undefined;
 
   constructor(private readonly bridge: VoiceBridge, private readonly events: VoiceSessionCallbacks,
     private readonly traceSink?: VoiceTrace) {
@@ -342,9 +345,16 @@ export class VoiceSession {
   private decodePartial(pcm: ArrayBuffer) {
     const turn = this.spoken;
     const sessionId = this.sessionId;
-    if (!turn || !sessionId || this.partialInFlight || this.closed) return;
+    if (!turn || !sessionId || this.closed) return;
+    if (this.partialInFlight) {
+      // Never drop it: during a pause this audio is the only word check for the sound.
+      this.queuedPartial = pcm;
+      return;
+    }
     const revision = turn.revision;
     const current = () => this.spoken === turn && turn.revision === revision && this.isCaptureCurrent(turn.captureGeneration);
+    // Only audio captured during a pause can show the speaker resumed it.
+    const duringPause = this.segments.levels.paused;
     const partial = this.decode(sessionId, turn, pcm, false, current).then(result => {
       if (current() && typeof result?.text === "string") {
         const partial = joined([...turn.committed, spokenMessage(result.text, turn.playback)]);
@@ -352,7 +362,8 @@ export class VoiceSession {
           this.stopCapturedPlayback(turn);
         }
         if (turn.playback === undefined || spokenWordCount(partial)) turn.partialText = partial;
-        this.noteWords(turn, spokenWordCount(partial));
+        this.noteWords(turn, partial, duringPause);
+        if (duringPause && !this.queuedPartial) turn.awaitingWords = false;
         if (partial !== this.lastPartialTraced) {
           this.lastPartialTraced = partial;
           this.trace("transcript", { utteranceId: turn.id, final: false, text: partial.slice(0, 1000) });
@@ -362,7 +373,13 @@ export class VoiceSession {
     }).catch(() => {
       // A partial is expendable. A failed final decode is shown to the user.
     }).finally(() => {
-      if (this.partialInFlight === partial) this.partialInFlight = undefined;
+      if (this.partialInFlight !== partial) return;
+      this.partialInFlight = undefined;
+      const queued = this.queuedPartial;
+      this.queuedPartial = undefined;
+      if (queued && this.spoken === turn) this.decodePartial(queued);
+      // The check could not run (a failed decode): let quiet decide rather than wait forever.
+      else if (!queued && duringPause && !current()) turn.awaitingWords = false;
     });
     this.partialInFlight = partial;
   }
@@ -375,6 +392,7 @@ export class VoiceSession {
     const revision = turn.revision;
     const current = () => this.spoken === turn && turn.revision === revision && this.isCaptureCurrent(turn.captureGeneration);
     this.trace("pause", { utteranceId: turn.id, silenceMs: this.segments.silenceMs, cleanSpeechMs, revision });
+    turn.pauseText = turn.partialText ?? turn.text ?? "";
     turn.decodingPause = revision;
     this.events.state({ checking: true });
     void this.decode(sessionId, turn, pcm, true, current).then(result => {
@@ -383,10 +401,10 @@ export class VoiceSession {
         revision });
       if (!current()) return;
       turn.decodingPause = undefined;
-      // The full transcript of the same audio sets the bar a held turn must beat.
-      const finalWords = spokenWordCount(joined([...turn.committed, heard]));
-      if (turn.heldAtWords !== undefined) turn.heldAtWords = Math.max(turn.heldAtWords, finalWords);
-      turn.maxWords = Math.max(turn.maxWords, finalWords);
+      // The full transcript of the paused audio is the bar new words have to clear.
+      const pauseText = joined([...turn.committed, heard]);
+      turn.pauseText = pauseText;
+      turn.maxWords = Math.max(turn.maxWords, spokenWordCount(pauseText));
       if (this.consumePlaybackControl(turn, heard)) {
         this.clearCapture();
         return;
@@ -473,30 +491,37 @@ export class VoiceSession {
     });
   }
 
-  /** Counts frames of "speech" since the transcript last grew; holds the turn when it stalls. */
+  /** Counts frames of sound since the transcript last grew; past two seconds, that sound is
+   * not speech, and it stops holding the turn open. */
   private watchForWords() {
     const turn = this.spoken;
     if (!turn || this.pushToTalk || turn.playback !== undefined) return;
-    const { paused, held } = this.segments.levels;
-    if (paused || held) return;
+    if (this.segments.held || !this.segments.sounding) return;
+    if (this.segments.levels.paused) turn.awaitingWords = true;
     this.framesSinceWords += 1;
     if (this.framesSinceWords < STALL_FRAMES || !turn.maxWords) return;
-    turn.heldAtWords = turn.maxWords;
     this.trace("hold_for_words", { utteranceId: turn.id, words: turn.maxWords,
-      soundMs: this.framesSinceWords * 20 });
+      soundMs: this.framesSinceWords * 20, paused: this.segments.levels.paused });
+    turn.awaitingWords = false; // that sound was not speech: it no longer holds anything back
     this.segments.holdForWords();
   }
 
-  private noteWords(turn: SpokenTurn, count: number) {
-    if (turn.heldAtWords !== undefined) {
-      if (count < turn.heldAtWords + RESUME_WORDS) return;
-      this.trace("words_resumed", { utteranceId: turn.id, words: count, heldAt: turn.heldAtWords });
-      turn.heldAtWords = undefined;
-      turn.maxWords = count;
+  private noteWords(turn: SpokenTurn, partial: string, duringPause: boolean) {
+    if (this.segments.levels.paused) {
+      if (!duringPause) {
+        // Audio from before the pause, transcribed late: part of what was paused on.
+        if (spokenWordCount(partial) > spokenWordCount(turn.pauseText ?? "")) turn.pauseText = partial;
+        return;
+      }
+      if (!addsWords(turn.pauseText ?? "", partial)) return;
+      this.trace("words_resumed", { utteranceId: turn.id, before: (turn.pauseText ?? "").slice(-200),
+        after: partial.slice(-200) });
+      turn.maxWords = Math.max(turn.maxWords, spokenWordCount(partial));
       this.framesSinceWords = 0;
       this.segments.wordsResumed();
       return;
     }
+    const count = spokenWordCount(partial);
     if (count > turn.maxWords) {
       turn.maxWords = count;
       this.framesSinceWords = 0;
@@ -534,6 +559,8 @@ export class VoiceSession {
     const turn = this.spoken;
     const decision = turn?.decision;
     if (!turn || !decision || decision.revision !== turn.revision) return;
+    // Sound came in the pause: wait for the transcript to say whether the speaker went on.
+    if (turn.awaitingWords) return;
     const required = commitFloorMs(this.resumedPauses) + (waitsForMore(decision) ? DISPATCH_HOLD_MS : 0);
     if (this.segments.silenceMs >= required) {
       this.trace("act", { utteranceId: turn.id, action: decision.action, requiredMs: required,
@@ -549,8 +576,7 @@ export class VoiceSession {
     }
     const turn = this.spoken;
     this.trace("resume", {
-      utteranceId: turn?.id ?? null, quietMs: silenceMs, rms: round(this.lastRms),
-      threshold: round(this.segments.levels.continueAt),
+      utteranceId: turn?.id ?? null, quietMs: silenceMs,
       droppedDecision: !!turn && (turn.decision !== undefined || turn.deciding !== undefined),
     });
     if (turn) {

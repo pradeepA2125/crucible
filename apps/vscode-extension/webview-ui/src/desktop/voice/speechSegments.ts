@@ -61,8 +61,12 @@ export class SpeechSegments {
   private rolled = false;
   private recent: number[] = [];
   private loudRun = 0;
-  // Sound kept going without new words: only words (wordsResumed) can resume the turn.
+  // Sound kept going without new words: it no longer even holds the reply.
   private holding = false;
+  // Sound at speech level during a pause: the transcript decides whether it was words.
+  private soundInPause = false;
+  private quietBeforeSound: number | undefined;
+  private soundThisFrame = false;
 
   constructor(private readonly callbacks: SpeechCallbacks) {}
 
@@ -83,6 +87,11 @@ export class SpeechSegments {
     return this.holding;
   }
 
+  /** The last frame counted as sound (it reset the quiet count). */
+  get sounding(): boolean {
+    return this.soundThisFrame;
+  }
+
   private get inTurn(): boolean {
     return this.utterance.length > 0 || this.rolled;
   }
@@ -95,7 +104,7 @@ export class SpeechSegments {
   }
 
   /** The recognizer heard no new words in sound that kept going: treat it as a pause, and
-   * from now on let only new words (wordsResumed) resume the turn. */
+   * stop letting that sound hold the reply. Only new words (wordsResumed) resume the turn. */
   holdForWords() {
     if (!this.inTurn || this.holding) return;
     this.holding = true;
@@ -105,16 +114,16 @@ export class SpeechSegments {
     this.callbacks.pause(joinFrames(this.utterance), this.cleanVoiced * FRAME_MS);
   }
 
+  /** The recognizer found new words: the speaker resumed. The only way a pause ends. */
   wordsResumed() {
-    if (!this.holding) return;
     this.holding = false;
-    const quietMs = this.silence * FRAME_MS;
+    if (!this.paused) return;
+    const quietMs = this.quietBeforeSound ?? this.silence * FRAME_MS;
+    this.paused = false;
     this.silence = 0;
-    this.loudRun = 0;
-    if (this.paused) {
-      this.paused = false;
-      this.callbacks.resume(quietMs);
-    }
+    this.soundInPause = false;
+    this.quietBeforeSound = undefined;
+    this.callbacks.resume(quietMs);
   }
 
   /** Quiet since the last speech in the current turn; 0 outside a turn. */
@@ -141,6 +150,8 @@ export class SpeechSegments {
     this.recent = [];
     this.loudRun = 0;
     this.holding = false;
+    this.soundInPause = false;
+    this.quietBeforeSound = undefined;
   }
 
   finish() {
@@ -193,25 +204,30 @@ export class SpeechSegments {
       this.voiced += 1;
       if (clean) this.cleanVoiced += 1;
     }
-    const speaking = !this.holding && (this.paused ? this.loudRun >= RESUME_FRAMES : sounding);
-    if (speaking) {
-      const quietMs = this.silence * FRAME_MS;
-      this.silence = 0;
-      if (this.paused) {
-        this.paused = false;
-        this.callbacks.resume(quietMs);
-      }
-    } else if (!(this.paused && !this.holding && this.loudRun > 0)) {
-      // A run that may yet prove to be speech holds the quiet count until it decides.
+    let soundEnded = false;
+    const quietBefore = this.silence;
+    if (!this.paused) {
+      this.silence = sounding ? 0 : this.silence + 1;
+    } else if (this.holding) {
       this.silence += 1;
-    }
+    } else if (this.loudRun >= RESUME_FRAMES) {
+      // Maybe speaking again: hold any reply until the transcript says whether these were words.
+      if (this.silence > 0) this.quietBeforeSound ??= this.silence * FRAME_MS;
+      this.silence = 0;
+      this.soundInPause = true;
+    } else if (this.loudRun === 0) {
+      this.silence += 1;
+      soundEnded = this.soundInPause;
+      this.soundInPause = false;
+    } // else: a run that may yet prove to be speech holds the quiet count until it decides.
+    this.soundThisFrame = this.silence === 0 && (quietBefore > 0 || sounding);
     if (this.utterance.length >= MAX_FRAMES) {
       const segment = joinFrames(this.utterance);
       this.utterance = [];
       this.rolled = true;
       this.nextPartial = PARTIAL_INTERVAL_FRAMES;
       this.callbacks.rollover(segment);
-    } else if (!manual && this.silence === PAUSE_FRAMES) {
+    } else if (!manual && !this.paused && this.silence === PAUSE_FRAMES) {
       if (this.voiced < MIN_VOICED_FRAMES) {
         this.finish();
         return;
@@ -223,6 +239,10 @@ export class SpeechSegments {
       this.callbacks.waitLimit();
     } else if (wantsPartial && !manual && playing && this.voiced >= MIN_VOICED_FRAMES &&
       this.silence === PLAYBACK_PAUSE_PROBE_FRAMES) {
+      this.callbacks.partial(joinFrames(this.utterance));
+    } else if (soundEnded && wantsPartial && !manual) {
+      // A short word in a pause may end before the next partial is due: check it now.
+      this.nextPartial = this.utterance.length + PARTIAL_INTERVAL_FRAMES;
       this.callbacks.partial(joinFrames(this.utterance));
     } else if (wantsPartial && (this.silence === 0 || this.holding) && this.utterance.length >= this.nextPartial) {
       this.nextPartial = this.utterance.length + PARTIAL_INTERVAL_FRAMES;

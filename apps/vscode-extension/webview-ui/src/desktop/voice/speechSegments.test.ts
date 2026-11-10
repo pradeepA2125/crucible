@@ -66,8 +66,10 @@ describe("speech segmentation", () => {
     expect(speech.pause).toHaveBeenCalledOnce();
     expect(speech.segments.silenceMs).toBe(2000);
     speech.feed(12, 0.03);
+    expect(speech.resume).not.toHaveBeenCalled(); // sound alone never resumes the turn
+    expect(speech.segments.silenceMs).toBe(0); // but it holds any reply
+    speech.segments.wordsResumed();
     expect(speech.resume).toHaveBeenCalledExactlyOnceWith(2000);
-    expect(speech.segments.silenceMs).toBe(0);
     speech.feed(399, 0);
     expect(speech.pause).toHaveBeenCalledTimes(2);
     expect(speech.waitLimit).not.toHaveBeenCalled();
@@ -142,7 +144,22 @@ describe("speech detection inside a turn", () => {
     expect(speech.resume).not.toHaveBeenCalled();
     expect(speech.segments.silenceMs).toBe(48 * 20); // each faint frame holds the count, never resets it
     speech.feed(4, 0.03);
-    expect(speech.resume).toHaveBeenCalledOnce();
+    expect(speech.resume).not.toHaveBeenCalled();
+    expect(speech.segments.silenceMs).toBe(0);
+    speech.segments.wordsResumed();
+    expect(speech.resume).toHaveBeenCalledExactlyOnceWith(960);
+  });
+
+  it("sound in a pause asks for a transcript, holds the reply, and never re-pauses on its own", () => {
+    const speech = fixture();
+    pause(speech);
+    speech.feed(10, 0.03); // a short word: shorter than the partial interval
+    speech.feed(1, 0);
+    expect(speech.partial).toHaveBeenCalled(); // asked as the sound ended
+    speech.feed(60, 0);
+    expect(speech.pause).toHaveBeenCalledOnce();
+    expect(speech.resume).not.toHaveBeenCalled();
+    expect(speech.segments.silenceMs).toBe(61 * 20);
   });
 
   it("steady room noise inside a turn stops counting as speech", () => {
