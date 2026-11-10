@@ -5,6 +5,7 @@ import {
 } from "./speechText";
 import { DISPATCH_HOLD_MS, commitFloorMs } from "./turnTiming";
 import { VadAligner } from "./vadAligner";
+import { EchoGate } from "./echoGate";
 import { VoiceAudio } from "./voiceAudio";
 import {
   decisionOf, refusalMessageOf, refusalOf, voiceRequest,
@@ -78,6 +79,8 @@ interface SpokenTurn {
   pauseText?: string;
   /** Sound came during the pause and no transcript of it is back yet: nothing acts until it is. */
   awaitingWords?: boolean;
+  /** This turn paused a reply: words stop it for good, no words resume it. */
+  pausedReply?: boolean;
 }
 
 const playbackTailMs = 300;
@@ -101,6 +104,8 @@ const STALL_FRAMES = 100;
 // With Silero, sound that reaches this point is a voice: only a TV or people nearby, so wait
 // longer before deciding it brings no words (a slow transcript tripped 2 s mid-sentence live).
 const STALL_FRAMES_WITH_VAD = 300;
+// A paused reply resumes after this much quiet with no new words (a cough, "hmm", a door).
+const RESUME_AFTER_QUIET_FRAMES = 50;
 const LEVELS_IN_TURN_FRAMES = 50; // one line per second while a turn is open
 const LEVELS_IDLE_FRAMES = 250; // one per five seconds otherwise
 const round = (value: number) => Math.round(value * 10_000) / 10_000;
@@ -161,6 +166,8 @@ export class VoiceSession {
   /** Silero VAD: on when the host started a detector, off for good after any failure. */
   private vad: "on" | "off" = "off";
   private readonly aligner = new VadAligner<CapturedFrame>();
+  /** While a reply plays: the user's voice, not the reply's own sound coming back. */
+  private readonly echoGate = new EchoGate();
   private vadBatch: ArrayBuffer[] = [];
   private vadInFlight = false;
   private vadAnswered = false;
@@ -338,12 +345,31 @@ export class VoiceSession {
   /** One frame through speech detection, with Silero's probability when the detector runs. */
   private process(captured: CapturedFrame, speechProb?: number) {
     if (!this.isCaptureCurrent(captured.generation) || this.closed) return;
+    // Over a reply, only the user's voice counts: the reply's own echo is masked out.
+    if (speechProb !== undefined && captured.playing
+      && !this.echoGate.observe(captured.rms, this.audio.outputLevel(), speechProb)) speechProb = 0;
     this.lastRms = captured.rms;
     this.measure(captured.rms, captured.masked, captured.playing, speechProb);
     this.segments.accept(captured.frame, captured.playing,
       !this.partialInFlight && (this.pending === 0 || captured.playing), this.pushToTalk, captured.clean, speechProb);
     this.commitWhenQuietEnough();
     this.watchForWords();
+    this.resumeAfterQuiet();
+  }
+
+  /** The sound that paused a reply brought no words: carry on from where it paused. */
+  private resumeAfterQuiet() {
+    const turn = this.spoken;
+    if (!turn?.pausedReply || this.segments.silenceMs < RESUME_AFTER_QUIET_FRAMES * 20) return;
+    if (turn.awaitingWords || turn.decodingPause === turn.revision) return;
+    this.clearCapture(); // resumes the reply
+  }
+
+  private resumeReply(turn: SpokenTurn) {
+    if (!turn.pausedReply) return;
+    turn.pausedReply = false;
+    this.audio.resumePlayback();
+    this.trace("resumed", { utteranceId: turn.id });
   }
 
   /** Sends captured audio to the detector, one request at a time, batching what waits. */
@@ -427,15 +453,25 @@ export class VoiceSession {
     const playbackTarget = playback === undefined ? undefined : this.outputTarget;
     this.latestInput = id;
     this.trace("onset", { utteranceId: id, overPlayback: playback !== undefined, rms: round(this.lastRms) });
+    // With the detector, an onset over a reply is the user's voice (the echo gate saw to that):
+    // hold the reply where it is until we know whether they said anything.
+    const pausedReply = this.vad === "on" && !this.pushToTalk && this.audio.playing && !this.audio.paused;
+    if (pausedReply) {
+      this.audio.pausePlayback();
+      this.trace("paused_for_user", { utteranceId: id });
+    }
     this.spoken = {
       id, captureGeneration: this.captureGeneration, snapshot: this.snapshot(sessionId, id),
-      playback, playbackTarget, onsetAt, revision: 0, committed: [], maxWords: 0,
+      playback, playbackTarget, onsetAt, revision: 0, committed: [], maxWords: 0, pausedReply,
     };
     this.framesSinceWords = 0;
     this.events.state({ capturing: true, partial: "" });
   }
 
   private clearCapture(reset = true) {
+    // A turn that paused a reply and ends without words that stopped it (a cough too short to
+    // be an utterance, a filler, its own echo): the reply carries on from where it paused.
+    if (this.spoken?.pausedReply) this.resumeReply(this.spoken);
     this.spoken = undefined;
     if (reset) this.segments.reset();
     this.events.state({
@@ -467,8 +503,9 @@ export class VoiceSession {
     const partial = this.decode(sessionId, turn, pcm, false, current).then(result => {
       if (current() && typeof result?.text === "string") {
         const partial = joined([...turn.committed, spokenMessage(result.text, turn.playback)]);
-        if (this.isCapturedPlaybackControl(turn, result.text) || hasSubstantiveSpeech(partial)) {
-          this.stopCapturedPlayback(turn);
+        if (this.isCapturedPlaybackControl(turn, result.text) || hasSubstantiveSpeech(partial)
+          || (turn.pausedReply && addsWords("", partial))) {
+          this.stopForWords(turn, partial);
         }
         if (turn.playback === undefined || spokenWordCount(partial)) turn.partialText = partial;
         this.noteWords(turn, partial, duringPause);
@@ -521,18 +558,19 @@ export class VoiceSession {
       const answering = performance.now() < this.answerExpectedUntil;
       const text = joined([...turn.committed, spokenMessage(heard, turn.playback)]);
       if (!text || (!answering && isBackchannel(text)) || (turn.playback !== undefined && !spokenWordCount(text))) {
-        if (!heard.trim() && turn.playback !== undefined) this.keepForReview(turn, turn.partialText || "");
+        if (!turn.pausedReply && !heard.trim() && turn.playback !== undefined) this.keepForReview(turn, turn.partialText || "");
         this.clearCapture();
         return;
       }
-      if (hasSubstantiveSpeech(text)) this.stopCapturedPlayback(turn);
+      if (hasSubstantiveSpeech(text) || turn.pausedReply) this.stopForWords(turn, text);
       turn.text = text;
       this.events.state({ partial: text });
       // A short reply to playback can be misheard as an instruction; it waits for review.
       // Once the reply has stopped and they have said a full second clearly, it is an ordinary
       // turn: the voice agent judges it (live, a request after "Awesome." over a check-in sat
       // held for 7 s of clear speech and only reached review).
-      turn.held = turn.playback !== undefined && cleanSpeechMs < CLEAR_SPEECH_DECIDES_MS
+      // With the detector, the echo gate already established it was the user: decide it.
+      turn.held = this.vad !== "on" && turn.playback !== undefined && cleanSpeechMs < CLEAR_SPEECH_DECIDES_MS
         && (cleanSpeechMs < 420 || !clearOverlapRequest(text));
       if (turn.held) {
         this.events.state({ checking: false });
@@ -852,12 +890,19 @@ export class VoiceSession {
 
   private consumePlaybackControl(turn: SpokenTurn, text: string) {
     if (!this.isCapturedPlaybackControl(turn, text)) return false;
-    this.stopCapturedPlayback(turn);
+    this.stopForWords(turn, text);
     return true;
   }
 
   private isCapturedPlaybackControl(turn: SpokenTurn, text: string) {
     return isPlaybackControl(text, turn.playback !== undefined) && !isPlaybackEcho(text, turn.playback);
+  }
+
+  /** Real words over a reply: it stops for good (its text stays on screen). */
+  private stopForWords(turn: SpokenTurn, text: string) {
+    if (turn.pausedReply) this.trace("stopped_for_words", { utteranceId: turn.id, text: text.slice(0, 200) });
+    turn.pausedReply = false;
+    this.stopCapturedPlayback(turn);
   }
 
   private stopCapturedPlayback(turn: SpokenTurn) {
@@ -925,6 +970,7 @@ export class VoiceSession {
     this.outputTarget = utteranceId;
     this.playbackText = "";
     this.lastPlaybackAt = -Infinity;
+    this.echoGate.reset();
     this.trace("narrating", { utteranceId });
   }
 
@@ -938,6 +984,7 @@ export class VoiceSession {
     this.outputTarget = utteranceId;
     this.playbackText = "";
     this.lastPlaybackAt = -Infinity;
+    this.echoGate.reset();
   }
 
   private async submit(sessionId: string, utteranceId: string, text: string, intent: VoiceIntent) {

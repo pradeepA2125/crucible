@@ -25,10 +25,14 @@ export class EchoGate {
     if (outputRms <= SILENT_OUTPUT) {
       user = voiced; // headphones or a gap in the reply: nothing to mistake for the user
     } else {
-      this.ratios.push(micRms / outputRms);
-      if (this.ratios.length > ECHO_WINDOW_FRAMES) this.ratios.shift();
       const expectedEcho = ECHO_MARGIN * this.coupling() * outputRms + ABSOLUTE_MARGIN;
       user = voiced && micRms >= expectedEcho;
+      // Learn the echo path only from frames that are not the user: their own voice must
+      // never become "the echo" (someone talking from a reply's first frame was muted).
+      if (!user) {
+        this.ratios.push(micRms / outputRms);
+        if (this.ratios.length > ECHO_WINDOW_FRAMES) this.ratios.shift();
+      }
     }
     this.run = user ? this.run + 1 : 0;
     return this.run >= USER_ONSET_FRAMES;

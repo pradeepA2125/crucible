@@ -19,6 +19,12 @@ describe("EchoGate: the user's voice, not the reply's own sound", () => {
     expect(Array.from({ length: 4 }, () => gate.observe(0.05, 0, 0.9)).at(-1)).toBe(true);
   });
 
+  it("the user's own speech never teaches it the echo level", () => {
+    const gate = new EchoGate(); // the user talks from the first frame of a reply
+    const results = Array.from({ length: 60 }, () => gate.observe(0.4, 0.1, 0.9));
+    expect(results.slice(3)).toEqual(Array(57).fill(true));
+  });
+
   it("a loud non-voice sound is not the user", () => {
     const gate = new EchoGate();
     for (let i = 0; i < 20; i += 1) expect(gate.observe(0.2, 0.1, 0.1)).toBe(false);

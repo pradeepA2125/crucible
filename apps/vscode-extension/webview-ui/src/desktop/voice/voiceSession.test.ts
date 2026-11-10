@@ -651,6 +651,78 @@ describe("desktop voice session", () => {
     });
   }
 
+  /** A reply playing at level 0.1, with the speech detector running at `level()`. */
+  async function replying(transcript: string, level: { value: number }) {
+    vi.clearAllMocks();
+    const voice = fixture(transcript);
+    withDetector(voice, () => level.value);
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    await voice.session.submitText("Status?", "question");
+    const initial = voice.request.mock.calls.map(([command]) => command).find(command => command.type === "submit");
+    if (initial?.type !== "submit") throw new Error("Expected initial voice reply target");
+    voice.emit({ type: "reply", sessionId: "session", messageId: "reply", utteranceId: initial.utteranceId,
+      text: "Here is the status of the work.", final: true });
+    audio.playing = true;
+    audio.outputLevel.mockReturnValue(0.1);
+    const interruptsBefore = voice.sent("interrupt").length;
+    audio.stopPlayback.mockClear(); // the setup's own typed message stopped nothing that matters
+    const feed = async (count: number, rms: number) => {
+      for (let sent = 0; sent < count; sent += 4) { frames(Math.min(4, count - sent), rms); await settle(); }
+    };
+    return { voice, feed, interruptsBefore };
+  }
+
+  it("a cough over a reply pauses it and resumes from the same point", async () => {
+    const level = { value: 0.9 };
+    const { voice, feed } = await replying("(cough)", level);
+    try {
+      await feed(8, 0.4);
+      expect(audio.pausePlayback).toHaveBeenCalledOnce();
+      level.value = 0.05;
+      await feed(80, 0);
+      await vi.waitFor(() => expect(audio.resumePlayback).toHaveBeenCalledOnce());
+      expect(audio.stopPlayback).not.toHaveBeenCalled();
+      expect(voice.sent("decide")).toHaveLength(0);
+    } finally { audio.playing = false; audio.outputLevel.mockReturnValue(0); voice.session.close(); }
+  });
+
+  it("the reply's own echo never pauses it", async () => {
+    const level = { value: 0.95 };
+    const { voice, feed } = await replying("Here is the status of the work.", level);
+    try {
+      await feed(300, 0.03);
+      expect(audio.pausePlayback).not.toHaveBeenCalled();
+      expect(voice.trace.mock.calls.some(([, event]) => event === "onset")).toBe(false);
+    } finally { audio.playing = false; audio.outputLevel.mockReturnValue(0); voice.session.close(); }
+  });
+
+  it("real words over a reply stop it for good and are decided", async () => {
+    const level = { value: 0.9 };
+    const { voice, feed, interruptsBefore } = await replying("No, I meant the other file", level);
+    try {
+      await feed(24, 0.4);
+      level.value = 0.05;
+      await feed(40, 0);
+      await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(1));
+      expect(voice.sent("decide")[0]).toMatchObject({ text: "No, I meant the other file" });
+      expect(voice.sent("interrupt").length).toBeGreaterThan(interruptsBefore);
+      expect(audio.resumePlayback).not.toHaveBeenCalled();
+    } finally { audio.playing = false; audio.outputLevel.mockReturnValue(0); voice.session.close(); }
+  });
+
+  it("\"wait\" over a reply stops it for good", async () => {
+    const level = { value: 0.9 };
+    const { voice, feed, interruptsBefore } = await replying("Wait.", level);
+    try {
+      await feed(24, 0.4);
+      level.value = 0.05;
+      await feed(40, 0);
+      await vi.waitFor(() => expect(voice.sent("interrupt").length).toBeGreaterThan(interruptsBefore));
+      expect(audio.resumePlayback).not.toHaveBeenCalled();
+    } finally { audio.playing = false; audio.outputLevel.mockReturnValue(0); voice.session.close(); }
+  });
+
   it("a turn that starts over the reply is decided once it has a second of clear speech", async () => {
     vi.clearAllMocks();
     const voice = fixture("Ask it to generate with proper JSON object.");
