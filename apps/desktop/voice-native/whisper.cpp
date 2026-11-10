@@ -132,6 +132,11 @@ int main(int argc, char **argv) {
     params.n_threads = static_cast<int>(std::clamp(std::thread::hardware_concurrency(), 1U, 4U));
     params.language = "en";
     params.no_context = true;
+    // Coding words Whisper otherwise hears as everyday ones ("repo" came back as "report",
+    // "ripple" and "rapport" in live tests). A short glossary, not a sentence, so it biases
+    // spelling without inviting Whisper to repeat it on near-silence.
+    params.initial_prompt = "Glossary: repo, repository, commit, branch, pull request, PR, merge, "
+                            "npm, TypeScript, Python, API, Crucible.";
     params.no_timestamps = true;
     params.print_special = false;
     params.print_progress = false;
