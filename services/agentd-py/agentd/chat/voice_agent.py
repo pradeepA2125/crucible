@@ -91,6 +91,13 @@ _DECIDE_SYSTEM = (
     "messages.\n"
     "Reply with only the decision object (turn, action, say, request); no other text."
 )
+# Sent only on the final question: Haiku ignored the same rule in the system prompt live.
+_FINAL_CALL_INSTRUCTION = (
+    "They have been quiet for a while; this is the final call. If the turn is complete, act "
+    "on it. If it still sounds unfinished or unclear, choose action clarify and put in say "
+    "one short question about what you heard (for example \"Did you mean this repo?\"), "
+    "never an empty say."
+)
 _DECIDE_CORRECTION = (
     "Your previous reply was not a usable decision. Reply with only the decision object: "
     "turn is one of complete, cut_off, thinking; action is one of listen, reply, clarify, "
@@ -306,6 +313,8 @@ class VoiceAgent:
             "utterance": ctx.utterance, "silence_ms": ctx.silence_ms,
             "final_call": ctx.final_call, "history": ctx.history, "progress": ctx.progress,
             "project": ctx.project}
+        if ctx.final_call:
+            payload["instruction"] = _FINAL_CALL_INSTRUCTION
         for attempt in range(2):
             raw, model = await self._call(
                 thread_id, "generate_json", schema_name="voice_decision",

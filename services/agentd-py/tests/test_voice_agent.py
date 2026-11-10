@@ -421,3 +421,14 @@ def test_decide_prompt_covers_idle_follow_ups_final_call_and_mishearings() -> No
     assert "last answer" in prompt
     assert "final_call" in prompt and "did you mean" in prompt
     assert "misheard" in prompt and "project" in prompt
+
+
+@pytest.mark.asyncio
+async def test_final_call_payload_asks_for_a_specific_question() -> None:
+    transport = FakeJson(_reply("thinking", "listen", ""), )
+    await _agent(transport).decide("t1", _ctx("this rapport, this rapport, this", final_call=True))
+    payload = transport.calls[-1]["user_payload"]
+    assert isinstance(payload, dict)
+    assert "question about what you heard" in str(payload["instruction"])
+    await _agent(transport).decide("t1", _ctx("use sqlite"))
+    assert "instruction" not in transport.calls[-1]["user_payload"]  # type: ignore[operator]
