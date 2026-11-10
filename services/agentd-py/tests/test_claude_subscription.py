@@ -220,7 +220,7 @@ async def test_native_history_cache_isolated_agents_and_usage():
         assert "x-api-key" not in request.headers
         body = json.loads(request.content)
         assert [b["text"] for b in body["system"]][0] == IDENTITY
-        assert body["tool_choice"] == {"type": "auto"}
+        assert body["tool_choice"] == {"type": "tool", "name": "crucible_step"}
         bodies.append(body)
         return stream_response()
 
@@ -667,3 +667,99 @@ async def test_catalog_effort_metadata_is_validated_and_cached_defensively(tmp_p
         assert (await service.plan_model(REG, "claude-fixture"))["reasoning_effort"]["xhigh"] is False
     finally:
         await service.aclose()
+
+
+REFUSAL = 'tool_choice: type "tool" and "any" are not supported for this model.'
+
+
+def prose_response(text="Sure, I can help with that."):
+    return httpx.Response(200, json={"content": [{"type": "text", "text": text}], "usage": {}})
+
+
+async def _json_call(transport, model="test-model"):
+    return await transport.generate_json(
+        model=model, schema_name="probe", schema=SCHEMA,
+        system_instructions="test", user_payload={"q": 1})
+
+
+@pytest.mark.asyncio
+async def test_forced_tool_refusal_falls_back_to_auto_and_is_remembered_per_model():
+    choices = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        choices.append((body["model"], body["tool_choice"]["type"]))
+        if body["tool_choice"]["type"] == "tool":
+            return httpx.Response(400, json={"error": {"message": REFUSAL}})
+        return stream_response()
+
+    async def bearer():
+        return "test"
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport = ClaudeSubscriptionTransport(bearer, registration_id=REG, client=client)
+        assert await _json_call(transport, "sonnet") == {"ok": True}
+        assert await _json_call(transport, "sonnet") == {"ok": True}
+        await _json_call(transport, "haiku")
+    assert choices == [("sonnet", "tool"), ("sonnet", "auto"), ("sonnet", "auto"),
+                       ("haiku", "tool"), ("haiku", "auto")]
+
+
+@pytest.mark.asyncio
+async def test_other_400_is_not_taken_for_a_tool_choice_refusal():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(400, json={"error": {"message": "messages: bad"}})
+
+    async def bearer():
+        return "test"
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport = ClaudeSubscriptionTransport(bearer, registration_id=REG, client=client)
+        with pytest.raises(RuntimeError, match="HTTP 400"):
+            await _json_call(transport)
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_prose_reply_under_auto_is_corrected_once():
+    bodies = []
+    replies = iter([prose_response(), stream_response()])
+
+    def handler(request):
+        body = json.loads(request.content)
+        if body["tool_choice"]["type"] == "tool":
+            return httpx.Response(400, json={"error": {"message": REFUSAL}})
+        bodies.append(body)
+        return next(replies)
+
+    async def bearer():
+        return "test"
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport = ClaudeSubscriptionTransport(bearer, registration_id=REG, client=client)
+        assert await _json_call(transport) == {"ok": True}
+    retry = bodies[1]["messages"]
+    assert retry[-2]["role"] == "assistant"
+    assert retry[-2]["content"][0]["text"] == "Sure, I can help with that."
+    assert retry[-1]["role"] == "user"
+    assert "crucible_step" in retry[-1]["content"][-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_second_prose_reply_raises():
+    def handler(request):
+        body = json.loads(request.content)
+        if body["tool_choice"]["type"] == "tool":
+            return httpx.Response(400, json={"error": {"message": REFUSAL}})
+        return prose_response()
+
+    async def bearer():
+        return "test"
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport = ClaudeSubscriptionTransport(bearer, registration_id=REG, client=client)
+        with pytest.raises(RuntimeError, match="no valid Crucible action"):
+            await _json_call(transport)

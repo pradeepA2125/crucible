@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -30,7 +31,14 @@ from agentd.providers.reasoning_effort import (
 from agentd.providers.usage import METER, USAGE_OWNER
 
 IDENTITY = "You are Claude Code, Anthropic's official CLI for Claude."
+logger = logging.getLogger(__name__)
+
 TOOL_NAME = "crucible_step"
+# Sent once after a prose reply on a model that cannot be forced to call the tool.
+ACTION_CORRECTION = (
+    f"That reply was prose. Reply again by calling {TOOL_NAME}; its input is the "
+    "complete response object. No text outside the call."
+)
 CACHE = {"type": "ephemeral"}
 MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 
@@ -102,6 +110,10 @@ def messages_from_items(items: list[dict]) -> list[dict]:
     return messages
 
 
+class ClaudeToolChoiceRefused(ClaudeRequestError):
+    """The model does not accept a forced tool_choice (Sonnet 5.5, measured 2026-11-10)."""
+
+
 class ClaudeSubscriptionTransport:
     supports_vision = True
     supports_oneof_grammar = False
@@ -126,6 +138,8 @@ class ClaudeSubscriptionTransport:
         self.max_tokens = max_tokens
         self.timeout_sec = timeout_sec
         self.sessions = SessionInputs()
+        # Models that refused a forced tool_choice; they get `auto` plus one correction.
+        self._auto_only: set[str] = set()
 
     def set_reasoning_effort(self, level: ReasoningEffort | None) -> None:
         self._effort = level
@@ -192,8 +206,11 @@ class ClaudeSubscriptionTransport:
                     "cache_control": CACHE.copy(),
                 }
             ]
-            # Sonnet 5.5 rejects forced tool selection; ask in the prompt, validate after.
-            body["tool_choice"] = {"type": "auto"}
+            # Force the action where the model allows it (Haiku 5.5 does); a model that
+            # refuses (Sonnet 5.5) is remembered and asked in the prompt instead.
+            body["tool_choice"] = (
+                {"type": "auto"} if model in self._auto_only
+                else {"type": "tool", "name": TOOL_NAME})
         return body
 
     async def generate_json(
@@ -234,25 +251,21 @@ class ClaudeSubscriptionTransport:
         if session and isinstance(user_payload.get("conversation_history"), list):
             key = SessionInputs.key(session, schema_name, instructions, [schema])
             sent = self.sessions.build(key, items)
-        response = await self._request(
-            self._body(model, instructions, messages_from_items(sent), schema),
-            on_thinking,
-            on_usage,
-            on_context_input,
-        )
-        calls = [c for c in response["content"] if c.get("type") == "tool_use"]
-        if calls:
-            if len(calls) != 1 or calls[0].get("name") != TOOL_NAME:
-                raise RuntimeError("Claude must return exactly one Crucible action.")
-            result = calls[0].get("input")
-        else:
-            text = "\n".join(
-                c.get("text", "") for c in response["content"] if c.get("type") == "text"
-            )
-            try:
-                result = json.loads(strip_json_code_fences(text))
-            except ValueError:
-                raise RuntimeError("Claude returned no valid Crucible action.") from None
+        messages = messages_from_items(sent)
+        callbacks = (on_thinking, on_usage, on_context_input)
+        response = await self._action_request(model, instructions, messages, schema, callbacks)
+        result, prose = _action_of(response)
+        if result is None:
+            # Only reachable on an `auto` model: say it once, then give up.
+            corrected = [
+                *messages,
+                {"role": "assistant", "content": [{"type": "text", "text": prose or "(no reply)"}]},
+                {"role": "user", "content": [{"type": "text", "text": ACTION_CORRECTION}]},
+            ]
+            response = await self._action_request(model, instructions, corrected, schema, callbacks)
+            result, _ = _action_of(response)
+            if result is None:
+                raise RuntimeError("Claude returned no valid Crucible action.")
         if not isinstance(result, dict):
             raise RuntimeError("Claude's action must be an object.")
         try:
@@ -264,6 +277,22 @@ class ClaudeSubscriptionTransport:
         if key:
             self.sessions.commit(key, items, sent)
         return result
+
+    async def _action_request(
+        self, model: str, instructions: str, messages: list[dict[str, Any]],
+        schema: dict[str, Any],
+        callbacks: tuple[Callable[..., Any] | None, Callable[..., Any] | None, Any],
+    ) -> dict[str, Any]:
+        try:
+            return await self._request(
+                self._body(model, instructions, messages, schema), *callbacks)
+        except ClaudeToolChoiceRefused:
+            if model in self._auto_only:
+                raise
+            logger.info("[claude] %s refuses a forced tool_choice; using auto", model)
+            self._auto_only.add(model)
+            return await self._request(
+                self._body(model, instructions, messages, schema), *callbacks)
 
     async def generate_text(
         self,
@@ -348,6 +377,9 @@ class ClaudeSubscriptionTransport:
                 status=status,
                 request_id=request_id,
             )
+        if status == 400 and "tool_choice" in message and "not supported" in message:
+            return ClaudeToolChoiceRefused(
+                f"Claude could not complete this request (HTTP {status}).", status=status)
         # Never echo a provider response body into logs/UI (credentials may be reflected).
         return ClaudeRequestError(
             f"Claude could not complete this request (HTTP {status}).", status=status)
@@ -401,3 +433,17 @@ class ClaudeSubscriptionTransport:
                     block["input"] = json.loads(fragments[index])
                 result["content"].append(block)
             return result
+
+
+def _action_of(response: dict[str, Any]) -> tuple[object, str]:
+    """The action a response carries, or (None, its prose) when it has none."""
+    calls = [c for c in response["content"] if c.get("type") == "tool_use"]
+    if calls:
+        if len(calls) != 1 or calls[0].get("name") != TOOL_NAME:
+            raise RuntimeError("Claude must return exactly one Crucible action.")
+        return calls[0].get("input"), ""
+    text = "\n".join(c.get("text", "") for c in response["content"] if c.get("type") == "text")
+    try:
+        return json.loads(strip_json_code_fences(text)), ""
+    except ValueError:
+        return None, text.strip()
