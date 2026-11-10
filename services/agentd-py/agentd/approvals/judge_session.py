@@ -22,13 +22,14 @@ from typing import Any
 
 from agentd.approvals.judge_context import JudgeContext
 from agentd.approvals.types import PendingAction
+from agentd.providers.side_calls import CLAUDE_SMALL_MODEL
 
 HISTORY_KEY = "conversation_history"
 # A session's history past this size starts over from the capped full context, so a long
 # thread never grows the judge's prompt without bound (~12k tokens first judgment).
 JUDGE_SESSION_MAX_CHARS = 48_000
 CODEX_REVIEW_MODEL = "codex-auto-review"
-CLAUDE_REVIEW_MODEL = "claude-haiku-5-5"
+CLAUDE_REVIEW_MODEL = CLAUDE_SMALL_MODEL
 
 
 @dataclass

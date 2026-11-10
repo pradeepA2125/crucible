@@ -27,7 +27,8 @@ from agentd.approvals.judge_session import JudgeSessions, preferred_judge_model
 from agentd.approvals.types import AutoDecision, JudgeRequest, PendingAction
 from agentd.providers.context_overflow import ContextWindowExceeded
 from agentd.providers.plan_access import ProviderAccessStopped
-from agentd.providers.reasoning_effort import EFFORT_OVERRIDE, ReasoningEffort
+from agentd.providers.reasoning_effort import EFFORT_OVERRIDE
+from agentd.providers.side_calls import low_effort, record_usage
 from agentd.providers.usage import METER, USAGE_OWNER, Usage
 from agentd.reasoning.react_common import accepts_kwarg
 from agentd.telemetry.context import CALL_PURPOSE
@@ -253,7 +254,7 @@ class AutoJudge:
         # answering badly trips the breaker instead of costing a call per command.
         token = USAGE_OWNER.set(owner)
         purpose_token = CALL_PURPOSE.set("auto_judge")
-        effort_token = EFFORT_OVERRIDE.set(await _low_effort(transport, model))
+        effort_token = EFFORT_OVERRIDE.set(await low_effort(transport, model))
         try:
             return await asyncio.wait_for(
                 self._run(transport, model, request, action, record), self._timeout_sec)
@@ -273,7 +274,7 @@ class AutoJudge:
         # callback; without one the judge's usage and per-turn budget would read 0.
         generate = getattr(getattr(transport, "wrapped", transport), "generate_json", None)
         usage_kwargs: dict[str, object] = (
-            {"on_usage": _record_usage} if accepts_kwarg(generate, "on_usage") else {})
+            {"on_usage": record_usage} if accepts_kwarg(generate, "on_usage") else {})
         for _ in range(MAX_CHECKS + 1):
             payload = session.payload(context, action, checks, _instruction(len(checks)))
             response = await transport.generate_json(
@@ -312,28 +313,11 @@ def _abort_retry(*_args: object) -> None:
     raise JudgeRetryAbort("transient provider error during an Auto judgment")
 
 
-def _record_usage(prompt_tokens: int, completion_tokens: int) -> None:
-    METER.record(USAGE_OWNER.get(), prompt=prompt_tokens, completion=completion_tokens)
-
-
 def _instruction(checks_used: int) -> str:
     remaining = MAX_CHECKS - checks_used
     return "Judge the pending action. " + (
         f"You may request up to {remaining} more check(s)." if remaining
         else "No checks left: return a verdict.")
-
-
-async def _low_effort(transport: Any, model: str) -> ReasoningEffort | None:
-    """LOW when the model lists it as supported; otherwise leave the transport's own."""
-    support = getattr(transport, "reasoning_effort_support", None)
-    if not callable(support):
-        return None
-    try:
-        result = await support(model)
-    except Exception:  # noqa: BLE001 — capability lookup is best-effort
-        return None
-    supported: frozenset[ReasoningEffort] = getattr(result, "supported", frozenset())
-    return ReasoningEffort.LOW if ReasoningEffort.LOW in supported else None
 
 
 def _decision(response: dict[str, object]) -> AutoDecision:

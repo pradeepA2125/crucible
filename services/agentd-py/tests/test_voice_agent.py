@@ -205,3 +205,148 @@ async def test_narrate_returns_plain_speech() -> None:
 async def test_narrate_empty_reply_is_unavailable() -> None:
     with pytest.raises(VoiceAgentUnavailable):
         await _agent(FakeJson(text="   ")).narrate("t1", "fix it", "Done.")
+
+
+# --- provider-general behavior: model choice, effort, retries, correction, logging ---
+
+from agentd.providers.claude_subscription import (  # noqa: E402
+    ClaudeRequestError,
+    ClaudeSubscriptionTransport,
+)
+from agentd.providers.reasoning_effort import (  # noqa: E402
+    EFFORT_OVERRIDE,
+    EffortSupport,
+    ReasoningEffort,
+)
+from agentd.providers.side_calls import CLAUDE_SMALL_MODEL  # noqa: E402
+
+
+class Scripted(FakeJson):
+    """Replies in order; records the model, effort override and retry hook per call."""
+
+    def __init__(self, *replies: object, low: bool = False) -> None:
+        super().__init__()
+        self.replies = list(replies)
+        self.low = low
+        self.seen: list[tuple[str, object]] = []
+
+    async def reasoning_effort_support(self, model: str) -> EffortSupport:
+        return EffortSupport(supported=frozenset({ReasoningEffort.LOW}) if self.low
+                             else frozenset())
+
+    async def generate_json(self, **kwargs: object) -> dict[str, object]:
+        self.calls.append(kwargs)
+        self.seen.append((str(kwargs["model"]), EFFORT_OVERRIDE.get()))
+        reply = self.replies.pop(0)
+        if isinstance(reply, BaseException):
+            raise reply
+        assert isinstance(reply, dict)
+        return dict(reply)
+
+
+class ScriptedClaude(ClaudeSubscriptionTransport, Scripted):
+    def __init__(self, *replies: object) -> None:
+        Scripted.__init__(self, *replies)
+
+    async def generate_json(self, **kwargs: object) -> dict[str, object]:  # type: ignore[override]
+        return await Scripted.generate_json(self, **kwargs)
+
+    async def reasoning_effort_support(self, model: str) -> EffortSupport:
+        return await Scripted.reasoning_effort_support(self, model)
+
+
+def _on(transport: object) -> VoiceAgent:
+    return VoiceAgent(lambda: (transport, "main-model"))
+
+
+@pytest.mark.asyncio
+async def test_claude_plan_decides_on_the_small_model() -> None:
+    transport = ScriptedClaude(_reply())
+    await _on(transport).decide("t1", _ctx())
+    assert transport.seen[0][0] == CLAUDE_SMALL_MODEL
+
+
+@pytest.mark.asyncio
+async def test_voice_model_env_wins_over_the_small_model(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CRUCIBLE_VOICE_MODEL", "picked-model")
+    transport = ScriptedClaude(_reply())
+    await _on(transport).decide("t1", _ctx())
+    assert transport.seen[0][0] == "picked-model"
+
+
+@pytest.mark.asyncio
+async def test_rejected_small_model_falls_back_to_main_and_is_remembered() -> None:
+    transport = ScriptedClaude(ClaudeRequestError("no", status=404), _reply(), _reply())
+    agent = _on(transport)
+    await agent.decide("t1", _ctx())
+    await agent.decide("t1", _ctx())
+    assert [model for model, _ in transport.seen] == [
+        CLAUDE_SMALL_MODEL, "main-model", "main-model"]
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_is_not_a_model_rejection() -> None:
+    transport = ScriptedClaude(ClaudeRequestError("slow down", status=429))
+    with pytest.raises(VoiceAgentUnavailable):
+        await _on(transport).decide("t1", _ctx())
+    assert len(transport.seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_decide_runs_at_low_effort_where_supported() -> None:
+    low, default = Scripted(_reply(), low=True), Scripted(_reply())
+    await _on(low).decide("t1", _ctx())
+    await _on(default).decide("t1", _ctx())
+    assert low.seen[0][1] == ReasoningEffort.LOW
+    assert default.seen[0][1] is None
+
+
+@pytest.mark.asyncio
+async def test_transport_retries_are_cut_off() -> None:
+    transport = Scripted(_reply())
+    await _on(transport).decide("t1", _ctx())
+    on_retry = transport.calls[0]["on_retry"]
+    assert callable(on_retry)
+    with pytest.raises(VoiceAgentUnavailable):
+        on_retry(1, 4, "rate_limit", "429")
+
+
+@pytest.mark.asyncio
+async def test_unusable_reply_is_corrected_once() -> None:
+    bad = {"turn": "maybe", "action": "dance", "say": "", "request": ""}
+    transport = Scripted(bad, _reply(say="Hi."))
+    decision = await _on(transport).decide("t1", _ctx())
+    assert decision.say == "Hi."
+    payload = transport.calls[1]["user_payload"]
+    assert isinstance(payload, dict) and "correction" in payload
+    assert "correction" not in transport.calls[0]["user_payload"]  # type: ignore[operator]
+
+
+@pytest.mark.asyncio
+async def test_decide_logs_model_turn_action_and_latency(
+        caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("INFO", logger="agentd.chat.voice_agent")
+    await _on(Scripted(_reply())).decide("t1", _ctx())
+    line = next(r.getMessage() for r in caplog.records if "[voice] decide" in r.getMessage())
+    assert "model=main-model" in line and "turn=complete" in line
+    assert "action=reply" in line and "ms=" in line
+
+
+@pytest.mark.asyncio
+async def test_decide_prompt_asks_for_the_object_only() -> None:
+    transport = Scripted(_reply())
+    await _on(transport).decide("t1", _ctx())
+    assert "only" in str(transport.calls[0]["system_instructions"]).split("\n")[-1].lower()
+
+
+@pytest.mark.asyncio
+async def test_ended_sign_in_is_reported_in_the_providers_words_without_a_fallback() -> None:
+    from agentd.providers.claude_subscription import ClaudeAccessStopped
+
+    stopped = ClaudeAccessStopped("Connect again in Crucible settings.",
+                                  kind="session_invalid", status=401, request_id=None)
+    transport = ScriptedClaude(stopped)
+    with pytest.raises(VoiceAgentUnavailable, match="Connect again"):
+        await _on(transport).decide("t1", _ctx())
+    assert len(transport.seen) == 1
