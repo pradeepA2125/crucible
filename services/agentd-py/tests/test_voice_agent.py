@@ -131,7 +131,7 @@ async def test_decide_payload_carries_utterance_history_and_progress(
     assert call["model"] == "main-model"
     assert call["user_payload"] == {
         "utterance": "how is it going", "silence_ms": 900, "final_call": False,
-        "history": [{"role": "user", "text": "hi"}], "progress": PROGRESS}
+        "history": [{"role": "user", "text": "hi"}], "progress": PROGRESS, "project": ""}
     monkeypatch.setenv("CRUCIBLE_VOICE_MODEL", "fast-model")
     await agent.decide("t1", ctx)
     assert transport.calls[-1]["model"] == "fast-model"
@@ -159,7 +159,7 @@ def test_history_skips_breadcrumbs_cards_and_empty() -> None:
     log = [{"role": "user", "text": "how is it going"}, {"role": "voice", "text": "Halfway."}]
     history = voice_history(messages, log)
     assert history[0] == {"role": "user", "text": "build a tetris game"}
-    assert history[1]["role"] == "agent" and len(history[1]["text"]) == 1200
+    assert history[1]["role"] == "agent" and len(history[1]["text"]) == 2000  # latest answer, kept
     assert history[2:] == log
 
 
@@ -392,3 +392,32 @@ class PassThrough:
 async def test_narrate_passes_only_hooks_the_wrapped_transport_accepts() -> None:
     spoken = await _on(PassThrough(StrictText())).narrate("t1", "fix it", "Long answer")
     assert spoken == "Done. The tests pass."
+
+
+@pytest.mark.asyncio
+async def test_decide_payload_names_the_open_project() -> None:
+    transport = FakeJson(_reply())
+    ctx = VoiceContext(utterance="what does this repo do", silence_ms=700, final_call=False,
+                       history=[], progress=None, project="pradeep-site")
+    await _agent(transport).decide("t1", ctx)
+    payload = transport.calls[-1]["user_payload"]
+    assert isinstance(payload, dict) and payload["project"] == "pradeep-site"
+
+
+def test_history_keeps_the_latest_answer_long_enough_to_explain() -> None:
+    old, latest = "o" * 3000, "n" * 6000
+    messages = [ChatMessage(role="agent", content=old), ChatMessage(role="user", content="explain"),
+                ChatMessage(role="agent", content=latest)]
+    history = voice_history(messages, [])
+    assert len(history[0]["text"]) == 1200
+    assert len(history[-1]["text"]) == 4000
+
+
+def test_decide_prompt_covers_idle_follow_ups_final_call_and_mishearings() -> None:
+    from agentd.chat.voice_agent import _DECIDE_SYSTEM
+
+    prompt = _DECIDE_SYSTEM.lower()
+    assert "never choose steer" in prompt
+    assert "last answer" in prompt
+    assert "final_call" in prompt and "did you mean" in prompt
+    assert "misheard" in prompt and "project" in prompt

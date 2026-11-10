@@ -746,7 +746,8 @@ class ChatController:
         ctx = VoiceContext(
             utterance=utterance, silence_ms=silence_ms, final_call=final_call,
             history=voice_history(thread.messages, self._voice.log(thread_id)),
-            progress=self._conversation.active_snapshot(thread_id))
+            progress=self._conversation.active_snapshot(thread_id),
+            project=Path(self._workspace_path).name)
         decision = await self._voice.decide(thread_id, ctx)
         decision_id = uuid4().hex
         self._voice_pending[decision_id] = _VoiceDecisionEntry(
