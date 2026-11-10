@@ -220,7 +220,8 @@ async def test_native_history_cache_isolated_agents_and_usage():
         assert "x-api-key" not in request.headers
         body = json.loads(request.content)
         assert [b["text"] for b in body["system"]][0] == IDENTITY
-        assert body["tool_choice"] == {"type": "tool", "name": "crucible_step"}
+        assert body["tool_choice"] == {"type": "tool", "name": "crucible_step",
+                                       "disable_parallel_tool_use": True}
         bodies.append(body)
         return stream_response()
 
@@ -763,3 +764,79 @@ async def test_second_prose_reply_raises():
         transport = ClaudeSubscriptionTransport(bearer, registration_id=REG, client=client)
         with pytest.raises(RuntimeError, match="no valid Crucible action"):
             await _json_call(transport)
+
+
+BATCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "type": {"type": "string", "enum": ["tool_calls", "answer"]},
+        "calls": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "object"}},
+    },
+    "required": ["type"],
+}
+
+
+@pytest.mark.parametrize("action, expected", [
+    ({"type": "tool_calls", "calls": [{}] * 12}, "calls must have at most 8 items (got 12)"),
+    ({"type": "tool_calls", "calls": []}, "calls must have at least 1 item (got 0)"),
+    ({"type": "shout"}, "type must be one of tool_calls, answer"),
+    ({"calls": [{}]}, "'type' is a required property"),
+])
+@pytest.mark.asyncio
+async def test_schema_mismatch_says_what_to_fix(action, expected):
+    async def bearer():
+        return "test"
+
+    async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: stream_response(action))) as client:
+        transport = ClaudeSubscriptionTransport(bearer, registration_id=REG, client=client)
+        with pytest.raises(RuntimeError) as raised:
+            await transport.generate_json(model="test", schema_name="test", schema=BATCH_SCHEMA,
+                                          system_instructions="test", user_payload={})
+    assert "does not match the requested schema" in str(raised.value)
+    assert expected in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_auto_mode_also_asks_for_one_action_per_reply():
+    bodies = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        bodies.append(body)
+        if body["tool_choice"]["type"] == "tool":
+            return httpx.Response(400, json={"error": {"message": REFUSAL}})
+        return stream_response()
+
+    async def bearer():
+        return "test"
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await _json_call(ClaudeSubscriptionTransport(bearer, registration_id=REG, client=client))
+    assert bodies[-1]["tool_choice"] == {"type": "auto", "disable_parallel_tool_use": True}
+
+
+@pytest.mark.asyncio
+async def test_two_actions_in_one_reply_say_what_to_do():
+    events = [
+        {"type": "message_start", "message": {"usage": {}}},
+        {"type": "content_block_start", "index": 0,
+         "content_block": {"type": "tool_use", "id": "a", "name": "crucible_step", "input": {}}},
+        {"type": "content_block_delta", "index": 0,
+         "delta": {"type": "input_json_delta", "partial_json": '{"ok": true}'}},
+        {"type": "content_block_start", "index": 1,
+         "content_block": {"type": "tool_use", "id": "b", "name": "crucible_step", "input": {}}},
+        {"type": "content_block_delta", "index": 1,
+         "delta": {"type": "input_json_delta", "partial_json": '{"ok": true}'}},
+        {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {}},
+        {"type": "message_stop"},
+    ]
+    response = httpx.Response(200, headers={"content-type": "text/event-stream"},
+                              content="".join("data: " + json.dumps(e) + "\n\n" for e in events))
+
+    async def bearer():
+        return "test"
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: response)) as client:
+        with pytest.raises(RuntimeError, match="got 2 calls; put every tool call in one action"):
+            await _json_call(ClaudeSubscriptionTransport(bearer, registration_id=REG, client=client))

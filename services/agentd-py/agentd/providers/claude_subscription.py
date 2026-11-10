@@ -208,9 +208,10 @@ class ClaudeSubscriptionTransport:
             ]
             # Force the action where the model allows it (Haiku 5.5 does); a model that
             # refuses (Sonnet 5.5) is remembered and asked in the prompt instead.
+            # One action per reply: Sonnet otherwise sometimes emits two (measured live).
             body["tool_choice"] = (
-                {"type": "auto"} if model in self._auto_only
-                else {"type": "tool", "name": TOOL_NAME})
+                {"type": "auto", "disable_parallel_tool_use": True} if model in self._auto_only
+                else {"type": "tool", "name": TOOL_NAME, "disable_parallel_tool_use": True})
         return body
 
     async def generate_json(
@@ -268,12 +269,13 @@ class ClaudeSubscriptionTransport:
                 raise RuntimeError("Claude returned no valid Crucible action.")
         if not isinstance(result, dict):
             raise RuntimeError("Claude's action must be an object.")
-        try:
-            jsonschema.validate(result, schema)
-        except jsonschema.ValidationError:
+        problem = schema_problem(result, schema)
+        if problem:
+            # The text reaches the model as its correction, so it has to say what to fix:
+            # Sonnet batched 12 calls against maxItems 8 four times on a generic message.
             raise RuntimeError(
-                "Claude returned an action that does not match the requested schema."
-            ) from None
+                f"Claude returned an action that does not match the requested schema: {problem}."
+            )
         if key:
             self.sessions.commit(key, items, sent)
         return result
@@ -440,10 +442,34 @@ def _action_of(response: dict[str, Any]) -> tuple[object, str]:
     calls = [c for c in response["content"] if c.get("type") == "tool_use"]
     if calls:
         if len(calls) != 1 or calls[0].get("name") != TOOL_NAME:
-            raise RuntimeError("Claude must return exactly one Crucible action.")
+            raise RuntimeError(
+                f"Claude must return exactly one Crucible action (got {len(calls)} calls; put "
+                f"every tool call in one action's calls list and call {TOOL_NAME} once).")
         return calls[0].get("input"), ""
     text = "\n".join(c.get("text", "") for c in response["content"] if c.get("type") == "text")
     try:
         return json.loads(strip_json_code_fences(text)), ""
     except ValueError:
         return None, text.strip()
+
+
+def schema_problem(instance: object, schema: dict[str, Any]) -> str | None:
+    """The most relevant schema violation as a short instruction, or None when valid. Never
+    repeats the instance itself (a long batch would swamp the correction)."""
+    errors = jsonschema.Draft202012Validator(schema).iter_errors(instance)
+    error = jsonschema.exceptions.best_match(errors)
+    if error is None:
+        return None
+    where = ".".join(str(part) for part in error.absolute_path) or "the action"
+    value = error.validator_value
+    if error.validator in ("maxItems", "minItems") and isinstance(error.instance, list):
+        bound = "at most" if error.validator == "maxItems" else "at least"
+        unit = "item" if value == 1 else "items"
+        return f"{where} must have {bound} {value} {unit} (got {len(error.instance)})"
+    if error.validator == "enum" and isinstance(value, list):
+        return f"{where} must be one of {', '.join(str(v) for v in value)}"
+    if error.validator == "type":
+        return f"{where} must be of type {value}"
+    if error.validator in ("required", "additionalProperties"):
+        return f"{where}: {error.message[:200]}"
+    return f"{where} fails {error.validator} {str(value)[:120]}"
