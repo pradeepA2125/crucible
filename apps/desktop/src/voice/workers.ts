@@ -154,6 +154,69 @@ export class Recognizer {
   }
 }
 
+/**
+ * Silero voice activity detection (crucible-whisper --vad): one speech probability per 32 ms.
+ * Optional: a failure marks it unusable and the session falls back to loudness.
+ */
+export class Detector {
+  private readonly ready = new Readiness();
+  private readonly worker: LineWorker;
+  private readonly jobs = new Map<string, Job<number[]>>();
+  private failed = false;
+
+  constructor(path: string, model: string, private readonly failure: (error: Error) => void) {
+    this.worker = new LineWorker(path, ["--vad", model], line => {
+      if (line === "ready") { this.ready.ready(); return; }
+      const [id = "", status, content = ""] = line.split("\t");
+      const job = this.jobs.get(id);
+      if (!job) return;
+      this.jobs.delete(id);
+      const probs = content ? content.split(",").map(Number) : [];
+      if (status !== "result" || probs.some(value => !Number.isFinite(value) || value < 0 || value > 1)) {
+        job.reject(new Error("The voice activity detector rejected this audio."));
+      } else {
+        job.resolve(probs);
+      }
+    }, error => this.stop(error));
+  }
+
+  get usable(): boolean { return !this.failed; }
+
+  wait(signal: AbortSignal): Promise<void> { return this.ready.wait(signal); }
+
+  async detect(pcm: ArrayBuffer, signal: AbortSignal): Promise<number[]> {
+    if (this.failed) throw new Error(workerError);
+    if (this.jobs.size >= 8) throw new Error("The voice activity detector is behind.");
+    const id = randomUUID();
+    const job = newJob<number[]>(id);
+    this.jobs.set(id, job);
+    try {
+      this.worker.send(`${id}\t${Buffer.from(pcm).toString("base64")}`);
+      return await withTimeout(job.result, signal, 2_000);
+    } finally {
+      this.jobs.delete(id);
+    }
+  }
+
+  close(): Promise<void> {
+    this.failed = true;
+    const error = new Error("The voice session ended.");
+    this.ready.fail(error);
+    for (const job of this.jobs.values()) job.reject(error);
+    this.jobs.clear();
+    return this.worker.close();
+  }
+
+  private stop(error: Error): void {
+    if (this.failed) return;
+    this.failed = true;
+    this.ready.fail(error);
+    for (const job of this.jobs.values()) job.reject(error);
+    this.jobs.clear();
+    this.failure(error);
+  }
+}
+
 const ttsMessage = z.discriminatedUnion("type", [
   z.object({ type: z.literal("ready") }),
   z.object({ type: z.literal("audio"), id: z.string(), pcm: z.string().max(350_000), sampleRate: z.number().int().min(8000).max(96000) }),

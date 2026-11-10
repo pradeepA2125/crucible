@@ -9,7 +9,7 @@ import type {
 import { VoiceAssets, type VoiceModel } from "./assets.js";
 import type { VoiceRequest } from "./protocol.js";
 import { firstSentences, speakable } from "./speakable.js";
-import { Recognizer, Synthesizer } from "./workers.js";
+import { Detector, Recognizer, Synthesizer } from "./workers.js";
 import type { DiagnosticSource, DiagnosticValue } from "./diagnostics.js";
 
 export interface VoiceSnapshot {
@@ -59,6 +59,8 @@ type Session = {
   tts: "system" | "pocket";
   recognizer: Recognizer;
   synthesizer: Synthesizer;
+  /** Silero VAD; undefined when its model is missing or it failed to start (loudness instead). */
+  detector: Detector | undefined;
   utterances: Map<string, Utterance>;
   receipts: number;
   reply: Reply | undefined;
@@ -139,6 +141,7 @@ export class VoiceHost {
       case "decide": return this.decide(session, request.utteranceId, request.text, request.silenceMs, request.finalCall);
       case "commit": return this.commit(session, request.utteranceId, request.decisionId);
       case "trace": this.trace("app", request.event, request.data); return {};
+      case "vad": return this.detect(session, request.pcm);
     }
   }
 
@@ -149,7 +152,8 @@ export class VoiceHost {
     this.session = undefined;
     this.interrupt(session);
     session.signal.abort();
-    const stopped = Promise.all([session.recognizer.close(), session.synthesizer.close()]).then(() => {});
+    const stopped = Promise.all([session.recognizer.close(), session.synthesizer.close(),
+      session.detector?.close()]).then(() => {});
     this.stopping = stopped;
     this.options.publish({ type: "ended", sessionId: session.id, ...(reason ? { reason } : {}) });
     try { await stopped; }
@@ -201,13 +205,43 @@ export class VoiceHost {
       ]);
       abort.signal.throwIfAborted();
       if (!thread.current()) throw new Error("The conversation changed. Open voice again in the intended conversation.");
+      const detector = await this.startDetector(abort.signal);
       const sessionId = randomUUID();
-      this.session = { id: sessionId, thread, signal: abort, model, tts, recognizer, synthesizer, utterances: new Map(), receipts: 0, reply: undefined };
+      this.session = { id: sessionId, thread, signal: abort, model, tts, recognizer, synthesizer, detector,
+        utterances: new Map(), receipts: 0, reply: undefined };
       return { sessionId };
     } catch (error) {
       await Promise.all([recognizer?.close(), synthesizer?.close()]);
       throw error;
     } finally { this.startup = undefined; }
+  }
+
+  /** Best-effort: without a verified model or a working worker, speech detection uses loudness. */
+  private async startDetector(signal: AbortSignal): Promise<Detector | undefined> {
+    let detector: Detector | undefined;
+    try {
+      const path = await this.assets.verifiedVadPath(signal);
+      detector = new Detector(join(this.options.helpers, "crucible-whisper"), path, error =>
+        this.trace("host", "vad", { available: false, reason: error.message }));
+      await detector.wait(signal);
+      this.trace("host", "vad", { available: true });
+      return detector;
+    } catch (error) {
+      await detector?.close();
+      signal.throwIfAborted();
+      this.trace("host", "vad", { available: false, reason: error instanceof Error ? error.message : null });
+      return undefined;
+    }
+  }
+
+  private async detect(session: Session, pcm: ArrayBuffer): Promise<{ probs: number[] | null }> {
+    const detector = session.detector;
+    if (!detector?.usable) return { probs: null };
+    try {
+      return { probs: await detector.detect(pcm, session.signal.signal) };
+    } catch {
+      return { probs: null };
+    }
   }
 
   private requireSession(id: string): Session {

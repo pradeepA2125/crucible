@@ -9,6 +9,8 @@ const session = { sessionId: id };
 const utterance = { ...session, utteranceId: id };
 const pcm = z.custom<ArrayBuffer>(value => value instanceof ArrayBuffer && value.byteLength > 0 &&
   value.byteLength <= 960_000 && value.byteLength % 2 === 0, "Expected at most 30 seconds of 16 kHz PCM audio.");
+const vadPcm = z.custom<ArrayBuffer>(value => value instanceof ArrayBuffer && value.byteLength > 0 &&
+  value.byteLength <= 32_000 && value.byteLength % 2 === 0, "Expected at most one second of 16 kHz PCM audio.");
 export const voiceRequest = z.discriminatedUnion("type", [
   z.object({ type: z.literal("status") }).strict(),
   z.object({ type: z.literal("install"), model: asset }).strict(),
@@ -24,6 +26,7 @@ export const voiceRequest = z.discriminatedUnion("type", [
   z.object({ type: z.literal("decide"), ...utterance, text: z.string().trim().min(1).max(4000),
     silenceMs: z.number().int().min(0).max(600_000), finalCall: z.boolean() }).strict(),
   z.object({ type: z.literal("commit"), ...utterance, decisionId: id }).strict(),
+  z.object({ type: z.literal("vad"), ...session, pcm: vadPcm }).strict(),
   // Diagnostics from the renderer's speech detection: small, flat, local-only.
   z.object({ type: z.literal("trace"), ...session, event: z.string().regex(/^[a-z_]{1,32}$/),
     data: z.record(z.string().regex(/^[a-zA-Z]{1,32}$/),

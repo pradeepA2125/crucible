@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { VoiceHost, type VoiceSnapshot, type VoiceThread } from "../src/voice/host.js";
 
 const mocks = vi.hoisted(() => ({
+  vadPath: vi.fn(async (): Promise<string> => "/verified/vad.bin"),
+  detect: vi.fn(async (_pcm: ArrayBuffer, _signal: AbortSignal): Promise<number[]> => [0.91, 0.12]),
   speak: vi.fn<(text: string, audio: (pcm: ArrayBuffer, sampleRate: number) => void, signal: AbortSignal) => Promise<void>>(),
 }));
 
@@ -13,12 +15,19 @@ vi.mock("../src/voice/assets.js", () => ({
     async installed() { return ["whisper-small"]; }
     async pocketInstalled() { return false; }
     async verifiedPath() { return "/verified/model.bin"; }
+    verifiedVadPath = mocks.vadPath;
     async cancelAndWait() {}
   },
 }));
 vi.mock("../src/voice/workers.js", () => ({
   Recognizer: class {
     async wait() {}
+    close() {}
+  },
+  Detector: class {
+    get usable() { return true; }
+    async wait() {}
+    detect = mocks.detect;
     close() {}
   },
   Synthesizer: class {
@@ -164,7 +173,8 @@ describe("desktop voice front-man", () => {
     await host.request({ type: "decide", sessionId, utteranceId: "u1", text: "how is it going", silenceMs: 700,
       finalCall: false });
     await host.request({ type: "commit", sessionId, utteranceId: "u1", decisionId: "d1" });
-    expect(traces[0]).toEqual({ source: "app", event: "resume", data: { quietMs: 620, rms: 0.006 } });
+    expect(traces.find(trace => trace.source === "app"))
+      .toEqual({ source: "app", event: "resume", data: { quietMs: 620, rms: 0.006 } });
     expect(traces.find(trace => trace.event === "decide")).toMatchObject({ source: "host", data: {
       utteranceId: "u1", text: "how is it going", silenceMs: 700, finalCall: false, turn: "complete",
       action: "reply", say: "It's going well.", ms: expect.any(Number) } });
@@ -182,6 +192,26 @@ describe("desktop voice front-man", () => {
     await host.request({ type: "decide", sessionId, utteranceId: "u1", text: "hello", silenceMs: 700, finalCall: true });
     expect(traces.find(trace => trace.event === "decide")).toMatchObject({ data: {
       refused: "voice_agent_unavailable", reason: "timed out", finalCall: true } });
+  });
+
+  it("vad returns the detector's speech probabilities for the session's audio", async () => {
+    const { host, sessionId } = await fixture(idle);
+    expect(await host.request({ type: "vad", sessionId, pcm: new ArrayBuffer(2560) }))
+      .toEqual({ probs: [0.91, 0.12] });
+    expect(mocks.detect).toHaveBeenCalledWith(expect.any(ArrayBuffer), expect.any(AbortSignal));
+  });
+
+  it("without a verified VAD model the session still starts and vad answers null", async () => {
+    mocks.vadPath.mockRejectedValueOnce(new Error("Install the selected voice model first."));
+    const { host, sessionId, traces } = await fixture(idle);
+    expect(await host.request({ type: "vad", sessionId, pcm: new ArrayBuffer(2560) })).toEqual({ probs: null });
+    expect(traces.find(trace => trace.event === "vad")).toMatchObject({ data: { available: false } });
+  });
+
+  it("a detector error answers null instead of failing the session", async () => {
+    mocks.detect.mockRejectedValueOnce(new Error("behind"));
+    const { host, sessionId } = await fixture(idle);
+    expect(await host.request({ type: "vad", sessionId, pcm: new ArrayBuffer(2560) })).toEqual({ probs: null });
   });
 
   it("commit reply speaks say once through speakable", async () => {
