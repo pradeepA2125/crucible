@@ -229,10 +229,13 @@ class VoiceAgent:
         call: Callable[..., Awaitable[object]] | None = getattr(transport, method, None)
         if call is None:
             raise VoiceAgentUnavailable(f"the provider has no {method}")
+        # Ask the transport itself: a wrapper such as the rate limiter accepts any keyword
+        # and forwards it, so checking the wrapper sent on_retry to Claude's generate_text.
+        target = getattr(getattr(transport, "wrapped", transport), method, call)
         extra: dict[str, object] = {}
-        if accepts_kwarg(call, "on_retry"):
+        if accepts_kwarg(target, "on_retry"):
             extra["on_retry"] = _abort_retry
-        if accepts_kwarg(call, "on_usage"):
+        if accepts_kwarg(target, "on_usage"):
             extra["on_usage"] = record_usage
         model = self._model_for(transport, agent_model)
         # Billed to the thread, like its turns and the conversation side calls.

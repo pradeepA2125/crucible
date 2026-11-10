@@ -368,3 +368,27 @@ async def test_ended_sign_in_is_reported_in_the_providers_words_without_a_fallba
     with pytest.raises(VoiceAgentUnavailable, match="Connect again"):
         await _on(transport).decide("t1", _ctx())
     assert len(transport.seen) == 1
+
+
+class StrictText:
+    """A transport whose generate_text takes no retry or usage hooks (the Claude plan's)."""
+
+    async def generate_text(self, *, model: str, system_instructions: str,
+                            user_payload: dict[str, object]) -> str:
+        return "Done. The tests pass."
+
+
+class PassThrough:
+    """The rate limiter: accepts any keyword and forwards it to what it wraps."""
+
+    def __init__(self, inner: object) -> None:
+        self.wrapped = inner
+
+    async def generate_text(self, **kwargs: object) -> object:
+        return await self.wrapped.generate_text(**kwargs)  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_narrate_passes_only_hooks_the_wrapped_transport_accepts() -> None:
+    spoken = await _on(PassThrough(StrictText())).narrate("t1", "fix it", "Long answer")
+    assert spoken == "Done. The tests pass."
