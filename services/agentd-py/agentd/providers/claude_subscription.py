@@ -379,7 +379,10 @@ class ClaudeSubscriptionTransport:
                 status=status,
                 request_id=request_id,
             )
-        if status == 400 and "tool_choice" in message and "not supported" in message:
+        # Any 400 about tool_choice means the model will not take a forced tool, whatever the
+        # wording (Sonnet 5.5's "not supported", extended thinking's "forces tool use"): falling
+        # back to auto is always safe, while a missed refusal fails every main-agent step.
+        if status == 400 and "tool_choice" in message:
             return ClaudeToolChoiceRefused(
                 f"Claude could not complete this request (HTTP {status}).", status=status)
         # Never echo a provider response body into logs/UI (credentials may be reflected).

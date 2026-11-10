@@ -839,4 +839,30 @@ async def test_two_actions_in_one_reply_say_what_to_do():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: response)) as client:
         with pytest.raises(RuntimeError, match="got 2 calls; put every tool call in one action"):
-            await _json_call(ClaudeSubscriptionTransport(bearer, registration_id=REG, client=client))
+            await _json_call(
+                ClaudeSubscriptionTransport(bearer, registration_id=REG, client=client))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", [
+    REFUSAL,
+    "Thinking may not be enabled when tool_choice forces tool use.",
+    "tool_choice.type: this value is not permitted for this model",
+])
+async def test_any_tool_choice_refusal_falls_back_to_auto(message):
+    choices = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        choices.append(body["tool_choice"]["type"])
+        if body["tool_choice"]["type"] == "tool":
+            return httpx.Response(400, json={"error": {"message": message}})
+        return stream_response()
+
+    async def bearer():
+        return "test"
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        transport = ClaudeSubscriptionTransport(bearer, registration_id=REG, client=client)
+        assert await _json_call(transport) == {"ok": True}
+    assert choices == ["tool", "auto"]

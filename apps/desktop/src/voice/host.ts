@@ -387,10 +387,10 @@ export class VoiceHost {
         break;
       case "steer": {
         const turn = decision.turnId ?? result.receipt.turn_id;
-        this.deliverReceipt(session, result.receipt, decisionId, turn);
+        this.deliverReceipt(session, result.receipt, decisionId, turn, id);
         this.append(session, reply, decision.say, true);
         this.speak(session, reply, decision.say);
-        if (result.receipt.status === "queued") void this.watchReceipt(session, decisionId, turn);
+        if (result.receipt.status === "queued") void this.watchReceipt(session, decisionId, turn, id);
         break;
       }
       case "start_task":
@@ -438,12 +438,15 @@ export class VoiceHost {
       .then(say => { if (this.currentReply(session, reply)) this.speak(session, reply, say); });
   }
 
-  private deliverReceipt(session: Session, receipt: ConversationReceipt, id: string, turn: string): void {
+  /** `shownAs` is the utterance the panel shows it under: a voice correction is keyed by its
+   *  decision on the backend but belongs to the spoken utterance on screen. */
+  private deliverReceipt(session: Session, receipt: ConversationReceipt, id: string, turn: string,
+    shownAs = id): void {
     if (receipt.message_id !== id || receipt.turn_id !== turn) throw new Error("Received a voice receipt for a different coding turn.");
-    this.options.publish({ type: "receipt", sessionId: session.id, receipt });
+    this.options.publish({ type: "receipt", sessionId: session.id, receipt: { ...receipt, message_id: shownAs } });
   }
 
-  private async watchReceipt(session: Session, id: string, turn: string): Promise<void> {
+  private async watchReceipt(session: Session, id: string, turn: string, shownAs = id): Promise<void> {
     if (session.receipts >= 16) {
       this.error(session, "Some correction receipts are pending. Check the coding conversation for updates.");
       return;
@@ -457,7 +460,7 @@ export class VoiceHost {
         const receipt = await session.thread.receipt(id, AbortSignal.any([signal, AbortSignal.timeout(4000)]));
         if (!receipt) throw new Error("Receipt not found");
         if (receipt.status !== "queued") {
-          this.deliverReceipt(session, receipt, id, turn);
+          this.deliverReceipt(session, receipt, id, turn, shownAs);
           return;
         }
       }

@@ -76,7 +76,7 @@ async function fixture(first: VoiceSnapshot) {
   const started = await host.request({ type: "start", threadId: "thread",
     stt: "whisper-small", tts: "system" }) as { sessionId: string; vad?: boolean };
   const { sessionId } = started;
-  return { host, sessionId, started, submit, sendIdle, decide, commit, narrate, events, traces,
+  return { host, sessionId, started, thread, submit, sendIdle, decide, commit, narrate, events, traces,
     setSnapshot: (value: VoiceSnapshot) => { snapshot = value; } };
 }
 
@@ -274,8 +274,24 @@ describe("desktop voice front-man", () => {
     await host.request({ type: "decide", sessionId, utteranceId: "u1", text: "use sqlite", silenceMs: 700, finalCall: false });
     await host.request({ type: "commit", sessionId, utteranceId: "u1", decisionId: "d1" });
     await flush();
-    expect(events).toContainEqual({ type: "receipt", sessionId, receipt });
+    // The panel attaches receipts to the spoken utterance, not to the decision.
+    expect(events).toContainEqual({ type: "receipt", sessionId, receipt: { ...receipt, message_id: "u1" } });
     expect(mocks.speak).toHaveBeenCalledExactlyOnceWith("Got it.", expect.any(Function), expect.any(AbortSignal));
+  });
+
+  it("a queued voice correction reports its later status on the spoken utterance", async () => {
+    mocks.speak.mockResolvedValue(undefined);
+    const { host, sessionId, decide, commit, events, thread } = await fixture(active("turn-a"));
+    decide.mockResolvedValueOnce({ decisionId: "d1", turn: "complete", action: "steer", say: "Got it.",
+      request: "Use SQLite", turnId: "turn-a" });
+    const queued = { message_id: "d1", turn_id: "turn-a", kind: "steer", text: "Queued.", status: "queued" } as const;
+    commit.mockResolvedValueOnce({ action: "steer", receipt: queued });
+    thread.receipt = async () => ({ ...queued, status: "expired", text: "That correction expired." });
+    await host.request({ type: "snapshot", sessionId, utteranceId: "u1" });
+    await host.request({ type: "decide", sessionId, utteranceId: "u1", text: "use sqlite", silenceMs: 700, finalCall: false });
+    await host.request({ type: "commit", sessionId, utteranceId: "u1", decisionId: "d1" });
+    await vi.waitFor(() => expect(events).toContainEqual({ type: "receipt", sessionId,
+      receipt: { ...queued, status: "expired", text: "That correction expired.", message_id: "u1" } }), { timeout: 3_000 });
   });
 
   async function startedTask(narrate?: (heard: string) => Promise<string>) {
