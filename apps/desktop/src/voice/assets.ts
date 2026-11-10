@@ -19,6 +19,13 @@ const models = {
   },
 } as const;
 
+/** Silero VAD (MIT) for whisper.cpp: tells speech from noise, so noise never holds a turn open. */
+export const VAD_MODEL = {
+  file: "ggml-silero-v6.2.0.bin", bytes: 885098,
+  sha256: "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987",
+  url: "https://huggingface.co/ggml-org/whisper-vad/resolve/9ffd54a1e1ee413ddf265af9913beaf518d1639b/ggml-silero-v6.2.0.bin",
+} as const;
+
 export type VoiceModel = keyof typeof models;
 export type VoiceAsset = VoiceModel | "pocket";
 type VerifiedAsset = { bytes: number; sha256: string };
@@ -51,6 +58,8 @@ export class VoiceAssets {
   }
 
   async installed(): Promise<VoiceModel[]> {
+    // A speech model installed before the VAD existed shows Install once more, which adds it.
+    if (!(await matchSize(join(this.directory, VAD_MODEL.file), VAD_MODEL))) return [];
     const keys = Object.keys(models) as VoiceModel[];
     const found = await Promise.all(keys.map(key => matchSize(join(this.directory, models[key].file), models[key])));
     return keys.filter((_key, index) => found[index]);
@@ -65,6 +74,12 @@ export class VoiceAssets {
     const info = models[model];
     const path = join(this.directory, info.file);
     await verifyFile(path, info, signal);
+    return path;
+  }
+
+  async verifiedVadPath(signal: AbortSignal): Promise<string> {
+    const path = join(this.directory, VAD_MODEL.file);
+    await verifyFile(path, VAD_MODEL, signal);
     return path;
   }
 
@@ -92,6 +107,7 @@ export class VoiceAssets {
         signal.throwIfAborted();
         await rename(partial, this.pocketPath);
       } else {
+        await this.installVad(signal);
         const info = models[asset];
         try { await this.verifiedPath(asset, signal); return; }
         catch { signal.throwIfAborted(); }
@@ -102,6 +118,19 @@ export class VoiceAssets {
     } finally {
       try { await rm(partial, { recursive: true, force: true }); }
       finally { this.pending = undefined; settled(); }
+    }
+  }
+
+  private async installVad(signal: AbortSignal): Promise<void> {
+    try { await this.verifiedVadPath(signal); return; }
+    catch { signal.throwIfAborted(); }
+    const partial = join(this.directory, `.vad.${randomUUID()}.partial`);
+    try {
+      await this.download(VAD_MODEL.url, partial, VAD_MODEL, signal);
+      signal.throwIfAborted();
+      await rename(partial, join(this.directory, VAD_MODEL.file));
+    } finally {
+      await rm(partial, { force: true });
     }
   }
 

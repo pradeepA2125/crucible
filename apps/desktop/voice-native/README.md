@@ -20,6 +20,8 @@ This produces `crucible-pocket-tts`, its SwiftPM resource bundle, the FluidAudio
 
 `crucible-whisper --model /absolute/path/to/model.bin` loads and warms one model, then prints `ready`. Pass each English audio window as one line with a request ID, a tab, and base64-encoded 16 kHz mono PCM16 little-endian audio. Windows may contain up to 30 seconds of audio. The worker returns one tab-separated result or error for each valid request ID. IDs allow 1–80 ASCII letters, digits, hyphens, underscores, periods, or colons. The desktop host chooses when to send rolling windows and final utterances. Pass `--cpu` after the model path to compare CPU inference.
 
+`crucible-whisper --vad /absolute/path/to/ggml-silero-v6.2.0.bin` runs Silero voice activity detection instead. After `ready`, send `id<TAB>base64 PCM16` lines of up to one second; each reply is `id<TAB>result<TAB>p1,p2,…` with one speech probability per 512-sample (32 ms) window, buffering any remainder for the next line. `id<TAB>reset` clears the streaming state between utterances.
+
 `crucible-tts --engine system` and `crucible-pocket-tts --models /absolute/path/to/pack` use one JSON object per line. The worker emits `{ "type": "ready" }` before reading requests.
 
 - `{ "type": "speak", "id": "...", "text": "..." }` starts generating audio. Text is limited to 4,096 UTF-8 bytes.
