@@ -83,6 +83,7 @@ interface SpokenTurn {
 const playbackTailMs = 300;
 // After the assistant asks a question, a one-word answer ("okay", "yes") is a real reply.
 const answerWindowMs = 15_000;
+const CLEAR_SPEECH_DECIDES_MS = 1_000;
 const UNAVAILABLE = "The voice assistant could not decide what to do. Review the transcript and send it.";
 // A decision still out after this long gets a quiet cue, so silence never reads as "not heard".
 const SLOW_DECISION_MS = 1_200;
@@ -528,7 +529,11 @@ export class VoiceSession {
       turn.text = text;
       this.events.state({ partial: text });
       // A short reply to playback can be misheard as an instruction; it waits for review.
-      turn.held = turn.playback !== undefined && (cleanSpeechMs < 420 || !clearOverlapRequest(text));
+      // Once the reply has stopped and they have said a full second clearly, it is an ordinary
+      // turn: the voice agent judges it (live, a request after "Awesome." over a check-in sat
+      // held for 7 s of clear speech and only reached review).
+      turn.held = turn.playback !== undefined && cleanSpeechMs < CLEAR_SPEECH_DECIDES_MS
+        && (cleanSpeechMs < 420 || !clearOverlapRequest(text));
       if (turn.held) {
         this.events.state({ checking: false });
         if (turn.finalWanted) this.abandonAtLimit(turn);

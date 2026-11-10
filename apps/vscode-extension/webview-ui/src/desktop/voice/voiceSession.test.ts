@@ -644,6 +644,30 @@ describe("desktop voice session", () => {
     });
   }
 
+  it("a turn that starts over the reply is decided once it has a second of clear speech", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Ask it to generate with proper JSON object.");
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    await voice.session.submitText("Status?", "question");
+    const initial = voice.request.mock.calls.map(([command]) => command).find(command => command.type === "submit");
+    if (initial?.type !== "submit") throw new Error("Expected initial voice reply target");
+    voice.emit({ type: "reply", sessionId: "session", messageId: "reply", utteranceId: initial.utteranceId,
+      text: "I'm still listening. Do you want to add anything?", final: true });
+    audio.playing = true;
+    try {
+      frames(4, 0.03); // "Awesome" over the end of the reply
+      audio.playing = false;
+      frames(60, 0.03); // then 1.2 s of clear speech
+      frames(28, 0);
+      await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(1));
+      expect(voice.sent("decide")[0]).toMatchObject({ text: "Ask it to generate with proper JSON object." });
+    } finally {
+      audio.playing = false;
+      voice.session.close();
+    }
+  });
+
   it("traces why playback stopped", async () => {
     vi.clearAllMocks();
     const voice = fixture("Use SQLite.");
