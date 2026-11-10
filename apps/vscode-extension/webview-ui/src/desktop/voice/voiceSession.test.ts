@@ -581,13 +581,15 @@ describe("desktop voice session", () => {
     vi.clearAllMocks();
     const voice = fixture();
     const answer = voice.request.getMockImplementation()!;
-    let finals = 0;
+    let finals = 0, partials = 0;
     voice.request.mockImplementation(command => command.type === "decode" && command.final
       ? Promise.resolve({ text: ++finals === 1 ? "First I want the timer gone" : "and then the narration fixed." })
-      : command.type === "decode" ? Promise.resolve({ text: "" }) : answer(command));
+      // Live transcripts grow as the speaker talks.
+      : command.type === "decode" ? Promise.resolve({ text: Array.from({ length: ++partials }, () => "word").join(" ") })
+        : answer(command));
     await voice.session.start("thread", "whisper-small", "system");
     await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
-    frames(1475, 0.03);
+    for (let sent = 0; sent < 1475; sent += 25) { frames(Math.min(25, 1475 - sent), 0.03); await settle(); }
     frames(40, 0.03);
     frames(60, 0);
     await vi.waitFor(() => expect(voice.sent("commit")).toHaveLength(1));
@@ -695,6 +697,68 @@ describe("desktop voice session", () => {
       sampleRate: 24_000 });
     expect(audio.play).not.toHaveBeenCalled();
     voice.session.close();
+  });
+
+  it("a short sound in a pause while a transcript is still decoding never strands the decision", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Use SQLite for the tests");
+    const answer = voice.request.getMockImplementation()!;
+    let release!: () => void;
+    let held = false;
+    voice.request.mockImplementation(async command => {
+      if (command.type === "decode" && !command.final && !held) {
+        held = true;
+        await new Promise<void>(resolve => { release = resolve; });
+        return { text: "Use SQLite for the tests" };
+      }
+      return answer(command);
+    });
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(40, 0.03); // speech; a partial goes out and hangs
+    await vi.waitFor(() => expect(held).toBe(true));
+    frames(28, 0); // pause
+    frames(6, 0.05); // a cough in the pause while that partial is still decoding
+    frames(3, 0);
+    release();
+    await vi.waitFor(() => expect(voice.trace.mock.calls.some(([, e]) => e === "decision")).toBe(true));
+    for (let i = 0; i < 10; i += 1) { frames(100, 0); await settle(); }
+    expect(voice.sent("commit")).toHaveLength(1);
+    voice.session.close();
+  });
+
+  it("noise with no words at all ends its turn instead of holding it open", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("(cars honking)");
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    for (let batch = 0; batch < 20; batch += 1) { frames(20, 0.05); await settle(); } // 8 s of traffic
+    expect(voice.trace.mock.calls.some(([, event]) => event === "hold_for_words")).toBe(true);
+    expect(voice.callbacks.state).toHaveBeenCalledWith(expect.objectContaining({ capturing: false }));
+    expect(voice.sent("decide")).toHaveLength(0);
+    voice.session.close();
+  });
+
+  it("a turn that began over a reply is watched for words once the reply has stopped", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Use SQLite.");
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    await voice.session.submitText("Status?", "question");
+    const initial = voice.request.mock.calls.map(([command]) => command).find(command => command.type === "submit");
+    if (initial?.type !== "submit") throw new Error("Expected initial voice reply target");
+    voice.emit({ type: "reply", sessionId: "session", messageId: "reply", utteranceId: initial.utteranceId,
+      text: "Here is an update.", final: true });
+    audio.playing = true;
+    try {
+      frames(4, 0.03);
+      audio.playing = false;
+      for (let batch = 0; batch < 20; batch += 1) { frames(20, 0.05); await settle(); } // steady noise after
+      expect(voice.trace.mock.calls.some(([, event]) => event === "hold_for_words")).toBe(true);
+    } finally {
+      audio.playing = false;
+      voice.session.close();
+    }
   });
 
   it("traces why playback stopped", async () => {

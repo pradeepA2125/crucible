@@ -242,3 +242,15 @@ describe("speech detection with a voice probability (Silero VAD)", () => {
     expect(speech.resume).not.toHaveBeenCalled();
   });
 });
+
+describe("a rollover never hides the pause or the wait limit", () => {
+  it("fires each once whatever frame the 30 s rollover lands on", () => {
+    for (let speech = 1050; speech <= 1100; speech += 1) {
+      const segments = fixture();
+      segments.feed(speech, 0.03);
+      segments.feed(500, 0);
+      expect(segments.pause, `speech=${speech}`).toHaveBeenCalledOnce();
+      expect(segments.waitLimit, `speech=${speech}`).toHaveBeenCalledOnce();
+    }
+  });
+});

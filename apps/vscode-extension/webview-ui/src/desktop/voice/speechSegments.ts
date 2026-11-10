@@ -71,6 +71,8 @@ export class SpeechSegments {
   private soundInPause = false;
   private quietBeforeSound: number | undefined;
   private soundThisFrame = false;
+  // A word check for sound in a pause that could not be sent yet (a decode was busy).
+  private partialOwed = false;
 
   constructor(private readonly callbacks: SpeechCallbacks) {}
 
@@ -123,6 +125,7 @@ export class SpeechSegments {
     this.holding = false;
     if (!this.paused) return;
     const quietMs = this.quietBeforeSound ?? this.silence * FRAME_MS;
+    this.partialOwed = false;
     this.paused = false;
     this.silence = 0;
     this.soundInPause = false;
@@ -156,6 +159,7 @@ export class SpeechSegments {
     this.holding = false;
     this.soundInPause = false;
     this.quietBeforeSound = undefined;
+    this.partialOwed = false;
   }
 
   finish() {
@@ -229,13 +233,16 @@ export class SpeechSegments {
       this.soundInPause = false;
     } // else: a run that may yet prove to be speech holds the quiet count until it decides.
     this.soundThisFrame = this.silence === 0 && (quietBefore > 0 || sounding);
+    // Not part of the chain below: a rollover landing on the pause or wait-limit frame must not
+    // swallow either check, or the turn waits forever (reproduced at 1075 speech frames).
     if (this.utterance.length >= MAX_FRAMES) {
       const segment = joinFrames(this.utterance);
       this.utterance = [];
       this.rolled = true;
       this.nextPartial = PARTIAL_INTERVAL_FRAMES;
       this.callbacks.rollover(segment);
-    } else if (!manual && !this.paused && this.silence === PAUSE_FRAMES) {
+    }
+    if (!manual && !this.paused && this.silence === PAUSE_FRAMES) {
       if (this.voiced < MIN_VOICED_FRAMES) {
         this.finish();
         return;
@@ -248,10 +255,16 @@ export class SpeechSegments {
     } else if (wantsPartial && !manual && playing && this.voiced >= MIN_VOICED_FRAMES &&
       this.silence === PLAYBACK_PAUSE_PROBE_FRAMES) {
       this.callbacks.partial(joinFrames(this.utterance));
-    } else if (soundEnded && wantsPartial && !manual) {
-      // A short word in a pause may end before the next partial is due: check it now.
-      this.nextPartial = this.utterance.length + PARTIAL_INTERVAL_FRAMES;
-      this.callbacks.partial(joinFrames(this.utterance));
+    } else if ((soundEnded || this.partialOwed) && !manual && this.paused) {
+      // A short word in a pause may end before the next partial is due: check it now, or as
+      // soon as a decode is free. Dropping it left the reply waiting on a check never sent.
+      if (wantsPartial) {
+        this.partialOwed = false;
+        this.nextPartial = this.utterance.length + PARTIAL_INTERVAL_FRAMES;
+        this.callbacks.partial(joinFrames(this.utterance));
+      } else {
+        this.partialOwed = true;
+      }
     } else if (wantsPartial && (this.silence === 0 || this.holding) && this.utterance.length >= this.nextPartial) {
       this.nextPartial = this.utterance.length + PARTIAL_INTERVAL_FRAMES;
       this.callbacks.partial(joinFrames(this.utterance));

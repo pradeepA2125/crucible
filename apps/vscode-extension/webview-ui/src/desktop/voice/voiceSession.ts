@@ -608,12 +608,14 @@ export class VoiceSession {
    * not speech, and it stops holding the turn open. */
   private watchForWords() {
     const turn = this.spoken;
-    if (!turn || this.pushToTalk || turn.playback !== undefined) return;
+    // A turn that began over a reply is watched like any other once that reply has stopped,
+    // and one with no words at all is held too: either way noise can no longer keep it open.
+    if (!turn || this.pushToTalk || (turn.playback !== undefined && this.audio.playing)) return;
     if (this.segments.held || !this.segments.sounding) return;
     if (this.segments.levels.paused) turn.awaitingWords = true;
     this.framesSinceWords += 1;
     const limit = this.vad === "on" ? STALL_FRAMES_WITH_VAD : STALL_FRAMES;
-    if (this.framesSinceWords < limit || !turn.maxWords) return;
+    if (this.framesSinceWords < limit) return;
     this.trace("hold_for_words", { utteranceId: turn.id, words: turn.maxWords,
       soundMs: this.framesSinceWords * 20, paused: this.segments.levels.paused });
     turn.awaitingWords = false; // that sound was not speech: it no longer holds anything back
