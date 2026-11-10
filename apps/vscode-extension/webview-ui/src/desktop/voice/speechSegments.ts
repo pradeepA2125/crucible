@@ -15,6 +15,15 @@ const PARTIAL_INTERVAL_FRAMES = 24; // 480 ms
 const PLAYBACK_PARTIAL_FRAMES = 10; // Decode sooner after a possible barge-in.
 const PLAYBACK_PAUSE_PROBE_FRAMES = 7; // Check short commands after 140 ms without finalizing them.
 const MAX_FRAMES = 1_475; // 29.5 seconds per recognizer segment; longer speech rolls over
+// Inside a turn, speech after a pause needs 80 ms at speech level: one stray frame of room
+// noise (a click, traffic) used to count, cancelling every decision (measured 2026-11-10).
+const RESUME_FRAMES = 4;
+// The room's level is relearned during a turn from the quieter end of the last 3 seconds,
+// capped so a loud talker's own speech never becomes "the floor".
+const FLOOR_WINDOW_FRAMES = 150;
+const FLOOR_MIN_FRAMES = 25;
+const FLOOR_PERCENTILE = 0.2;
+const FLOOR_CAP = 0.006;
 
 interface SpeechCallbacks {
   start(onsetAt: number): void;
@@ -50,18 +59,62 @@ export class SpeechSegments {
   private nextPartial = PRE_ROLL_FRAMES + PARTIAL_INTERVAL_FRAMES;
   // Past a rollover the turn continues with an empty segment buffer.
   private rolled = false;
+  private recent: number[] = [];
+  private loudRun = 0;
+  // Sound kept going without new words: only words (wordsResumed) can resume the turn.
+  private holding = false;
 
   constructor(private readonly callbacks: SpeechCallbacks) {}
 
   /** The thresholds speech detection is using right now, for diagnostics. */
   get levels() {
+    const floor = this.floor();
     return {
-      noise: this.noise,
-      continueAt: Math.max(0.005, this.noise * 2),
-      onsetAt: Math.max(0.008, this.noise * 3.5),
+      noise: floor,
+      continueAt: Math.max(0.005, floor * 2),
+      onsetAt: Math.max(0.008, floor * 3.5),
       paused: this.paused,
-      inTurn: this.utterance.length > 0 || this.rolled,
+      held: this.holding,
+      inTurn: this.inTurn,
     };
+  }
+
+  get held(): boolean {
+    return this.holding;
+  }
+
+  private get inTurn(): boolean {
+    return this.utterance.length > 0 || this.rolled;
+  }
+
+  /** The learned pre-speech level, or the quieter end of the turn's recent audio if higher. */
+  private floor(): number {
+    if (this.recent.length < FLOOR_MIN_FRAMES) return this.noise;
+    const sorted = [...this.recent].sort((a, b) => a - b);
+    return Math.max(this.noise, Math.min(FLOOR_CAP, sorted[Math.floor(sorted.length * FLOOR_PERCENTILE)]));
+  }
+
+  /** The recognizer heard no new words in sound that kept going: treat it as a pause, and
+   * from now on let only new words (wordsResumed) resume the turn. */
+  holdForWords() {
+    if (!this.inTurn || this.holding) return;
+    this.holding = true;
+    if (this.paused) return;
+    this.paused = true;
+    this.silence = Math.max(this.silence, PAUSE_FRAMES);
+    this.callbacks.pause(joinFrames(this.utterance), this.cleanVoiced * FRAME_MS);
+  }
+
+  wordsResumed() {
+    if (!this.holding) return;
+    this.holding = false;
+    const quietMs = this.silence * FRAME_MS;
+    this.silence = 0;
+    this.loudRun = 0;
+    if (this.paused) {
+      this.paused = false;
+      this.callbacks.resume(quietMs);
+    }
   }
 
   /** Quiet since the last speech in the current turn; 0 outside a turn. */
@@ -85,6 +138,9 @@ export class SpeechSegments {
     this.paused = false;
     this.nextPartial = PRE_ROLL_FRAMES + PARTIAL_INTERVAL_FRAMES;
     this.rolled = false;
+    this.recent = [];
+    this.loudRun = 0;
+    this.holding = false;
   }
 
   finish() {
@@ -126,16 +182,27 @@ export class SpeechSegments {
 
   private continueSpeech(pcm: ArrayBuffer, rms: number, playing: boolean, wantsPartial: boolean, manual: boolean, clean: boolean) {
     this.utterance.push(pcm);
-    if (rms >= Math.max(0.005, this.noise * 2)) {
+    if (!playing) {
+      this.recent.push(rms);
+      if (this.recent.length > FLOOR_WINDOW_FRAMES) this.recent.shift();
+    }
+    const { continueAt, onsetAt } = this.levels;
+    this.loudRun = rms >= onsetAt ? this.loudRun + 1 : 0;
+    const sounding = rms >= continueAt;
+    if (sounding) {
       this.voiced += 1;
       if (clean) this.cleanVoiced += 1;
+    }
+    const speaking = !this.holding && (this.paused ? this.loudRun >= RESUME_FRAMES : sounding);
+    if (speaking) {
       const quietMs = this.silence * FRAME_MS;
       this.silence = 0;
       if (this.paused) {
         this.paused = false;
         this.callbacks.resume(quietMs);
       }
-    } else {
+    } else if (!(this.paused && !this.holding && this.loudRun > 0)) {
+      // A run that may yet prove to be speech holds the quiet count until it decides.
       this.silence += 1;
     }
     if (this.utterance.length >= MAX_FRAMES) {
@@ -157,7 +224,7 @@ export class SpeechSegments {
     } else if (wantsPartial && !manual && playing && this.voiced >= MIN_VOICED_FRAMES &&
       this.silence === PLAYBACK_PAUSE_PROBE_FRAMES) {
       this.callbacks.partial(joinFrames(this.utterance));
-    } else if (wantsPartial && this.silence === 0 && this.utterance.length >= this.nextPartial) {
+    } else if (wantsPartial && (this.silence === 0 || this.holding) && this.utterance.length >= this.nextPartial) {
       this.nextPartial = this.utterance.length + PARTIAL_INTERVAL_FRAMES;
       this.callbacks.partial(joinFrames(this.utterance));
     }

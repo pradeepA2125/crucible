@@ -601,7 +601,7 @@ describe("desktop voice session", () => {
     frames(28, 0);
     await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(1));
     await settle();
-    frames(1, 0.02);
+    frames(4, 0.03);
     frames(10, 0);
     const events = voice.trace.mock.calls.map(([sessionId, event, data]) => ({ sessionId, event, data }));
     const named = (name: string) => events.filter(entry => entry.event === name);
@@ -612,10 +612,37 @@ describe("desktop voice session", () => {
     expect(named("decide")[0].data).toMatchObject({ text: "Use SQLite for the tests", finalCall: false });
     expect(named("decision")[0].data).toMatchObject({ action: "reply", turn: "complete", ms: expect.any(Number) });
     expect(named("resume")[0].data).toMatchObject({
-      quietMs: expect.any(Number), rms: 0.02, threshold: expect.any(Number), droppedDecision: true });
+      quietMs: expect.any(Number), rms: 0.03, threshold: expect.any(Number), droppedDecision: true });
     expect(named("levels")[0].data).toMatchObject({
       peak: expect.any(Number), mean: expect.any(Number), noise: expect.any(Number), loudFrames: expect.any(Number),
       continueAt: expect.any(Number), silenceMs: expect.any(Number), inTurn: true });
+    voice.session.close();
+  });
+
+  it("sound that brings no new words for two seconds is treated as a pause, and only new words resume", async () => {
+    vi.clearAllMocks();
+    let heard = "Use SQLite for the tests";
+    const voice = fixture(heard);
+    const answer = voice.request.getMockImplementation()!;
+    voice.request.mockImplementation(command => command.type === "decode"
+      ? Promise.resolve({ text: heard }) : command.type === "decide"
+        ? Promise.resolve({ turn: "thinking", action: "listen", say: "", request: "", decisionId: "d1" })
+        : answer(command));
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(40, 0.03); // speech with words
+    await vi.waitFor(() => expect(voice.trace.mock.calls.some(([, event]) => event === "transcript")).toBe(true));
+    frames(110, 0.03); // traffic: loud, no new words
+    await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(1));
+    expect(voice.trace.mock.calls.some(([, event]) => event === "hold_for_words")).toBe(true);
+    const resumesBefore = voice.trace.mock.calls.filter(([, event]) => event === "resume").length;
+    frames(60, 0.03); // more traffic: still held
+    await settle();
+    expect(voice.trace.mock.calls.filter(([, event]) => event === "resume")).toHaveLength(resumesBefore);
+    heard = "Use SQLite for the tests and also the Postgres migration";
+    frames(30, 0.03);
+    await vi.waitFor(() => expect(voice.trace.mock.calls.filter(([, event]) => event === "resume").length)
+      .toBeGreaterThan(resumesBefore));
     voice.session.close();
   });
 

@@ -124,3 +124,57 @@ describe("speech segmentation", () => {
     expect(segment.byteLength).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe("speech detection inside a turn", () => {
+  const pause = (speech: ReturnType<typeof fixture>) => {
+    speech.feed(20, 0.03);
+    speech.feed(28, 0);
+    expect(speech.pause).toHaveBeenCalledOnce();
+  };
+
+  it("one faint frame during a pause is not speech; a sustained one is", () => {
+    const speech = fixture();
+    pause(speech);
+    speech.feed(1, 0.009);
+    speech.feed(10, 0);
+    speech.feed(1, 0.0098);
+    speech.feed(10, 0);
+    expect(speech.resume).not.toHaveBeenCalled();
+    expect(speech.segments.silenceMs).toBe(48 * 20); // each faint frame holds the count, never resets it
+    speech.feed(4, 0.03);
+    expect(speech.resume).toHaveBeenCalledOnce();
+  });
+
+  it("steady room noise inside a turn stops counting as speech", () => {
+    const speech = fixture();
+    speech.feed(20, 0.03);
+    for (let index = 0; index < 120; index += 1) speech.feed(1, index % 2 ? 0.007 : 0.004);
+    expect(speech.pause).toHaveBeenCalledOnce();
+  });
+
+  it("held for words: sound neither resumes nor resets the quiet, and partials keep coming", () => {
+    const speech = fixture();
+    speech.feed(20, 0.03);
+    speech.feed(60, 0.03);
+    expect(speech.pause).not.toHaveBeenCalled();
+    speech.segments.holdForWords();
+    expect(speech.pause).toHaveBeenCalledOnce();
+    expect(speech.segments.held).toBe(true);
+    const partials = speech.partial.mock.calls.length;
+    speech.feed(60, 0.03);
+    expect(speech.resume).not.toHaveBeenCalled();
+    expect(speech.segments.silenceMs).toBeGreaterThanOrEqual(60 * 20);
+    expect(speech.partial.mock.calls.length).toBeGreaterThan(partials);
+    speech.segments.wordsResumed();
+    expect(speech.resume).toHaveBeenCalledOnce();
+    expect(speech.segments.held).toBe(false);
+  });
+
+  it("held for words still reaches the wait limit", () => {
+    const speech = fixture();
+    speech.feed(20, 0.03);
+    speech.segments.holdForWords();
+    speech.feed(400, 0.03);
+    expect(speech.waitLimit).toHaveBeenCalledOnce();
+  });
+});
