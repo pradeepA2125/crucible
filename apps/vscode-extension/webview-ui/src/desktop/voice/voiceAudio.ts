@@ -124,6 +124,28 @@ export class VoiceAudio {
     if (!wasPlaying) this.onPlaying(true);
   }
 
+  /** A short, quiet two-note "hmm" that says a reply is coming. Returns its length in ms.
+   * Not tracked as playback: it must not look like the assistant speaking. */
+  cue(): number {
+    if (this.closed) return 0;
+    const start = this.context.currentTime + 0.01;
+    const notes: readonly (readonly [number, number])[] = [[523.25, 0], [659.25, 0.16]];
+    for (const [frequency, offset] of notes) {
+      const tone = this.context.createOscillator();
+      const gain = this.context.createGain();
+      tone.type = "sine";
+      tone.frequency.value = frequency;
+      gain.gain.setValueAtTime(0, start + offset);
+      gain.gain.linearRampToValueAtTime(0.05, start + offset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.18);
+      tone.connect(gain).connect(this.context.destination);
+      tone.onended = () => { tone.disconnect(); gain.disconnect(); };
+      tone.start(start + offset);
+      tone.stop(start + offset + 0.2);
+    }
+    return 380;
+  }
+
   stopPlayback() {
     const wasPlaying = this.playing;
     const stoppedAt = performance.now();

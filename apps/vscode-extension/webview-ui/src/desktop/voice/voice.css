@@ -118,5 +118,11 @@
 .crucible-voice-transcript li { display: grid; gap: 4px; }
 .crucible-voice-transcript strong { margin-right: 4px; color: var(--text-1); }
 .crucible-voice-partial { color: var(--text-3); }
+.crucible-voice-partial[data-phase="deciding"] strong { color: var(--accent); animation: crucible-voice-thinking 1.4s ease-in-out infinite; }
+.crucible-voice-partial[data-phase="transcribing"] strong { color: var(--text-2); }
+@keyframes crucible-voice-thinking { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) {
+  .crucible-voice-partial[data-phase="deciding"] strong { animation: none; }
+}
 .crucible-voice-receipt { color: var(--text-3); }
 .crucible-voice-error { color: var(--danger); }

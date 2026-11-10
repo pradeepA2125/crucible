@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { BtnDanger, BtnGhost, BtnPrimary } from "../../components/shared/buttons";
 import { CardShell } from "../../components/shared/CardShell";
 import { readVoiceStatus, voiceRequest, type VoiceBridge, type VoiceIntent, type VoiceModelAsset, type VoiceReceipt, type VoiceRecognizer, type VoiceStatus, type VoiceSynthesizer } from "./voiceBridge";
-import { INITIAL_VOICE_STATE, VoiceSession, type VoiceSessionState } from "./voiceSession";
+import { INITIAL_VOICE_STATE, VoiceSession } from "./voiceSession";
+import { heardLabel, voicePhase } from "./voiceStatus";
 import "./voice.css";
 
 const RECOGNIZERS: ReadonlyArray<{ id: VoiceRecognizer; label: string }> = [
@@ -26,17 +27,6 @@ interface VoiceTurn {
   reply?: string;
   final?: boolean;
   receipt?: VoiceReceipt;
-}
-
-function phase(state: VoiceSessionState, pushToTalk: boolean) {
-  if (state.waiting) return "Still listening…";
-  if (state.checking) return "Thinking about that";
-  if (state.capturing) return "Hearing you";
-  if (state.speaking) return "Speaking";
-  if (state.microphone === "starting") return "Opening microphone";
-  if (state.pending) return "Processing message";
-  if (state.microphone === "off") return "Microphone off";
-  return pushToTalk ? "Push to talk ready" : "Listening";
 }
 
 function errorText(error: unknown) {
@@ -211,7 +201,7 @@ export function VoicePanel({ bridge, threadId, id }: Props) {
         {state.connected ? <>
           <div className="crucible-voice-actions">
             <span role="status" className="crucible-voice-phase"
-              data-listening={state.capturing || (!manualMode && state.microphone === "on")}>{phase(state, manualMode)}</span>
+              data-listening={state.capturing || (!manualMode && state.microphone === "on")}>{voicePhase(state, manualMode)}</span>
             <label><span className="sr-only">Microphone mode</span>
               <select value={manualMode ? "hold" : "auto"} disabled={state.capturing} onChange={event => {
                 const enabled = event.target.value === "hold";
@@ -329,7 +319,7 @@ export function VoicePanel({ bridge, threadId, id }: Props) {
               </p>}
             </li>)}
           </ol>
-          {state.partial && <p className="crucible-voice-partial"><strong>Hearing</strong> {state.partial}</p>}
+          {state.partial && <p className="crucible-voice-partial" data-phase={state.deciding ? "deciding" : state.checking ? "transcribing" : undefined}><strong>{heardLabel(state)}</strong> {state.partial}</p>}
         </div>}
         {error && <p className="crucible-voice-error" role="alert">{error}</p>}
       </div>

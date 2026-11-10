@@ -6,7 +6,7 @@ import {
 import { DISPATCH_HOLD_MS, commitFloorMs } from "./turnTiming";
 import { VoiceAudio } from "./voiceAudio";
 import {
-  decisionOf, refusalOf, voiceRequest,
+  decisionOf, refusalMessageOf, refusalOf, voiceRequest,
   type VoiceBridge, type VoiceDecision, type VoiceEvent, type VoiceIntent, type VoiceReceipt, type VoiceRecognizer,
   type VoiceSynthesizer,
 } from "./voiceBridge";
@@ -18,6 +18,10 @@ export interface VoiceSessionState {
   checking: boolean;
   /** The voice agent heard an unfinished thought and is waiting for more. */
   waiting: boolean;
+  /** The voice agent is working out whether the user finished and what to do. */
+  deciding: boolean;
+  /** That decision is taking long enough to tell the user (a cue plays once). */
+  slowDecision: boolean;
   speaking: boolean;
   pending: number;
   partial: string;
@@ -26,8 +30,8 @@ export interface VoiceSessionState {
 }
 
 export const INITIAL_VOICE_STATE: VoiceSessionState = {
-  connected: false, microphone: "off", capturing: false, checking: false, waiting: false, speaking: false, pending: 0,
-  partial: "", reviews: [],
+  connected: false, microphone: "off", capturing: false, checking: false, waiting: false, deciding: false,
+  slowDecision: false, speaking: false, pending: 0, partial: "", reviews: [],
 };
 
 interface VoiceReview {
@@ -73,6 +77,10 @@ const playbackTailMs = 300;
 // After the assistant asks a question, a one-word answer ("okay", "yes") is a real reply.
 const answerWindowMs = 15_000;
 const UNAVAILABLE = "The voice assistant could not decide what to do. Review the transcript and send it.";
+// A decision still out after this long gets a quiet cue, so silence never reads as "not heard".
+const SLOW_DECISION_MS = 1_200;
+// The cue's own sound must not count as the user speaking again (one loud frame resumes speech).
+const CUE_MASK_TAIL_MS = 200;
 
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -108,6 +116,7 @@ export class VoiceSession {
   /** Pauses after which this speaker kept talking; they set how long to wait (turnTiming). */
   private readonly resumedPauses: number[] = [];
   private answerExpectedUntil = -Infinity;
+  private cueMaskUntil = -Infinity;
 
   constructor(private readonly bridge: VoiceBridge, private readonly events: VoiceSessionCallbacks) {
     this.audio = new VoiceAudio(speaking => {
@@ -154,7 +163,8 @@ export class VoiceSession {
         onFrame: frame => {
           if (!this.isCaptureCurrent(generation) || (this.pushToTalk && !this.holding)) return;
           const playing = this.audio.playing;
-          this.segments.accept(frame, playing, !this.partialInFlight && (this.pending === 0 || playing), this.pushToTalk,
+          const cueSounding = performance.now() < this.cueMaskUntil;
+          this.segments.accept(cueSounding ? { ...frame, rms: 0 } : frame, playing, !this.partialInFlight && (this.pending === 0 || playing), this.pushToTalk,
             !playing && performance.now() - this.lastPlaybackAt > playbackTailMs);
           this.commitWhenQuietEnough();
         },
@@ -261,7 +271,9 @@ export class VoiceSession {
   private clearCapture(reset = true) {
     this.spoken = undefined;
     if (reset) this.segments.reset();
-    this.events.state({ capturing: false, checking: false, waiting: false, partial: "" });
+    this.events.state({
+      capturing: false, checking: false, waiting: false, deciding: false, slowDecision: false, partial: "",
+    });
   }
 
   private decode(sessionId: string, turn: SpokenTurn, pcm: ArrayBuffer, final: boolean, valid: () => boolean) {
@@ -352,16 +364,20 @@ export class VoiceSession {
     const current = () => this.spoken === turn && turn.revision === revision && this.isCaptureCurrent(turn.captureGeneration);
     turn.deciding = revision;
     turn.finalWanted = false;
-    this.events.state({ checking: true });
+    this.events.state({ checking: false, deciding: true });
+    this.watchSlowDecision(turn, revision);
+    const settled = () => {
+      turn.deciding = undefined;
+      this.events.state({ deciding: false, slowDecision: false });
+    };
     void voiceRequest(this.bridge, {
       type: "decide", sessionId, utteranceId: turn.id, text, silenceMs: this.segments.silenceMs, finalCall,
     }).then(result => {
       if (!current()) return;
-      turn.deciding = undefined;
-      this.events.state({ checking: false });
+      settled();
       const decision = decisionOf(result);
       if (refusalOf(result) || !decision) {
-        this.unavailable(turn, text);
+        this.decisionFailed(turn, text, finalCall, refusalMessageOf(result));
         return;
       }
       if (decision.action === "listen") {
@@ -373,17 +389,35 @@ export class VoiceSession {
       turn.decision = { ...decision, revision };
       if (finalCall) this.commitDecision(turn);
       else this.commitWhenQuietEnough();
-    }).catch(() => {
+    }).catch(error => {
       if (!current()) return;
-      turn.deciding = undefined;
-      this.unavailable(turn, text);
+      settled();
+      this.decisionFailed(turn, text, finalCall, messageOf(error, ""));
     });
   }
 
-  private unavailable(turn: SpokenTurn, text: string) {
+  private watchSlowDecision(turn: SpokenTurn, revision: number) {
+    setTimeout(() => {
+      if (this.closed || this.spoken !== turn || turn.deciding !== revision) return;
+      this.events.state({ slowDecision: true });
+      // Never over the assistant's own speech: that already says something is happening.
+      if (this.audio.playing) return;
+      this.cueMaskUntil = performance.now() + this.audio.cue() + CUE_MASK_TAIL_MS;
+    }, SLOW_DECISION_MS);
+  }
+
+  /** A slow or failed decision is not a reason to drop the user's words: keep listening, and
+   * let the wait limit ask once more. Only a failed final question falls back to review. */
+  private decisionFailed(turn: SpokenTurn, text: string, finalCall: boolean, reason: string | undefined) {
+    if (!finalCall) {
+      this.events.state({ waiting: true });
+      if (turn.finalWanted) this.requestDecision(turn, true);
+      return;
+    }
     this.clearCapture();
     this.keepForReview(turn, text);
-    this.events.error(UNAVAILABLE);
+    this.events.error(reason ? `The voice assistant is unavailable: ${reason} Review the transcript and send it.`
+      : UNAVAILABLE);
   }
 
   /** Called on every microphone frame: acts once the speaker has been quiet long enough. */
@@ -412,7 +446,7 @@ export class VoiceSession {
       turn.held = false;
       turn.decodeFailed = false;
     }
-    this.events.state({ checking: false, waiting: false });
+    this.events.state({ checking: false, waiting: false, deciding: false, slowDecision: false });
   }
 
   private reachWaitLimit() {

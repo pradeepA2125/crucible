@@ -36,6 +36,13 @@ type Reply = { id: string; utteranceId: string; cancel: AbortController; text: s
 type Refusal = "turn_active" | "turn_not_active" | "voice_agent_unavailable";
 
 /** The backend's structured refusal code on an editor-client error, if any. */
+/** The backend's own reason (a provider sign-in or usage message), capped for display. */
+function refusalMessage(error: unknown): string | undefined {
+  const detail = typeof error === "object" && error !== null ? (error as { detail?: unknown }).detail : undefined;
+  const message = typeof detail === "object" && detail !== null ? (detail as { message?: unknown }).message : undefined;
+  return typeof message === "string" && message.trim() ? message.trim().slice(0, 300) : undefined;
+}
+
 function refusalOf(error: unknown): Refusal | undefined {
   if (typeof error !== "object" || error === null) return undefined;
   const { status, detail } = error as { status?: unknown; detail?: unknown };
@@ -282,7 +289,10 @@ export class VoiceHost {
         AbortSignal.any([session.signal.signal, AbortSignal.timeout(15_000)]));
     } catch (error) {
       const refused = refusalOf(error);
-      if (refused) return { refused };
+      if (refused) {
+        const message = refusalMessage(error);
+        return message ? { refused, message } : { refused };
+      }
       throw error;
     }
     this.requireSession(session.id);

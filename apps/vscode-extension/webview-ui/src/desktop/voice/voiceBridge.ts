@@ -52,6 +52,12 @@ export function refusalOf(result: Record<string, unknown>): VoiceRefusal | undef
     ? refused : undefined;
 }
 
+/** The backend's reason for a refusal (a provider sign-in or usage message), if it sent one. */
+export function refusalMessageOf(result: Record<string, unknown>): string | undefined {
+  const message = result.message;
+  return typeof message === "string" && message.trim() ? message.trim() : undefined;
+}
+
 export function decisionOf(result: Record<string, unknown>): VoiceDecision | undefined {
   const { decisionId, turn, action, say, request } = result;
   if (typeof decisionId !== "string" || !decisionId || typeof say !== "string" || typeof request !== "string"

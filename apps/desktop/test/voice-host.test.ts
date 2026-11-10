@@ -145,6 +145,15 @@ describe("desktop voice front-man", () => {
       finalCall: false })).toEqual({ refused: "voice_agent_unavailable" });
   });
 
+  it("decide passes the voice agent's own reason with the refusal", async () => {
+    const { host, sessionId, decide } = await fixture(idle);
+    decide.mockRejectedValueOnce(Object.assign(new Error("x"), {
+      status: 503, detail: { code: "voice_agent_unavailable", message: "Connect again in Crucible settings." } }));
+    await host.request({ type: "snapshot", sessionId, utteranceId: "u1" });
+    expect(await host.request({ type: "decide", sessionId, utteranceId: "u1", text: "hello", silenceMs: 700,
+      finalCall: false })).toEqual({ refused: "voice_agent_unavailable", message: "Connect again in Crucible settings." });
+  });
+
   it("commit reply speaks say once through speakable", async () => {
     mocks.speak.mockResolvedValue(undefined);
     const { host, sessionId, decide, commit, sendIdle } = await fixture(idle);
