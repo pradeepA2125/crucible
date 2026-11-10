@@ -19,6 +19,14 @@ describe("voice diagnostics", () => {
     ]);
   });
 
+  it("keeps its folder private to the user", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "voice-diag-"));
+    const log = new VoiceDiagnostics(join(dir, "voice", "diagnostics.jsonl"));
+    log.write("app", "pause", {});
+    await log.flush();
+    expect((await stat(join(dir, "voice"))).mode & 0o777).toBe(0o700);
+  });
+
   it("rotates the file once it passes the size cap", async () => {
     const dir = await mkdtemp(join(tmpdir(), "voice-diag-"));
     const path = join(dir, "diagnostics.jsonl");

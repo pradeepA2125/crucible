@@ -761,6 +761,28 @@ describe("desktop voice session", () => {
     }
   });
 
+  it("its own narration heard back through the microphone is recognised as echo", async () => {
+    vi.clearAllMocks();
+    const narration = "Done. The tests pass and the timer is fixed.";
+    const voice = fixture(narration);
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    voice.emit({ type: "narrating", sessionId: "session", utteranceId: "task-u" });
+    voice.emit({ type: "speaking", sessionId: "session", utteranceId: "task-u", text: narration });
+    audio.playing = true;
+    try {
+      frames(16, 0.03);
+      frames(40, 0);
+      await settle(); await settle();
+      expect(audio.stopPlayback).not.toHaveBeenCalled(); // the narration did not stop itself
+      expect(voice.sent("interrupt")).toHaveLength(0);
+      expect(voice.sent("decide")).toHaveLength(0);
+    } finally {
+      audio.playing = false;
+      voice.session.close();
+    }
+  });
+
   it("traces why playback stopped", async () => {
     vi.clearAllMocks();
     const voice = fixture("Use SQLite.");

@@ -505,6 +505,9 @@ export class VoiceHost {
     const speech = reply.speech.signal;
     reply.output = reply.output.then(async () => {
       if (!this.currentReply(session, reply) || speech.aborted) return;
+      // The app compares what the microphone hears against this, so its own voice coming
+      // back (narration, "On it.") is recognised as echo instead of stopping the reply.
+      this.options.publish({ type: "speaking", sessionId: session.id, utteranceId: reply.utteranceId, text });
       const started = performance.now();
       await session.synthesizer.speak(text, (pcm, sampleRate) => {
         if (this.currentReply(session, reply)) this.options.publish({ type: "audio", sessionId: session.id,

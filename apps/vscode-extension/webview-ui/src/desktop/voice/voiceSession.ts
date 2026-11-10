@@ -964,6 +964,12 @@ export class VoiceSession {
       case "narrating":
         this.narrate(event.utteranceId);
         break;
+      case "speaking":
+        // What the speaker is saying: the echo filter's reference for this reply.
+        if (event.utteranceId === this.outputTarget) {
+          this.playbackText = this.playbackText ? `${this.playbackText} ${event.text}` : event.text;
+        }
+        break;
       case "receipt":
         this.events.receipt(event.receipt);
         break;

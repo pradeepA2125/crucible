@@ -279,6 +279,14 @@ describe("desktop voice front-man", () => {
     expect(mocks.speak).toHaveBeenCalledExactlyOnceWith("Got it.", expect.any(Function), expect.any(AbortSignal));
   });
 
+  it("announces the text of everything it speaks, so the app can recognise its echo", async () => {
+    const { hooks, events } = await startedTask();
+    hooks.chunk("Done. The tests pass.");
+    hooks.finish();
+    await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({
+      type: "speaking", utteranceId: "u1", text: "Done. The tests pass." })));
+  });
+
   it("a queued voice correction reports its later status on the spoken utterance", async () => {
     mocks.speak.mockResolvedValue(undefined);
     const { host, sessionId, decide, commit, events, thread } = await fixture(active("turn-a"));

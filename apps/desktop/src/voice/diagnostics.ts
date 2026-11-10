@@ -1,4 +1,4 @@
-import { appendFile, mkdir, rename, stat } from "node:fs/promises";
+import { appendFile, chmod, mkdir, rename, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export type DiagnosticSource = "app" | "host";
@@ -25,7 +25,10 @@ export class VoiceDiagnostics {
   }
 
   private async append(line: string): Promise<void> {
-    await mkdir(dirname(this.path), { recursive: true });
+    // Transcripts of what was said live here: private to the user, also for a folder that
+    // an earlier version created with the default mode.
+    await mkdir(dirname(this.path), { recursive: true, mode: 0o700 });
+    await chmod(dirname(this.path), 0o700);
     const size = await stat(this.path).then(info => info.size, () => 0);
     if (size > this.maxBytes) await rename(this.path, `${this.path}.1`);
     await appendFile(this.path, line, { mode: 0o600 });
