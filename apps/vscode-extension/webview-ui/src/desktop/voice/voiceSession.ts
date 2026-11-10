@@ -97,6 +97,9 @@ export type VoiceTrace = (sessionId: string, event: string, data: Record<string,
 // 2026-11-10, where it held a turn open for three minutes): after that it stops holding the
 // reply. Only new words (addsWords) ever end a pause.
 const STALL_FRAMES = 100;
+// With Silero, sound that reaches this point is a voice: only a TV or people nearby, so wait
+// longer before deciding it brings no words (a slow transcript tripped 2 s mid-sentence live).
+const STALL_FRAMES_WITH_VAD = 300;
 const LEVELS_IN_TURN_FRAMES = 50; // one line per second while a turn is open
 const LEVELS_IDLE_FRAMES = 250; // one per five seconds otherwise
 const round = (value: number) => Math.round(value * 10_000) / 10_000;
@@ -597,7 +600,8 @@ export class VoiceSession {
     if (this.segments.held || !this.segments.sounding) return;
     if (this.segments.levels.paused) turn.awaitingWords = true;
     this.framesSinceWords += 1;
-    if (this.framesSinceWords < STALL_FRAMES || !turn.maxWords) return;
+    const limit = this.vad === "on" ? STALL_FRAMES_WITH_VAD : STALL_FRAMES;
+    if (this.framesSinceWords < limit || !turn.maxWords) return;
     this.trace("hold_for_words", { utteranceId: turn.id, words: turn.maxWords,
       soundMs: this.framesSinceWords * 20, paused: this.segments.levels.paused });
     turn.awaitingWords = false; // that sound was not speech: it no longer holds anything back

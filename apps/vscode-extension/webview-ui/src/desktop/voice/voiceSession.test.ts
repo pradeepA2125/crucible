@@ -674,6 +674,20 @@ describe("desktop voice session", () => {
     voice.session.close();
   });
 
+  it("with the speech detector running, speech without new words is held only after six seconds", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Use SQLite for the tests");
+    withDetector(voice, () => 0.9);
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    const held = () => voice.trace.mock.calls.some(([, event]) => event === "hold_for_words");
+    for (let batch = 0; batch < 60; batch += 1) { frames(4, 0.03); await settle(); } // ~4.8 s
+    expect(held()).toBe(false);
+    for (let batch = 0; batch < 40; batch += 1) { frames(4, 0.03); await settle(); } // ~8 s
+    expect(held()).toBe(true);
+    voice.session.close();
+  });
+
   it("a detector that answers null falls back to loudness for the rest of the session", async () => {
     vi.clearAllMocks();
     const voice = fixture("Use SQLite for the tests");
