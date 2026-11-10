@@ -73,9 +73,10 @@ async function fixture(first: VoiceSnapshot) {
     diagnostics: { write: (source, event, data) => traces.push({ source, event, data }) },
   });
   sessions.push(host);
-  const { sessionId } = await host.request({ type: "start", threadId: "thread",
-    stt: "whisper-small", tts: "system" }) as { sessionId: string };
-  return { host, sessionId, submit, sendIdle, decide, commit, narrate, events, traces,
+  const started = await host.request({ type: "start", threadId: "thread",
+    stt: "whisper-small", tts: "system" }) as { sessionId: string; vad?: boolean };
+  const { sessionId } = started;
+  return { host, sessionId, started, submit, sendIdle, decide, commit, narrate, events, traces,
     setSnapshot: (value: VoiceSnapshot) => { snapshot = value; } };
 }
 
@@ -192,6 +193,12 @@ describe("desktop voice front-man", () => {
     await host.request({ type: "decide", sessionId, utteranceId: "u1", text: "hello", silenceMs: 700, finalCall: true });
     expect(traces.find(trace => trace.event === "decide")).toMatchObject({ data: {
       refused: "voice_agent_unavailable", reason: "timed out", finalCall: true } });
+  });
+
+  it("start says whether the speech detector is running", async () => {
+    expect((await fixture(idle)).started).toMatchObject({ vad: true });
+    mocks.vadPath.mockRejectedValueOnce(new Error("missing"));
+    expect((await fixture(idle)).started).toMatchObject({ vad: false });
   });
 
   it("vad returns the detector's speech probabilities for the session's audio", async () => {

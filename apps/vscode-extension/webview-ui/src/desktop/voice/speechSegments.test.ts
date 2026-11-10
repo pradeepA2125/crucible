@@ -195,3 +195,50 @@ describe("speech detection inside a turn", () => {
     expect(speech.waitLimit).toHaveBeenCalledOnce();
   });
 });
+
+describe("speech detection with a voice probability (Silero VAD)", () => {
+  const feedVad = (speech: ReturnType<typeof fixture>, count: number, rms: number, prob: number) => {
+    for (let index = 0; index < count; index += 1) {
+      speech.segments.accept({ pcm: new ArrayBuffer(CAPTURE_FRAME_BYTES), rms }, false, true, false, true, prob);
+    }
+  };
+
+  it("loud noise never starts a turn", () => {
+    const speech = fixture();
+    feedVad(speech, 100, 0.08, 0.03);
+    expect(speech.start).not.toHaveBeenCalled();
+  });
+
+  it("quiet speech starts a turn after 80 ms", () => {
+    const speech = fixture();
+    feedVad(speech, 3, 0.004, 0.9);
+    expect(speech.start).not.toHaveBeenCalled();
+    feedVad(speech, 1, 0.004, 0.9);
+    expect(speech.start).toHaveBeenCalledOnce();
+  });
+
+  it("loud noise inside a turn counts as quiet, so the pause comes on time", () => {
+    const speech = fixture();
+    feedVad(speech, 20, 0.03, 0.9);
+    feedVad(speech, 28, 0.08, 0.05);
+    expect(speech.pause).toHaveBeenCalledOnce();
+  });
+
+  it("0.35 keeps speech going but does not start it", () => {
+    const speech = fixture();
+    feedVad(speech, 20, 0.02, 0.4);
+    expect(speech.start).not.toHaveBeenCalled();
+    feedVad(speech, 4, 0.02, 0.9);
+    feedVad(speech, 60, 0.02, 0.4);
+    expect(speech.pause).not.toHaveBeenCalled();
+  });
+
+  it("noise in a pause neither resumes nor holds the reply", () => {
+    const speech = fixture();
+    feedVad(speech, 20, 0.03, 0.9);
+    feedVad(speech, 28, 0, 0.02);
+    feedVad(speech, 20, 0.1, 0.05); // a horn
+    expect(speech.segments.silenceMs).toBe(48 * 20);
+    expect(speech.resume).not.toHaveBeenCalled();
+  });
+});

@@ -209,7 +209,7 @@ export class VoiceHost {
       const sessionId = randomUUID();
       this.session = { id: sessionId, thread, signal: abort, model, tts, recognizer, synthesizer, detector,
         utterances: new Map(), receipts: 0, reply: undefined };
-      return { sessionId };
+      return { sessionId, vad: detector !== undefined };
     } catch (error) {
       await Promise.all([recognizer?.close(), synthesizer?.close()]);
       throw error;

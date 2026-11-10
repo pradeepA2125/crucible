@@ -31,7 +31,8 @@ export type VoiceCommand =
   | ({ type: "submit"; text: string; intent: VoiceIntent } & UtteranceCommand)
   | ({ type: "decide"; text: string; silenceMs: number; finalCall: boolean } & UtteranceCommand)
   | ({ type: "commit"; decisionId: string } & UtteranceCommand)
-  | ({ type: "trace"; event: string; data: Record<string, string | number | boolean | null> } & SessionCommand);
+  | ({ type: "trace"; event: string; data: Record<string, string | number | boolean | null> } & SessionCommand)
+  | ({ type: "vad"; pcm: ArrayBuffer } & SessionCommand);
 
 export type VoiceAction = "listen" | "reply" | "clarify" | "start_task" | "steer";
 export interface VoiceDecision {

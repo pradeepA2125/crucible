@@ -24,6 +24,10 @@ const FLOOR_WINDOW_FRAMES = 150;
 const FLOOR_MIN_FRAMES = 25;
 const FLOOR_PERCENTILE = 0.2;
 const FLOOR_CAP = 0.006;
+// With a voice probability from Silero VAD, it alone decides what is speech: start at 0.5,
+// continue down to 0.35 (Silero's recommended hysteresis). Loudness only tracks the room.
+export const VAD_START = 0.5;
+export const VAD_CONTINUE = 0.35;
 
 interface SpeechCallbacks {
   start(onsetAt: number): void;
@@ -167,15 +171,17 @@ export class SpeechSegments {
     else this.callbacks.discard();
   }
 
-  accept({ pcm, rms }: CaptureFrame, playing: boolean, wantsPartial: boolean, manual = false, clean = !playing) {
+  /** `speechProb` is Silero's voice probability for this frame, when the detector is running. */
+  accept({ pcm, rms }: CaptureFrame, playing: boolean, wantsPartial: boolean, manual = false, clean = !playing,
+    speechProb?: number) {
     if (!(pcm instanceof ArrayBuffer) || pcm.byteLength !== CAPTURE_FRAME_BYTES || !Number.isFinite(rms)) return;
     if (this.utterance.length || this.rolled) {
-      this.continueSpeech(pcm, rms, playing, wantsPartial, manual, clean);
+      this.continueSpeech(pcm, rms, playing, wantsPartial, manual, clean, speechProb);
       return;
     }
 
     // Capture quiet speech even over playback. Only recognized words can stop the audio.
-    const aboveNoise = rms >= Math.max(0.008, this.noise * 3.5);
+    const aboveNoise = speechProb === undefined ? rms >= Math.max(0.008, this.noise * 3.5) : speechProb >= VAD_START;
     this.preRoll.push(pcm);
     if (this.preRoll.length > PRE_ROLL_FRAMES) this.preRoll.shift();
     if (aboveNoise && this.onset === 0) this.onsetAt = performance.now();
@@ -191,15 +197,17 @@ export class SpeechSegments {
     }
   }
 
-  private continueSpeech(pcm: ArrayBuffer, rms: number, playing: boolean, wantsPartial: boolean, manual: boolean, clean: boolean) {
+  private continueSpeech(pcm: ArrayBuffer, rms: number, playing: boolean, wantsPartial: boolean, manual: boolean,
+    clean: boolean, speechProb: number | undefined) {
     this.utterance.push(pcm);
     if (!playing) {
       this.recent.push(rms);
       if (this.recent.length > FLOOR_WINDOW_FRAMES) this.recent.shift();
     }
     const { continueAt, onsetAt } = this.levels;
-    this.loudRun = rms >= onsetAt ? this.loudRun + 1 : 0;
-    const sounding = rms >= continueAt;
+    const loud = speechProb === undefined ? rms >= onsetAt : speechProb >= VAD_START;
+    this.loudRun = loud ? this.loudRun + 1 : 0;
+    const sounding = speechProb === undefined ? rms >= continueAt : speechProb >= VAD_CONTINUE;
     if (sounding) {
       this.voiced += 1;
       if (clean) this.cleanVoiced += 1;

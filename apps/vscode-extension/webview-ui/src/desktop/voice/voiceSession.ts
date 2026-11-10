@@ -1,9 +1,10 @@
-import { SpeechSegments } from "./speechSegments";
+import { SpeechSegments, VAD_START, type CaptureFrame } from "./speechSegments";
 import {
   addsWords, clearOverlapRequest, hasSubstantiveSpeech, isBackchannel, isPlaybackControl, isPlaybackEcho, spokenMessage,
   spokenWordCount,
 } from "./speechText";
 import { DISPATCH_HOLD_MS, commitFloorMs } from "./turnTiming";
+import { VadAligner } from "./vadAligner";
 import { VoiceAudio } from "./voiceAudio";
 import {
   decisionOf, refusalMessageOf, refusalOf, voiceRequest,
@@ -100,6 +101,19 @@ const LEVELS_IN_TURN_FRAMES = 50; // one line per second while a turn is open
 const LEVELS_IDLE_FRAMES = 250; // one per five seconds otherwise
 const round = (value: number) => Math.round(value * 10_000) / 10_000;
 
+/** A microphone frame as captured, kept until its voice probability is known. */
+interface CapturedFrame {
+  frame: CaptureFrame;
+  rms: number;
+  playing: boolean;
+  clean: boolean;
+  masked: boolean;
+  generation: number;
+}
+
+// More than a second waiting for the detector means it cannot keep up: use loudness instead.
+const VAD_BACKLOG_FRAMES = 50;
+
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
@@ -137,8 +151,14 @@ export class VoiceSession {
   private cueMaskUntil = -Infinity;
   private lastRms = 0;
   private lastPartialTraced = "";
-  private meter = { frames: 0, peak: 0, sum: 0, loud: 0 };
+  private meter = { frames: 0, peak: 0, sum: 0, loud: 0, probPeak: 0, probSum: 0, speech: 0 };
   private framesSinceWords = 0;
+  /** Silero VAD: on when the host started a detector, off for good after any failure. */
+  private vad: "on" | "off" = "off";
+  private readonly aligner = new VadAligner<CapturedFrame>();
+  private vadBatch: ArrayBuffer[] = [];
+  private vadInFlight = false;
+  private vadAnswered = false;
   /** A partial asked for while another was decoding: the newer audio, decoded next. */
   private queuedPartial: ArrayBuffer | undefined;
 
@@ -172,6 +192,8 @@ export class VoiceSession {
       return;
     }
     this.sessionId = started.sessionId;
+    this.vad = started.vad === true ? "on" : "off";
+    this.trace("vad", { running: this.vad === "on" });
     this.events.state({ connected: true });
     void this.unmute();
   }
@@ -188,13 +210,20 @@ export class VoiceSession {
         onFrame: frame => {
           if (!this.isCaptureCurrent(generation) || (this.pushToTalk && !this.holding)) return;
           const playing = this.audio.playing;
-          const cueSounding = performance.now() < this.cueMaskUntil;
-          this.lastRms = frame.rms;
-          this.measure(frame.rms, cueSounding, playing);
-          this.segments.accept(cueSounding ? { ...frame, rms: 0 } : frame, playing, !this.partialInFlight && (this.pending === 0 || playing), this.pushToTalk,
-            !playing && performance.now() - this.lastPlaybackAt > playbackTailMs);
-          this.commitWhenQuietEnough();
-          this.watchForWords();
+          const masked = performance.now() < this.cueMaskUntil;
+          const captured: CapturedFrame = {
+            frame: masked ? { ...frame, rms: 0 } : frame, rms: frame.rms, playing, masked, generation,
+            clean: !playing && performance.now() - this.lastPlaybackAt > playbackTailMs,
+          };
+          // Push to talk needs no detector: the speaker decides when the turn ends.
+          if (this.vad === "on" && !this.pushToTalk) {
+            this.aligner.push(captured);
+            this.vadBatch.push(frame.pcm);
+            this.sendToDetector();
+            return;
+          }
+          this.flushAligned();
+          this.process(captured);
         },
         onDeviceLost: () => {
           if (!this.isCaptureCurrent(generation)) return;
@@ -246,6 +275,9 @@ export class VoiceSession {
       this.holding = false;
       this.audio.setMicrophoneEnabled(false);
     }
+    // The last ~100 ms may still wait for the detector: include it, and keep the stream aligned.
+    this.sendToDetector(true);
+    this.flushAligned();
     this.segments.finish();
   }
 
@@ -292,8 +324,67 @@ export class VoiceSession {
     }
   }
 
+  /** One frame through speech detection, with Silero's probability when the detector runs. */
+  private process(captured: CapturedFrame, speechProb?: number) {
+    if (!this.isCaptureCurrent(captured.generation) || this.closed) return;
+    this.lastRms = captured.rms;
+    this.measure(captured.rms, captured.masked, captured.playing, speechProb);
+    this.segments.accept(captured.frame, captured.playing,
+      !this.partialInFlight && (this.pending === 0 || captured.playing), this.pushToTalk, captured.clean, speechProb);
+    this.commitWhenQuietEnough();
+    this.watchForWords();
+  }
+
+  /** Sends captured audio to the detector, one request at a time, batching what waits. */
+  private sendToDetector(flush = false) {
+    const sessionId = this.sessionId;
+    if (this.vad !== "on" || !sessionId || this.vadInFlight || !this.vadBatch.length) return;
+    if (!flush && this.vadBatch.length < 4) return;
+    if (this.vadBatch.length > VAD_BACKLOG_FRAMES) {
+      this.vadOff("the speech detector fell behind");
+      return;
+    }
+    const batch = this.vadBatch;
+    this.vadBatch = [];
+    const pcm = new Uint8Array(batch.reduce((total, part) => total + part.byteLength, 0));
+    let offset = 0;
+    for (const part of batch) { pcm.set(new Uint8Array(part), offset); offset += part.byteLength; }
+    this.vadInFlight = true;
+    void voiceRequest(this.bridge, { type: "vad", sessionId, pcm: pcm.buffer }).then(result => {
+      this.vadInFlight = false;
+      const probs = result.probs;
+      if (!Array.isArray(probs) || !probs.every(value => typeof value === "number" && value >= 0 && value <= 1)) {
+        this.vadOff("the speech detector stopped answering");
+        return;
+      }
+      if (!this.vadAnswered) {
+        this.vadAnswered = true;
+        this.trace("vad_on", {});
+      }
+      this.aligner.addProbs(probs);
+      for (const { item, prob } of this.aligner.take()) this.process(item, prob);
+      this.sendToDetector();
+    }).catch(error => {
+      this.vadInFlight = false;
+      this.vadOff(messageOf(error, "the speech detector failed"));
+    });
+  }
+
+  /** Frames still waiting for a probability go through on loudness now. */
+  private flushAligned() {
+    for (const captured of this.aligner.drain()) this.process(captured);
+  }
+
+  private vadOff(reason: string) {
+    if (this.vad === "off") return;
+    this.vad = "off";
+    this.vadBatch = [];
+    this.trace("vad_off", { reason });
+    this.flushAligned();
+  }
+
   /** Microphone levels against the live thresholds: the evidence for "why did it (not) pause". */
-  private measure(rms: number, masked: boolean, playing: boolean) {
+  private measure(rms: number, masked: boolean, playing: boolean, speechProb?: number) {
     if (!Number.isFinite(rms)) return;
     const meter = this.meter;
     const levels = this.segments.levels;
@@ -301,13 +392,20 @@ export class VoiceSession {
     meter.peak = Math.max(meter.peak, rms);
     meter.sum += rms;
     if (rms >= levels.continueAt) meter.loud += 1;
+    if (speechProb !== undefined) {
+      meter.probPeak = Math.max(meter.probPeak, speechProb);
+      meter.probSum += speechProb;
+      if (speechProb >= VAD_START) meter.speech += 1;
+    }
     if (meter.frames < (levels.inTurn ? LEVELS_IN_TURN_FRAMES : LEVELS_IDLE_FRAMES)) return;
     this.trace("levels", {
       peak: round(meter.peak), mean: round(meter.sum / meter.frames), loudFrames: meter.loud, frames: meter.frames,
       noise: round(levels.noise), continueAt: round(levels.continueAt), onsetAt: round(levels.onsetAt),
       silenceMs: this.segments.silenceMs, inTurn: levels.inTurn, paused: levels.paused, playing, masked,
+      vad: speechProb !== undefined, speechPeak: round(meter.probPeak), speechMean: round(meter.probSum / meter.frames),
+      speechFrames: meter.speech,
     });
-    this.meter = { frames: 0, peak: 0, sum: 0, loud: 0 };
+    this.meter = { frames: 0, peak: 0, sum: 0, loud: 0, probPeak: 0, probSum: 0, speech: 0 };
   }
 
   private beginSpeech(onsetAt: number) {

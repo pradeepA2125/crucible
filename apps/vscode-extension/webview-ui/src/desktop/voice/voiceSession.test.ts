@@ -629,6 +629,66 @@ describe("desktop voice session", () => {
     voice.session.close();
   });
 
+  /** Answers vad requests like the native detector: one probability per 512 samples sent. */
+  function withDetector(voice: ReturnType<typeof fixture>, probability: () => number | null) {
+    const answer = voice.request.getMockImplementation()!;
+    let sent = 0;
+    voice.request.mockImplementation(command => {
+      if (command.type === "start") return Promise.resolve({ sessionId: "session", vad: true });
+      if (command.type !== "vad") return answer(command);
+      const level = probability();
+      if (level === null) return Promise.resolve({ probs: null });
+      const before = Math.floor(sent / 512);
+      sent += command.pcm.byteLength / 2;
+      return Promise.resolve({ probs: Array.from({ length: Math.floor(sent / 512) - before }, () => level) });
+    });
+  }
+
+  it("with the speech detector running, loud noise never starts a turn", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Use SQLite for the tests");
+    withDetector(voice, () => 0.03);
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    for (let batch = 0; batch < 30; batch += 1) {
+      frames(4, 0.08);
+      await settle();
+    }
+    expect(voice.sent("snapshot")).toHaveLength(0);
+    expect(voice.trace.mock.calls.some(([, event]) => event === "vad_on")).toBe(true);
+    voice.session.close();
+  });
+
+  it("with the speech detector running, quiet speech starts a turn and is decided", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Use SQLite for the tests");
+    let level = 0.9;
+    withDetector(voice, () => level);
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    for (let batch = 0; batch < 6; batch += 1) { frames(4, 0.004); await settle(); }
+    await vi.waitFor(() => expect(voice.sent("snapshot")).toHaveLength(1));
+    level = 0.02;
+    for (let batch = 0; batch < 12; batch += 1) { frames(4, 0.08); await settle(); } // traffic, not speech
+    await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(1));
+    voice.session.close();
+  });
+
+  it("a detector that answers null falls back to loudness for the rest of the session", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Use SQLite for the tests");
+    withDetector(voice, () => null);
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(4, 0);
+    await settle();
+    expect(voice.trace.mock.calls.some(([, event]) => event === "vad_off")).toBe(true);
+    frames(12, 0.03);
+    expect(voice.sent("snapshot")).toHaveLength(1);
+    expect(voice.sent("vad")).toHaveLength(1);
+    voice.session.close();
+  });
+
   it("traffic in a pause never drops the decision: the reply waits for the transcript, then goes ahead", async () => {
     vi.clearAllMocks();
     const voice = fixture("Use SQLite for the tests");
