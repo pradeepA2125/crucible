@@ -8,8 +8,13 @@ interface CaptureOptions {
 }
 
 export class VoiceAudio {
+  /** Microphone capture. Playback has its own context so pausing a reply never stops capture. */
   private readonly context = new AudioContext();
+  private readonly output = new AudioContext();
   private readonly sources = new Set<AudioBufferSourceNode>();
+  /** Each scheduled buffer's loudness, in output time: what the microphone may hear back. */
+  private levels: { start: number; end: number; rms: number }[] = [];
+  private pausedOutput = false;
   private module: Promise<void> | undefined;
   private stream: MediaStream | undefined;
   private microphone: MediaStreamAudioSourceNode | undefined;
@@ -21,7 +26,33 @@ export class VoiceAudio {
   constructor(private readonly onPlaying: (playing: boolean) => void) {}
 
   resume(): Promise<void> {
-    return this.context.resume();
+    return Promise.all([this.context.resume(), this.pausedOutput ? Promise.resolve() : this.output.resume()])
+      .then(() => {});
+  }
+
+  get paused(): boolean {
+    return this.pausedOutput;
+  }
+
+  /** Holds the reply where it is; audio still arriving is queued behind it. */
+  pausePlayback() {
+    if (this.closed || this.pausedOutput) return;
+    this.pausedOutput = true;
+    void this.output.suspend().catch(() => {});
+  }
+
+  resumePlayback() {
+    if (this.closed || !this.pausedOutput) return;
+    this.pausedOutput = false;
+    void this.output.resume().catch(() => {});
+  }
+
+  /** RMS of the reply audio playing right now; 0 when silent or paused. */
+  outputLevel(): number {
+    if (this.pausedOutput || !this.playing) return 0;
+    const now = this.output.currentTime;
+    this.levels = this.levels.filter(level => level.end > now);
+    return this.levels.find(level => level.start <= now)?.rms ?? 0;
   }
 
   get playing() {
@@ -100,24 +131,29 @@ export class VoiceAudio {
     if (this.closed || !(pcm instanceof ArrayBuffer) || pcm.byteLength < 2 || pcm.byteLength % 2
       || !Number.isInteger(sampleRate) || sampleRate < 8_000 || sampleRate > 96_000
       || pcm.byteLength > sampleRate * 20) return;
-    const now = this.context.currentTime;
+    const now = this.output.currentTime;
     if (this.scheduledUntil - now > 120) return;
 
     const bytes = new DataView(pcm);
     const frames = pcm.byteLength / 2;
-    const buffer = this.context.createBuffer(1, frames, sampleRate);
-    const output = buffer.getChannelData(0);
-    for (let frame = 0; frame < frames; frame += 1) output[frame] = bytes.getInt16(frame * 2, true) / 32_768;
+    const buffer = this.output.createBuffer(1, frames, sampleRate);
+    const samples = buffer.getChannelData(0);
+    let energy = 0;
+    for (let frame = 0; frame < frames; frame += 1) {
+      samples[frame] = bytes.getInt16(frame * 2, true) / 32_768;
+      energy += samples[frame] * samples[frame];
+    }
 
-    const source = this.context.createBufferSource();
+    const source = this.output.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.context.destination);
+    source.connect(this.output.destination);
     source.onended = () => {
       source.disconnect();
       if (this.sources.delete(source) && !this.playing) this.onPlaying(false);
     };
     const start = this.scheduledUntil > now ? this.scheduledUntil : now + 0.025;
     source.start(start);
+    this.levels.push({ start, end: start + buffer.duration, rms: Math.sqrt(energy / frames) });
     const wasPlaying = this.playing;
     this.sources.add(source);
     this.scheduledUntil = start + buffer.duration;
@@ -128,17 +164,17 @@ export class VoiceAudio {
    * Not tracked as playback: it must not look like the assistant speaking. */
   cue(): number {
     if (this.closed) return 0;
-    const start = this.context.currentTime + 0.01;
+    const start = this.output.currentTime + 0.01;
     const notes: readonly (readonly [number, number])[] = [[523.25, 0], [659.25, 0.16]];
     for (const [frequency, offset] of notes) {
-      const tone = this.context.createOscillator();
-      const gain = this.context.createGain();
+      const tone = this.output.createOscillator();
+      const gain = this.output.createGain();
       tone.type = "sine";
       tone.frequency.value = frequency;
       gain.gain.setValueAtTime(0, start + offset);
       gain.gain.linearRampToValueAtTime(0.05, start + offset + 0.02);
       gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.18);
-      tone.connect(gain).connect(this.context.destination);
+      tone.connect(gain).connect(this.output.destination);
       tone.onended = () => { tone.disconnect(); gain.disconnect(); };
       tone.start(start + offset);
       tone.stop(start + offset + 0.2);
@@ -149,9 +185,9 @@ export class VoiceAudio {
   stopPlayback() {
     const wasPlaying = this.playing;
     const stoppedAt = performance.now();
-    const output = wasPlaying ? this.context.getOutputTimestamp() : undefined;
-    const estimatedStop = output?.performanceTime && output.contextTime !== undefined
-      ? Math.max(stoppedAt, output.performanceTime + (this.context.currentTime - output.contextTime) * 1_000)
+    const stamp = wasPlaying ? this.output.getOutputTimestamp() : undefined;
+    const estimatedStop = stamp?.performanceTime && stamp.contextTime !== undefined
+      ? Math.max(stoppedAt, stamp.performanceTime + (this.output.currentTime - stamp.contextTime) * 1_000)
       : stoppedAt;
     for (const source of this.sources) {
       source.onended = null;
@@ -160,6 +196,12 @@ export class VoiceAudio {
     }
     this.sources.clear();
     this.scheduledUntil = 0;
+    this.levels = [];
+    // A stopped reply must not leave the next one silent.
+    if (this.pausedOutput) {
+      this.pausedOutput = false;
+      void this.output.resume().catch(() => {});
+    }
     if (wasPlaying) this.onPlaying(false);
     return wasPlaying ? estimatedStop : undefined;
   }
@@ -170,5 +212,6 @@ export class VoiceAudio {
     this.closeMicrophone();
     this.stopPlayback();
     void this.context.close().catch(() => {});
+    void this.output.close().catch(() => {});
   }
 }

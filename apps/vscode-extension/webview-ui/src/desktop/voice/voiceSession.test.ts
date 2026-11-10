@@ -7,6 +7,7 @@ const audio = vi.hoisted(() => ({
   playing: false,
   play: vi.fn(), stopPlayback: vi.fn<() => number | undefined>(), close: vi.fn(), closeMicrophone: vi.fn(),
   setMicrophoneEnabled: vi.fn(), cue: vi.fn(() => 400),
+  pausePlayback: vi.fn(), resumePlayback: vi.fn(), paused: false, outputLevel: vi.fn(() => 0),
   openMicrophone: vi.fn(async (_options: { onFrame(frame: CaptureFrame): void }) => true), resume: vi.fn(async () => {}),
 }));
 
@@ -19,6 +20,10 @@ vi.mock("./voiceAudio", () => ({
     closeMicrophone = audio.closeMicrophone;
     setMicrophoneEnabled = audio.setMicrophoneEnabled;
     cue = audio.cue;
+    pausePlayback = audio.pausePlayback;
+    resumePlayback = audio.resumePlayback;
+    get paused() { return audio.paused; }
+    outputLevel = audio.outputLevel;
     openMicrophone = audio.openMicrophone;
     resume = audio.resume;
   },
