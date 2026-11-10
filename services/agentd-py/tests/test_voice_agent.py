@@ -331,6 +331,24 @@ async def test_decide_logs_model_turn_action_and_latency(
     line = next(r.getMessage() for r in caplog.records if "[voice] decide" in r.getMessage())
     assert "model=main-model" in line and "turn=complete" in line
     assert "action=reply" in line and "ms=" in line
+    assert "silence_ms=700" in line and "final=False" in line
+    assert "heard='use sqlite'" in line and "say='Sure.'" in line
+
+
+@pytest.mark.asyncio
+async def test_decide_log_caps_long_text(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("INFO", logger="agentd.chat.voice_agent")
+    await _on(Scripted(_reply())).decide("t1", _ctx("word " * 200))
+    line = next(r.getMessage() for r in caplog.records if "[voice] decide" in r.getMessage())
+    assert len(line) < 900
+
+
+@pytest.mark.asyncio
+async def test_narrate_logs_what_it_said(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level("INFO", logger="agentd.chat.voice_agent")
+    await _agent(FakeJson(text="Done. Tests pass.")).narrate("t1", "fix it", "Long answer")
+    line = next(r.getMessage() for r in caplog.records if "[voice] narrate" in r.getMessage())
+    assert "said='Done. Tests pass.'" in line and "ms=" in line
 
 
 @pytest.mark.asyncio

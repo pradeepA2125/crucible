@@ -10,6 +10,7 @@ import { VoiceAssets, type VoiceModel } from "./assets.js";
 import type { VoiceRequest } from "./protocol.js";
 import { firstSentences, speakable } from "./speakable.js";
 import { Recognizer, Synthesizer } from "./workers.js";
+import type { DiagnosticSource, DiagnosticValue } from "./diagnostics.js";
 
 export interface VoiceSnapshot {
   active: boolean;
@@ -70,6 +71,7 @@ type Options = {
   architecture: string;
   thread(id: string): Promise<VoiceThread>;
   publish(event: Record<string, unknown>): void;
+  diagnostics?: { write(source: DiagnosticSource, event: string, data: Record<string, DiagnosticValue>): void };
 };
 
 const unavailable = "Local voice is available on Apple Silicon builds with the speech helpers included.";
@@ -136,6 +138,7 @@ export class VoiceHost {
       case "submit": return this.submit(session, request.utteranceId, request.text, request.intent);
       case "decide": return this.decide(session, request.utteranceId, request.text, request.silenceMs, request.finalCall);
       case "commit": return this.commit(session, request.utteranceId, request.decisionId);
+      case "trace": this.trace("app", request.event, request.data); return {};
     }
   }
 
@@ -284,17 +287,21 @@ export class VoiceHost {
     this.requireSession(session.id);
     if (!snapshot.processId) throw new Error("The runtime could not identify this conversation. Wait for it to reconnect.");
     let decision: VoiceDecision;
+    const started = performance.now();
+    const asked = { utteranceId: id, text, silenceMs, finalCall };
     try {
       decision = await session.thread.decide({ utterance: text, silenceMs, finalCall, expectedProcessId: snapshot.processId },
         AbortSignal.any([session.signal.signal, AbortSignal.timeout(15_000)]));
     } catch (error) {
       const refused = refusalOf(error);
-      if (refused) {
-        const message = refusalMessage(error);
-        return message ? { refused, message } : { refused };
-      }
+      const message = refused ? refusalMessage(error) : undefined;
+      this.trace("host", "decide", { ...asked, ms: Math.round(performance.now() - started),
+        refused: refused ?? null, reason: message ?? (error instanceof Error ? error.message : null) });
+      if (refused) return message ? { refused, message } : { refused };
       throw error;
     }
+    this.trace("host", "decide", { ...asked, ms: Math.round(performance.now() - started), decisionId: decision.decisionId,
+      turn: decision.turn, action: decision.action, say: decision.say, request: decision.request });
     this.requireSession(session.id);
     entry.decisions.set(decision.decisionId, decision);
     const { decisionId, turn, action, say, request } = decision;
@@ -314,6 +321,8 @@ export class VoiceHost {
       result = await session.thread.commit(decisionId, processId, AbortSignal.any([session.signal.signal, AbortSignal.timeout(10_000)]));
     } catch (error) {
       const refused = refusalOf(error);
+      this.trace("host", "commit", { utteranceId: id, decisionId, refused: refused ?? null,
+        reason: error instanceof Error ? error.message : null });
       if (refused === "turn_active" || refused === "turn_not_active") {
         // Nothing happened: the renderer may decide again for the turn as it is now.
         entry.submitted = false;
@@ -324,6 +333,7 @@ export class VoiceHost {
     }
     this.requireSession(session.id);
     entry.decisions.delete(decisionId);
+    this.trace("host", "commit", { utteranceId: id, decisionId, action: result.action });
     if (result.action === "listen") {
       entry.submitted = false;
       return { action: result.action };
@@ -369,7 +379,10 @@ export class VoiceHost {
     if (!answer || !this.currentReply(session, reply)) return;
     void session.thread.narrate(reply.heard, answer, reply.processId,
       AbortSignal.any([reply.cancel.signal, AbortSignal.timeout(20_000)]))
-      .catch(() => `${firstSentences(speakable(answer), 2)} The rest is on screen.`)
+      .catch(error => {
+        this.trace("host", "narrate", { fallback: true, reason: error instanceof Error ? error.message : null });
+        return `${firstSentences(speakable(answer), 2)} The rest is on screen.`;
+      })
       .then(say => { if (this.currentReply(session, reply)) this.speak(session, reply, say); });
   }
 
@@ -428,13 +441,26 @@ export class VoiceHost {
     reply.spoken += text.length;
     reply.output = reply.output.then(async () => {
       if (!this.currentReply(session, reply)) return;
+      const started = performance.now();
       await session.synthesizer.speak(text, (pcm, sampleRate) => {
         if (this.currentReply(session, reply)) this.options.publish({ type: "audio", sessionId: session.id,
           utteranceId: reply.utteranceId, replyId: reply.id, pcm, sampleRate });
       }, reply.cancel.signal);
-    }).catch(() => {
+      this.trace("host", "speak", { utteranceId: reply.utteranceId, chars: text.length, text,
+        ms: Math.round(performance.now() - started) });
+    }).catch(error => {
+      this.trace("host", "speak", { utteranceId: reply.utteranceId, chars: text.length, text,
+        failed: error instanceof Error ? error.message : true });
       if (this.currentReply(session, reply)) this.error(session, "The reply is available in text. The local voice could not read it.");
     });
+  }
+
+  private trace(source: DiagnosticSource, event: string, data: Record<string, DiagnosticValue>): void {
+    try {
+      this.options.diagnostics?.write(source, event, data);
+    } catch {
+      // Diagnostics never affect the voice session.
+    }
   }
 
   private currentReply(session: Session, reply: Reply): boolean {

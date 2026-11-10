@@ -45,8 +45,9 @@ function fixture(transcript = "Use SQLite", decision: Decision = REPLY) {
   const callbacks = {
     state: vi.fn(), utterance: vi.fn(), reply: vi.fn(), receipt: vi.fn(), error: vi.fn(), ended: vi.fn(),
   };
+  const trace = vi.fn<(sessionId: string, event: string, data: Record<string, unknown>) => void>();
   return {
-    request, unsubscribe, callbacks, session: new VoiceSession(bridge, callbacks),
+    request, unsubscribe, callbacks, trace, session: new VoiceSession(bridge, callbacks, trace),
     emit(event: VoiceEvent) { subscriber?.(event); },
     decide(next: Decision) { current.decision = next; },
     sent: (type: VoiceCommand["type"]) => request.mock.calls.map(([command]) => command).filter(command => command.type === type),
@@ -588,6 +589,33 @@ describe("desktop voice session", () => {
     expect(voice.sent("decide")).toEqual([expect.objectContaining({
       text: "First I want the timer gone and then the narration fixed." })]);
     expect(voice.request.mock.calls.filter(([command]) => command.type === "snapshot")).toHaveLength(1);
+    voice.session.close();
+  });
+
+  it("traces levels, the pause, the decision and the resumed speech with the level that resumed it", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Use SQLite for the tests");
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(12, 0.03);
+    frames(28, 0);
+    await vi.waitFor(() => expect(voice.sent("decide")).toHaveLength(1));
+    await settle();
+    frames(1, 0.02);
+    frames(10, 0);
+    const events = voice.trace.mock.calls.map(([sessionId, event, data]) => ({ sessionId, event, data }));
+    const named = (name: string) => events.filter(entry => entry.event === name);
+    expect(events.every(entry => entry.sessionId === "session")).toBe(true);
+    expect(named("onset")).toHaveLength(1);
+    expect(named("pause")[0].data).toMatchObject({ silenceMs: 560 });
+    expect(named("transcript")[0].data).toMatchObject({ final: true, text: "Use SQLite for the tests" });
+    expect(named("decide")[0].data).toMatchObject({ text: "Use SQLite for the tests", finalCall: false });
+    expect(named("decision")[0].data).toMatchObject({ action: "reply", turn: "complete", ms: expect.any(Number) });
+    expect(named("resume")[0].data).toMatchObject({
+      quietMs: expect.any(Number), rms: 0.02, threshold: expect.any(Number), droppedDecision: true });
+    expect(named("levels")[0].data).toMatchObject({
+      peak: expect.any(Number), mean: expect.any(Number), noise: expect.any(Number), loudFrames: expect.any(Number),
+      continueAt: expect.any(Number), silenceMs: expect.any(Number), inTurn: true });
     voice.session.close();
   });
 

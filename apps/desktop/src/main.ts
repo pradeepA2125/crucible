@@ -20,6 +20,7 @@ import { join, dirname, basename, isAbsolute, relative } from "node:path";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { APP_ORIGIN, CHANNEL, parseEnvelope, type BridgeContext } from "./contract.js";
+import { VoiceDiagnostics } from "./voice/diagnostics.js";
 import { VoiceHost } from "./voice/host.js";
 import { VOICE_EVENT, VOICE_REQUEST, voiceRequest } from "./voice/protocol.js";
 import { assertSender, externalURL, containedPath } from "./security.js";
@@ -577,7 +578,10 @@ else {
       await meta.update("desktop.legacyCredentialCandidate",candidate);
     }
     registry=new ProjectRegistry(join(app.getPath("userData"),"projects.json"),meta.get<string>("lastProject"));
+    const voiceDiagnostics = join(app.getPath("userData"), "voice", "diagnostics.jsonl");
+    console.info("[voice] diagnostics:", voiceDiagnostics);
     voice = new VoiceHost({
+      diagnostics: new VoiceDiagnostics(voiceDiagnostics),
       profile: app.getPath("userData"),
       helpers: join(__dirname, "voice-native"),
       platform: process.platform,

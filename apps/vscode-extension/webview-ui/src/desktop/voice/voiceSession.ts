@@ -82,6 +82,14 @@ const SLOW_DECISION_MS = 1_200;
 // The cue's own sound must not count as the user speaking again (one loud frame resumes speech).
 const CUE_MASK_TAIL_MS = 200;
 
+export type VoiceTraceValue = string | number | boolean | null;
+/** Where diagnostics go (the desktop host's local log). Never affects the session. */
+export type VoiceTrace = (sessionId: string, event: string, data: Record<string, VoiceTraceValue>) => void;
+
+const LEVELS_IN_TURN_FRAMES = 50; // one line per second while a turn is open
+const LEVELS_IDLE_FRAMES = 250; // one per five seconds otherwise
+const round = (value: number) => Math.round(value * 10_000) / 10_000;
+
 function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
@@ -117,8 +125,12 @@ export class VoiceSession {
   private readonly resumedPauses: number[] = [];
   private answerExpectedUntil = -Infinity;
   private cueMaskUntil = -Infinity;
+  private lastRms = 0;
+  private lastPartialTraced = "";
+  private meter = { frames: 0, peak: 0, sum: 0, loud: 0 };
 
-  constructor(private readonly bridge: VoiceBridge, private readonly events: VoiceSessionCallbacks) {
+  constructor(private readonly bridge: VoiceBridge, private readonly events: VoiceSessionCallbacks,
+    private readonly traceSink?: VoiceTrace) {
     this.audio = new VoiceAudio(speaking => {
       if (!speaking) this.lastPlaybackAt = performance.now();
       if (!this.closed) events.state({ speaking });
@@ -164,6 +176,8 @@ export class VoiceSession {
           if (!this.isCaptureCurrent(generation) || (this.pushToTalk && !this.holding)) return;
           const playing = this.audio.playing;
           const cueSounding = performance.now() < this.cueMaskUntil;
+          this.lastRms = frame.rms;
+          this.measure(frame.rms, cueSounding, playing);
           this.segments.accept(cueSounding ? { ...frame, rms: 0 } : frame, playing, !this.partialInFlight && (this.pending === 0 || playing), this.pushToTalk,
             !playing && performance.now() - this.lastPlaybackAt > playbackTailMs);
           this.commitWhenQuietEnough();
@@ -254,6 +268,34 @@ export class VoiceSession {
     return snapshot;
   }
 
+  private trace(event: string, data: Record<string, VoiceTraceValue> = {}) {
+    const sessionId = this.sessionId;
+    if (!sessionId || !this.traceSink || this.closed) return;
+    try {
+      this.traceSink(sessionId, event, data);
+    } catch {
+      // Diagnostics never affect the voice session.
+    }
+  }
+
+  /** Microphone levels against the live thresholds: the evidence for "why did it (not) pause". */
+  private measure(rms: number, masked: boolean, playing: boolean) {
+    if (!Number.isFinite(rms)) return;
+    const meter = this.meter;
+    const levels = this.segments.levels;
+    meter.frames += 1;
+    meter.peak = Math.max(meter.peak, rms);
+    meter.sum += rms;
+    if (rms >= levels.continueAt) meter.loud += 1;
+    if (meter.frames < (levels.inTurn ? LEVELS_IN_TURN_FRAMES : LEVELS_IDLE_FRAMES)) return;
+    this.trace("levels", {
+      peak: round(meter.peak), mean: round(meter.sum / meter.frames), loudFrames: meter.loud, frames: meter.frames,
+      noise: round(levels.noise), continueAt: round(levels.continueAt), onsetAt: round(levels.onsetAt),
+      silenceMs: this.segments.silenceMs, inTurn: levels.inTurn, paused: levels.paused, playing, masked,
+    });
+    this.meter = { frames: 0, peak: 0, sum: 0, loud: 0 };
+  }
+
   private beginSpeech(onsetAt: number) {
     const sessionId = this.sessionId;
     if (!sessionId || this.closed) return;
@@ -261,6 +303,7 @@ export class VoiceSession {
     const playback = this.audio.playing || onsetAt - this.lastPlaybackAt <= playbackTailMs ? this.playbackText : undefined;
     const playbackTarget = playback === undefined ? undefined : this.outputTarget;
     this.latestInput = id;
+    this.trace("onset", { utteranceId: id, overPlayback: playback !== undefined, rms: round(this.lastRms) });
     this.spoken = {
       id, captureGeneration: this.captureGeneration, snapshot: this.snapshot(sessionId, id),
       playback, playbackTarget, onsetAt, revision: 0, committed: [],
@@ -297,6 +340,10 @@ export class VoiceSession {
           this.stopCapturedPlayback(turn);
         }
         if (turn.playback === undefined || spokenWordCount(partial)) turn.partialText = partial;
+        if (partial !== this.lastPartialTraced) {
+          this.lastPartialTraced = partial;
+          this.trace("transcript", { utteranceId: turn.id, final: false, text: partial.slice(0, 1000) });
+        }
         if (turn.deciding === undefined && !turn.decision) this.events.state({ partial });
       }
     }).catch(() => {
@@ -314,12 +361,15 @@ export class VoiceSession {
     if (!turn || !sessionId) return;
     const revision = turn.revision;
     const current = () => this.spoken === turn && turn.revision === revision && this.isCaptureCurrent(turn.captureGeneration);
+    this.trace("pause", { utteranceId: turn.id, silenceMs: this.segments.silenceMs, cleanSpeechMs, revision });
     turn.decodingPause = revision;
     this.events.state({ checking: true });
     void this.decode(sessionId, turn, pcm, true, current).then(result => {
+      const heard = typeof result?.text === "string" ? result.text : "";
+      this.trace("transcript", { utteranceId: turn.id, final: true, text: heard.slice(0, 1000), stale: !current(),
+        revision });
       if (!current()) return;
       turn.decodingPause = undefined;
-      const heard = typeof result?.text === "string" ? result.text : "";
       if (this.consumePlaybackControl(turn, heard)) {
         this.clearCapture();
         return;
@@ -364,6 +414,9 @@ export class VoiceSession {
     const current = () => this.spoken === turn && turn.revision === revision && this.isCaptureCurrent(turn.captureGeneration);
     turn.deciding = revision;
     turn.finalWanted = false;
+    const asked = performance.now();
+    this.trace("decide", { utteranceId: turn.id, text: text.slice(0, 1000), finalCall,
+      silenceMs: this.segments.silenceMs, revision });
     this.events.state({ checking: false, deciding: true });
     this.watchSlowDecision(turn, revision);
     const settled = () => {
@@ -373,9 +426,14 @@ export class VoiceSession {
     void voiceRequest(this.bridge, {
       type: "decide", sessionId, utteranceId: turn.id, text, silenceMs: this.segments.silenceMs, finalCall,
     }).then(result => {
+      const decision = decisionOf(result);
+      this.trace("decision", {
+        utteranceId: turn.id, ms: Math.round(performance.now() - asked), stale: !current(), revision, finalCall,
+        action: decision?.action ?? null, turn: decision?.turn ?? null, say: decision?.say ?? null,
+        refused: refusalOf(result) ?? null, reason: refusalMessageOf(result) ?? null,
+      });
       if (!current()) return;
       settled();
-      const decision = decisionOf(result);
       if (refusalOf(result) || !decision) {
         this.decisionFailed(turn, text, finalCall, refusalMessageOf(result));
         return;
@@ -390,6 +448,8 @@ export class VoiceSession {
       if (finalCall) this.commitDecision(turn);
       else this.commitWhenQuietEnough();
     }).catch(error => {
+      this.trace("decision", { utteranceId: turn.id, ms: Math.round(performance.now() - asked), stale: !current(),
+        revision, finalCall, failed: messageOf(error, "unknown") });
       if (!current()) return;
       settled();
       this.decisionFailed(turn, text, finalCall, messageOf(error, ""));
@@ -400,6 +460,7 @@ export class VoiceSession {
     setTimeout(() => {
       if (this.closed || this.spoken !== turn || turn.deciding !== revision) return;
       this.events.state({ slowDecision: true });
+      this.trace("cue", { utteranceId: turn.id, playing: this.audio.playing });
       // Never over the assistant's own speech: that already says something is happening.
       if (this.audio.playing) return;
       this.cueMaskUntil = performance.now() + this.audio.cue() + CUE_MASK_TAIL_MS;
@@ -409,6 +470,7 @@ export class VoiceSession {
   /** A slow or failed decision is not a reason to drop the user's words: keep listening, and
    * let the wait limit ask once more. Only a failed final question falls back to review. */
   private decisionFailed(turn: SpokenTurn, text: string, finalCall: boolean, reason: string | undefined) {
+    this.trace("decision_failed", { utteranceId: turn.id, finalCall, reason: reason ?? null });
     if (!finalCall) {
       this.events.state({ waiting: true });
       if (turn.finalWanted) this.requestDecision(turn, true);
@@ -426,7 +488,11 @@ export class VoiceSession {
     const decision = turn?.decision;
     if (!turn || !decision || decision.revision !== turn.revision) return;
     const required = commitFloorMs(this.resumedPauses) + (waitsForMore(decision) ? DISPATCH_HOLD_MS : 0);
-    if (this.segments.silenceMs >= required) this.commitDecision(turn);
+    if (this.segments.silenceMs >= required) {
+      this.trace("act", { utteranceId: turn.id, action: decision.action, requiredMs: required,
+        silenceMs: this.segments.silenceMs });
+      this.commitDecision(turn);
+    }
   }
 
   private resumeSpeech(silenceMs: number) {
@@ -435,6 +501,11 @@ export class VoiceSession {
       if (this.resumedPauses.length > 50) this.resumedPauses.shift();
     }
     const turn = this.spoken;
+    this.trace("resume", {
+      utteranceId: turn?.id ?? null, quietMs: silenceMs, rms: round(this.lastRms),
+      threshold: round(this.segments.levels.continueAt),
+      droppedDecision: !!turn && (turn.decision !== undefined || turn.deciding !== undefined),
+    });
     if (turn) {
       turn.revision += 1;
       turn.decision = undefined;
@@ -451,6 +522,8 @@ export class VoiceSession {
 
   private reachWaitLimit() {
     const turn = this.spoken;
+    this.trace("wait_limit", { utteranceId: turn?.id ?? null, hasText: !!turn?.text,
+      deciding: turn?.deciding !== undefined });
     if (!turn || turn.decision) return;
     // Still transcribing or deciding: that result asks the final question when it lands.
     if (turn.decodingPause === turn.revision || turn.deciding !== undefined) {
@@ -475,6 +548,7 @@ export class VoiceSession {
   private rollOver(pcm: ArrayBuffer) {
     const turn = this.spoken;
     const sessionId = this.sessionId;
+    this.trace("rollover", { utteranceId: turn?.id ?? null });
     if (!turn || !sessionId) return;
     // Survives resumed speech and an explicit send that clears the turn before this lands:
     // this audio is final whatever happens next, and a later finish reads `committed`.

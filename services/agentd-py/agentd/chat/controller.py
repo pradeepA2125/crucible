@@ -765,6 +765,8 @@ class ChatController:
         if entry is None or entry.thread_id != thread_id:
             raise ConversationError(404, {"code": "decision_unknown"})
         del self._voice_pending[decision_id]
+        logger.info("[voice] commit decision=%s action=%s turn_running=%s", decision_id,
+                    entry.action, thread_id in self._active_turns)
         if entry.action == "listen":
             return {"action": "listen"}
         if entry.action == "steer":

@@ -24,5 +24,10 @@ export const voiceRequest = z.discriminatedUnion("type", [
   z.object({ type: z.literal("decide"), ...utterance, text: z.string().trim().min(1).max(4000),
     silenceMs: z.number().int().min(0).max(600_000), finalCall: z.boolean() }).strict(),
   z.object({ type: z.literal("commit"), ...utterance, decisionId: id }).strict(),
+  // Diagnostics from the renderer's speech detection: small, flat, local-only.
+  z.object({ type: z.literal("trace"), ...session, event: z.string().regex(/^[a-z_]{1,32}$/),
+    data: z.record(z.string().regex(/^[a-zA-Z]{1,32}$/),
+      z.union([z.number().finite(), z.boolean(), z.string().max(1000), z.null()]))
+      .refine(data => Object.keys(data).length <= 24, "Too many trace fields.") }).strict(),
 ]);
 export type VoiceRequest = z.infer<typeof voiceRequest>;

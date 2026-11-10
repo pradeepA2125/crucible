@@ -123,6 +123,9 @@ export function VoicePanel({ bridge, threadId, id }: Props) {
           setState(INITIAL_VOICE_STATE);
           if (reason) setError(reason);
         },
+      }, (sessionId, event, data) => {
+        // Local diagnostics file only; a failed write is never the user's problem.
+        void bridge.request({ type: "trace", sessionId, event, data }).catch(() => {});
       });
       session.current = next;
       next.setPushToTalk(pushToTalk);

@@ -57,14 +57,16 @@ async function fixture(first: VoiceSnapshot) {
     decide, commit, narrate,
   };
   const events: Record<string, unknown>[] = [];
+  const traces: { source: string; event: string; data: Record<string, unknown> }[] = [];
   const host = new VoiceHost({
     profile: path, helpers: path, platform: "darwin", architecture: "arm64",
     thread: async () => thread, publish: event => events.push(event),
+    diagnostics: { write: (source, event, data) => traces.push({ source, event, data }) },
   });
   sessions.push(host);
   const { sessionId } = await host.request({ type: "start", threadId: "thread",
     stt: "whisper-small", tts: "system" }) as { sessionId: string };
-  return { host, sessionId, submit, sendIdle, decide, commit, narrate, events,
+  return { host, sessionId, submit, sendIdle, decide, commit, narrate, events, traces,
     setSnapshot: (value: VoiceSnapshot) => { snapshot = value; } };
 }
 
@@ -152,6 +154,34 @@ describe("desktop voice front-man", () => {
     await host.request({ type: "snapshot", sessionId, utteranceId: "u1" });
     expect(await host.request({ type: "decide", sessionId, utteranceId: "u1", text: "hello", silenceMs: 700,
       finalCall: false })).toEqual({ refused: "voice_agent_unavailable", message: "Connect again in Crucible settings." });
+  });
+
+  it("records what the app traced, and the decide and commit it carried out", async () => {
+    mocks.speak.mockResolvedValue(undefined);
+    const { host, sessionId, traces } = await fixture(idle);
+    await host.request({ type: "trace", sessionId, event: "resume", data: { quietMs: 620, rms: 0.006 } });
+    await host.request({ type: "snapshot", sessionId, utteranceId: "u1" });
+    await host.request({ type: "decide", sessionId, utteranceId: "u1", text: "how is it going", silenceMs: 700,
+      finalCall: false });
+    await host.request({ type: "commit", sessionId, utteranceId: "u1", decisionId: "d1" });
+    expect(traces[0]).toEqual({ source: "app", event: "resume", data: { quietMs: 620, rms: 0.006 } });
+    expect(traces.find(trace => trace.event === "decide")).toMatchObject({ source: "host", data: {
+      utteranceId: "u1", text: "how is it going", silenceMs: 700, finalCall: false, turn: "complete",
+      action: "reply", say: "It's going well.", ms: expect.any(Number) } });
+    expect(traces.find(trace => trace.event === "commit")).toMatchObject({ source: "host", data: {
+      utteranceId: "u1", decisionId: "d1", action: "reply" } });
+    await vi.waitFor(() => expect(traces.find(trace => trace.event === "speak")).toMatchObject({
+      source: "host", data: { chars: expect.any(Number), ms: expect.any(Number) } }));
+  });
+
+  it("records a refused decision with its reason", async () => {
+    const { host, sessionId, decide, traces } = await fixture(idle);
+    decide.mockRejectedValueOnce(Object.assign(new Error("x"), {
+      status: 503, detail: { code: "voice_agent_unavailable", message: "timed out" } }));
+    await host.request({ type: "snapshot", sessionId, utteranceId: "u1" });
+    await host.request({ type: "decide", sessionId, utteranceId: "u1", text: "hello", silenceMs: 700, finalCall: true });
+    expect(traces.find(trace => trace.event === "decide")).toMatchObject({ data: {
+      refused: "voice_agent_unavailable", reason: "timed out", finalCall: true } });
   });
 
   it("commit reply speaks say once through speakable", async () => {

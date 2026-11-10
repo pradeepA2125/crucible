@@ -53,6 +53,17 @@ export class SpeechSegments {
 
   constructor(private readonly callbacks: SpeechCallbacks) {}
 
+  /** The thresholds speech detection is using right now, for diagnostics. */
+  get levels() {
+    return {
+      noise: this.noise,
+      continueAt: Math.max(0.005, this.noise * 2),
+      onsetAt: Math.max(0.008, this.noise * 3.5),
+      paused: this.paused,
+      inTurn: this.utterance.length > 0 || this.rolled,
+    };
+  }
+
   /** Quiet since the last speech in the current turn; 0 outside a turn. */
   get silenceMs(): number {
     return this.utterance.length || this.rolled ? this.silence * FRAME_MS : 0;

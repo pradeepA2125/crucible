@@ -169,6 +169,14 @@ def _normalize(raw: dict[str, object], ctx: VoiceContext) -> VoiceDecision:
     return VoiceDecision(turn=str(turn), action=action, say=say, request=request)
 
 
+_LOG_TEXT_CHARS = 240
+
+
+def _clip(text: str) -> str:
+    """Spoken text in the local log, short enough that one line stays readable."""
+    return text if len(text) <= _LOG_TEXT_CHARS else text[:_LOG_TEXT_CHARS - 1] + "…"
+
+
 def _abort_retry(*_args: object) -> None:
     # A transient error ends the call: the renderer decides again at the next pause, which
     # is sooner than a backoff, and a retry would spend the whole decide budget.
@@ -271,8 +279,11 @@ class VoiceAgent:
             logger.warning("[voice] decide timed out after %.1fs", timeout)
             raise VoiceAgentUnavailable(
                 f"the voice model did not answer in {timeout:g}s") from exc
-        logger.info("[voice] decide model=%s turn=%s action=%s ms=%d", model, decision.turn,
-                    decision.action, (time.monotonic() - started) * 1000)
+        logger.info(
+            "[voice] decide model=%s turn=%s action=%s ms=%d silence_ms=%d final=%s heard=%r "
+            "say=%r request=%r", model, decision.turn, decision.action,
+            (time.monotonic() - started) * 1000, ctx.silence_ms, ctx.final_call,
+            _clip(ctx.utterance), _clip(decision.say), _clip(decision.request))
         return decision
 
     async def _decide(self, thread_id: str, ctx: VoiceContext) -> tuple[VoiceDecision, str]:
@@ -297,6 +308,7 @@ class VoiceAgent:
 
     async def narrate(self, thread_id: str, heard: str, answer: str) -> str:
         timeout = _timeout("CRUCIBLE_VOICE_NARRATE_TIMEOUT_SEC", 15.0)
+        started = time.monotonic()
         try:
             raw, _ = await asyncio.wait_for(self._call(
                 thread_id, "generate_text", system_instructions=_NARRATE_SYSTEM,
@@ -309,4 +321,6 @@ class VoiceAgent:
         spoken = raw.strip() if isinstance(raw, str) else ""
         if not spoken:
             raise VoiceAgentUnavailable("the voice model returned nothing to say")
+        logger.info("[voice] narrate ms=%d answer_chars=%d said=%r",
+                    (time.monotonic() - started) * 1000, len(answer), _clip(spoken))
         return spoken
