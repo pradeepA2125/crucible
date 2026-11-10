@@ -152,6 +152,7 @@ export class VoiceSession {
   private readonly resumedPauses: number[] = [];
   private answerExpectedUntil = -Infinity;
   private cueMaskUntil = -Infinity;
+  private playbackStartedAt = 0;
   private lastRms = 0;
   private lastPartialTraced = "";
   private meter = { frames: 0, peak: 0, sum: 0, loud: 0, probPeak: 0, probSum: 0, speech: 0 };
@@ -168,7 +169,11 @@ export class VoiceSession {
   constructor(private readonly bridge: VoiceBridge, private readonly events: VoiceSessionCallbacks,
     private readonly traceSink?: VoiceTrace) {
     this.audio = new VoiceAudio(speaking => {
-      if (!speaking) this.lastPlaybackAt = performance.now();
+      const now = performance.now();
+      if (speaking) this.playbackStartedAt = now;
+      else this.lastPlaybackAt = now;
+      this.trace("playback", { playing: speaking,
+        ms: speaking ? 0 : Math.round(now - this.playbackStartedAt) });
       if (!this.closed) events.state({ speaking });
     });
     this.segments = new SpeechSegments({
@@ -293,7 +298,7 @@ export class VoiceSession {
 
   stopSpeaking() {
     if (!this.sessionId || this.closed) return;
-    void this.interrupt(this.sessionId, performance.now()).catch(error => {
+    void this.interrupt(this.sessionId, "stop_button", performance.now()).catch(error => {
       if (!this.closed) this.events.error(messageOf(error, "Could not stop the spoken reply."));
     });
   }
@@ -302,9 +307,11 @@ export class VoiceSession {
     return !this.closed && this.captureGeneration === generation;
   }
 
-  private interrupt(sessionId: string, startedAt = performance.now()) {
+  private interrupt(sessionId: string, reason: string, startedAt = performance.now()) {
     this.outputTarget = undefined;
+    const wasPlaying = this.audio.playing;
     const stoppedAt = this.audio.stopPlayback();
+    this.trace("interrupt", { reason, wasPlaying: wasPlaying || stoppedAt !== undefined });
     if (stoppedAt !== undefined) {
       this.events.state({ playbackStopMs: Math.round(Math.max(0, stoppedAt - startedAt)) });
     }
@@ -849,7 +856,7 @@ export class VoiceSession {
   private stopCapturedPlayback(turn: SpokenTurn) {
     const sessionId = this.sessionId;
     if (!sessionId || this.latestInput !== turn.id || !turn.playbackTarget || this.outputTarget !== turn.playbackTarget) return;
-    void this.interrupt(sessionId, turn.onsetAt).catch(() => {});
+    void this.interrupt(sessionId, "spoke_over_reply", turn.onsetAt).catch(() => {});
   }
 
   private finishSpeech(pcm: ArrayBuffer) {
@@ -877,7 +884,7 @@ export class VoiceSession {
     if (!sessionId || this.closed) return Promise.reject(new Error("Start a voice session before sending."));
     const id = crypto.randomUUID();
     this.latestInput = id;
-    void this.interrupt(sessionId).catch(() => {});
+    void this.interrupt(sessionId, "typed_message").catch(() => {});
     const snapshot = this.snapshot(sessionId, id);
     return this.enqueue(async () => {
       if (this.closed) return;
@@ -900,7 +907,10 @@ export class VoiceSession {
   /** The newest input owns the speaker: stop older playback and route this reply's audio. */
   private prepareOutput(utteranceId: string) {
     if (this.latestInput !== utteranceId) return;
-    if (this.audio.playing) this.audio.stopPlayback();
+    if (this.audio.playing) {
+      this.trace("interrupt", { reason: "new_reply", wasPlaying: true });
+      this.audio.stopPlayback();
+    }
     this.outputTarget = utteranceId;
     this.playbackText = "";
     this.lastPlaybackAt = -Infinity;

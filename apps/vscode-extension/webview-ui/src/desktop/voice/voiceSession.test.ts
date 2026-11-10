@@ -644,6 +644,19 @@ describe("desktop voice session", () => {
     });
   }
 
+  it("traces why playback stopped", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Use SQLite.");
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    audio.stopPlayback.mockReturnValueOnce(performance.now());
+    voice.session.stopSpeaking();
+    await settle();
+    const interrupts = voice.trace.mock.calls.filter(([, event]) => event === "interrupt");
+    expect(interrupts[0]?.[2]).toMatchObject({ reason: "stop_button", wasPlaying: true });
+    voice.session.close();
+  });
+
   it("with the speech detector running, loud noise never starts a turn", async () => {
     vi.clearAllMocks();
     const voice = fixture("Use SQLite for the tests");
