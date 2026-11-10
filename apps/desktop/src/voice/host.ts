@@ -33,7 +33,9 @@ type IdleHooks = { chunk(text: string): void; finish(): void; recover(): void };
 type Identity = { sessionId: string; utteranceId: string };
 type Utterance = { snapshot?: Promise<VoiceSnapshot>; submitted: boolean; decisions: Map<string, VoiceDecision> };
 type Reply = { id: string; utteranceId: string; cancel: AbortController; text: string;
-  spoken: number; output: Promise<void>; heard: string; processId: string };
+  spoken: number; output: Promise<void>; heard: string; processId: string;
+  /** Stops what this reply is saying without ending it (a running task outlives its speech). */
+  speech: AbortController };
 type Refusal = "turn_active" | "turn_not_active" | "voice_agent_unavailable";
 
 /** The backend's structured refusal code on an editor-client error, if any. */
@@ -64,6 +66,9 @@ type Session = {
   utterances: Map<string, Utterance>;
   receipts: number;
   reply: Reply | undefined;
+  /** The voice-started task still running: its answer streams in and is narrated at the end,
+   *  whatever is said in between (a status question used to cancel its narration). */
+  task: Reply | undefined;
 };
 
 type Options = {
@@ -208,7 +213,7 @@ export class VoiceHost {
       const detector = await this.startDetector(abort.signal);
       const sessionId = randomUUID();
       this.session = { id: sessionId, thread, signal: abort, model, tts, recognizer, synthesizer, detector,
-        utterances: new Map(), receipts: 0, reply: undefined };
+        utterances: new Map(), receipts: 0, reply: undefined, task: undefined };
       return { sessionId, vad: detector !== undefined };
     } catch (error) {
       await Promise.all([recognizer?.close(), synthesizer?.close()]);
@@ -389,6 +394,8 @@ export class VoiceHost {
         break;
       }
       case "start_task":
+        if (session.task && session.task !== reply) session.task.cancel.abort();
+        session.task = reply;
         // The acknowledgement is spoken only; the panel shows the agent's own answer.
         this.speak(session, reply, decision.say);
         this.startIdle(session, reply, result.message, result.voiceRequest);
@@ -398,7 +405,10 @@ export class VoiceHost {
   }
 
   private startIdle(session: Session, reply: Reply, text: string, voiceRequest: string | undefined): void {
-    const failed = () => this.error(session, "The spoken message could not be sent. Review its transcript and try again.");
+    const failed = () => {
+      if (session.task === reply) session.task = undefined;
+      this.error(session, "The spoken message could not be sent. Review its transcript and try again.");
+    };
     void session.thread.sendIdle(text, voiceRequest, {
       chunk: chunk => this.append(session, reply, chunk, false),
       finish: () => this.finishIdle(session, reply),
@@ -411,6 +421,14 @@ export class VoiceHost {
     this.append(session, reply, "", true);
     const answer = reply.text.trim();
     if (!answer || !this.currentReply(session, reply)) return;
+    // The task's reply takes the speaker back from any status reply, and is no longer
+    // protected: interrupting the narration now cancels it.
+    if (session.task === reply) session.task = undefined;
+    if (session.reply !== reply) {
+      this.interrupt(session);
+      session.reply = reply;
+    }
+    this.options.publish({ type: "narrating", sessionId: session.id, utteranceId: reply.utteranceId });
     void session.thread.narrate(reply.heard, answer, reply.processId,
       AbortSignal.any([reply.cancel.signal, AbortSignal.timeout(20_000)]))
       .catch(error => {
@@ -451,14 +469,22 @@ export class VoiceHost {
   private newReply(session: Session, id: string, heard: string, processId: string): Reply {
     this.interrupt(session);
     const reply = { id: randomUUID(), utteranceId: id, cancel: new AbortController(), text: "",
-      spoken: 0, output: Promise.resolve(), heard, processId };
+      spoken: 0, output: Promise.resolve(), heard, processId, speech: new AbortController() };
     session.reply = reply;
     return reply;
   }
 
   private interrupt(session: Session): void {
-    session.reply?.cancel.abort();
+    const reply = session.reply;
     session.reply = undefined;
+    if (!reply) return;
+    if (reply === session.task) {
+      // Only stop what it is saying: the task keeps running and will still be narrated.
+      reply.speech.abort();
+      reply.speech = new AbortController();
+      return;
+    }
+    reply.cancel.abort();
   }
 
   private append(session: Session, reply: Reply, chunk: string, final: boolean): void {
@@ -473,19 +499,23 @@ export class VoiceHost {
     const text = speakable(segment).slice(0, limitSpeech - reply.spoken);
     if (!text) return;
     reply.spoken += text.length;
+    const speech = reply.speech.signal;
     reply.output = reply.output.then(async () => {
-      if (!this.currentReply(session, reply)) return;
+      if (!this.currentReply(session, reply) || speech.aborted) return;
       const started = performance.now();
       await session.synthesizer.speak(text, (pcm, sampleRate) => {
         if (this.currentReply(session, reply)) this.options.publish({ type: "audio", sessionId: session.id,
           utteranceId: reply.utteranceId, replyId: reply.id, pcm, sampleRate });
-      }, reply.cancel.signal);
+      }, AbortSignal.any([reply.cancel.signal, speech]));
       this.trace("host", "speak", { utteranceId: reply.utteranceId, chars: text.length, text,
         ms: Math.round(performance.now() - started) });
     }).catch(error => {
       this.trace("host", "speak", { utteranceId: reply.utteranceId, chars: text.length, text,
         failed: error instanceof Error ? error.message : true });
-      if (this.currentReply(session, reply)) this.error(session, "The reply is available in text. The local voice could not read it.");
+      // Speech stopped on purpose is not a failure.
+      if (this.currentReply(session, reply) && !speech.aborted) {
+        this.error(session, "The reply is available in text. The local voice could not read it.");
+      }
     });
   }
 
@@ -498,7 +528,8 @@ export class VoiceHost {
   }
 
   private currentReply(session: Session, reply: Reply): boolean {
-    return this.session === session && session.reply === reply && !reply.cancel.signal.aborted && session.thread.current();
+    return this.session === session && (session.reply === reply || session.task === reply)
+      && !reply.cancel.signal.aborted && session.thread.current();
   }
 
   private error(session: Session, message: string): void {

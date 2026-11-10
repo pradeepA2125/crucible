@@ -319,6 +319,24 @@ describe("desktop voice front-man", () => {
       expect.any(Function), expect.any(AbortSignal));
   });
 
+  it("a status reply while the task runs neither drops its answer nor cancels its narration", async () => {
+    const { hooks, host, sessionId, events } = await startedTask();
+    await host.request({ type: "snapshot", sessionId, utteranceId: "u2" });
+    await host.request({ type: "decide", sessionId, utteranceId: "u2", text: "any update?", silenceMs: 700,
+      finalCall: false });
+    await host.request({ type: "commit", sessionId, utteranceId: "u2", decisionId: "d1" });
+    await vi.waitFor(() => expect(mocks.speak).toHaveBeenCalledWith("It's going well.", expect.any(Function),
+      expect.any(AbortSignal)));
+    await host.request({ type: "interrupt", sessionId }); // the user stops that status reply
+    hooks.chunk("Done. The tests pass.");
+    hooks.finish();
+    await vi.waitFor(() => expect(mocks.speak).toHaveBeenCalledWith("Done. The tests pass.", expect.any(Function),
+      expect.any(AbortSignal)));
+    expect(events.filter(event => event.type === "reply" && event.utteranceId === "u1").at(-1))
+      .toMatchObject({ text: "Done. The tests pass.", final: true });
+    expect(events).toContainEqual(expect.objectContaining({ type: "narrating", utteranceId: "u1" }));
+  });
+
   it("a new utterance cancels in-flight narration", async () => {
     let release: (value: string) => void = () => {};
     const { hooks, host, sessionId } = await startedTask(() => new Promise<string>(resolve => { release = resolve; }));

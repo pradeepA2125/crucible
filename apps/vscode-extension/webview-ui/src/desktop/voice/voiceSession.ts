@@ -909,6 +909,23 @@ export class VoiceSession {
     return result;
   }
 
+  /** A voice-started task finished and its narration is coming: give it the speaker, unless
+   * the user is talking (the answer is on screen either way). */
+  private narrate(utteranceId: string) {
+    if (this.spoken || this.holding) {
+      this.trace("narration_skipped", { utteranceId, reason: "user speaking" });
+      return;
+    }
+    if (this.audio.playing) {
+      this.trace("interrupt", { reason: "narration", wasPlaying: true });
+      this.audio.stopPlayback();
+    }
+    this.outputTarget = utteranceId;
+    this.playbackText = "";
+    this.lastPlaybackAt = -Infinity;
+    this.trace("narrating", { utteranceId });
+  }
+
   /** The newest input owns the speaker: stop older playback and route this reply's audio. */
   private prepareOutput(utteranceId: string) {
     if (this.latestInput !== utteranceId) return;
@@ -941,6 +958,9 @@ export class VoiceSession {
       case "reply":
         if (event.utteranceId === this.outputTarget) this.playbackText = event.text;
         this.events.reply(event.utteranceId, event.text, event.final);
+        break;
+      case "narrating":
+        this.narrate(event.utteranceId);
         break;
       case "receipt":
         this.events.receipt(event.receipt);

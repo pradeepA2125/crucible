@@ -71,6 +71,7 @@ export type VoiceEvent =
   | ({ type: "audio"; replyId: string; pcm: ArrayBuffer; sampleRate: number } & UtteranceCommand)
   | ({ type: "reply"; messageId: string; text: string; final: boolean } & UtteranceCommand)
   | ({ type: "receipt"; receipt: VoiceReceipt } & SessionCommand)
+  | ({ type: "narrating" } & UtteranceCommand)
   | ({ type: "ended"; reason?: string } & SessionCommand)
   | { type: "error"; sessionId?: string; message: string };
 

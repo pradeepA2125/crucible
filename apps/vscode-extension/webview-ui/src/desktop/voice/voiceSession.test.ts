@@ -668,6 +668,35 @@ describe("desktop voice session", () => {
     }
   });
 
+  it("plays a finished task's narration even after a newer status reply took the speaker", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Any update?");
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    const pcm = new ArrayBuffer(2);
+    const narration = { type: "audio", sessionId: "session", utteranceId: "task-u", replyId: "r", pcm,
+      sampleRate: 24_000 } as const;
+    voice.emit(narration);
+    expect(audio.play).not.toHaveBeenCalled(); // an older utterance's audio stays muted...
+    voice.emit({ type: "narrating", sessionId: "session", utteranceId: "task-u" });
+    voice.emit(narration);
+    expect(audio.play).toHaveBeenCalledOnce(); // ...until the host says it is narrating it
+    voice.session.close();
+  });
+
+  it("does not start a narration over the user mid-sentence", async () => {
+    vi.clearAllMocks();
+    const voice = fixture("Any update?");
+    await voice.session.start("thread", "whisper-small", "system");
+    await vi.waitFor(() => expect(audio.openMicrophone).toHaveBeenCalledOnce());
+    frames(8, 0.03); // speaking
+    voice.emit({ type: "narrating", sessionId: "session", utteranceId: "task-u" });
+    voice.emit({ type: "audio", sessionId: "session", utteranceId: "task-u", replyId: "r", pcm: new ArrayBuffer(2),
+      sampleRate: 24_000 });
+    expect(audio.play).not.toHaveBeenCalled();
+    voice.session.close();
+  });
+
   it("traces why playback stopped", async () => {
     vi.clearAllMocks();
     const voice = fixture("Use SQLite.");
