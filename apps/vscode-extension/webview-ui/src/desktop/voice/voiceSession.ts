@@ -514,8 +514,9 @@ export class VoiceSession {
     const partial = this.decode(sessionId, turn, pcm, false, current).then(result => {
       if (current() && typeof result?.text === "string") {
         const partial = joined([...turn.committed, spokenMessage(result.text, turn.playback)]);
-        if (this.isCapturedPlaybackControl(turn, result.text) || hasSubstantiveSpeech(partial)
-          || (turn.pausedReply && addsWords("", partial))) {
+        // One word over a paused reply waits for the pause: it may be a cough Whisper heard
+        // as "you", which must resume the reply, never end it.
+        if (this.isCapturedPlaybackControl(turn, result.text) || hasSubstantiveSpeech(partial)) {
           this.stopForWords(turn, partial);
         }
         if (turn.playback === undefined || spokenWordCount(partial)) turn.partialText = partial;
@@ -570,6 +571,13 @@ export class VoiceSession {
       const text = joined([...turn.committed, spokenMessage(heard, turn.playback)]);
       if (!text || (!answering && isBackchannel(text)) || (turn.playback !== undefined && !spokenWordCount(text))) {
         if (!turn.pausedReply && !heard.trim() && turn.playback !== undefined) this.keepForReview(turn, turn.partialText || "");
+        this.clearCapture();
+        return;
+      }
+      // A lone word or filler over a paused reply (a cough Whisper heard as "you", a "hmm")
+      // is not a request: the reply resumes. Playback words ("stop", "wait") were handled
+      // above; an answer to the reply's question still stops it.
+      if (turn.pausedReply && !answering && spokenWordCount(text) < 2) {
         this.clearCapture();
         return;
       }

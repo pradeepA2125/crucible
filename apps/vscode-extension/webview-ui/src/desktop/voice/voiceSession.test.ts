@@ -705,6 +705,21 @@ describe("desktop voice session", () => {
     } finally { audio.playing = false; audio.outputLevel.mockReturnValue(0); voice.session.close(); }
   });
 
+  it("a cough Whisper hears as \"you\" over a reply resumes it, never stops it", async () => {
+    const level = { value: 0.9 };
+    const { voice, feed, interruptsBefore } = await replying("you", level);
+    try {
+      await feed(24, 0.4);
+      expect(audio.pausePlayback).toHaveBeenCalledOnce();
+      level.value = 0.05;
+      await feed(80, 0);
+      await vi.waitFor(() => expect(audio.resumePlayback).toHaveBeenCalledOnce());
+      expect(audio.stopPlayback).not.toHaveBeenCalled();
+      expect(voice.sent("interrupt").length).toBe(interruptsBefore);
+      expect(voice.sent("decide")).toHaveLength(0);
+    } finally { audio.playing = false; audio.outputLevel.mockReturnValue(0); voice.session.close(); }
+  });
+
   it("the reply's own echo never pauses it", async () => {
     const level = { value: 0.95 };
     const { voice, feed } = await replying("Here is the status of the work.", level);
