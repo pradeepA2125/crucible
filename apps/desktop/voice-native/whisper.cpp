@@ -149,17 +149,40 @@ int main(int argc, char **argv) {
     // Coding words Whisper otherwise hears as everyday ones ("repo" came back as "report",
     // "ripple" and "rapport" in live tests). A short glossary, not a sentence, so it biases
     // spelling without inviting Whisper to repeat it on near-silence.
-    std::string glossary = "Glossary: repo, repository, commit, branch, pull request, PR, merge, "
-                           "npm, TypeScript, Python, API, Crucible.";
+    // Whisper conditions on at most half its text context of prompt tokens and keeps the
+    // LAST ones, so an over-long prompt would lose the fixed glossary. Project words go
+    // first (most referenced first, as the host sends them), the glossary last, and the
+    // least-referenced names are dropped until the whole prompt fits.
+    const std::string fixed_glossary = "Glossary: repo, repository, commit, branch, pull request, PR, merge, "
+                                       "npm, TypeScript, Python, API, Crucible.";
     std::replace_if(project_words.begin(), project_words.end(),
                     [](unsigned char c) { return c < 0x20; }, ' ');
-    if (!project_words.empty()) glossary += " " + project_words;
-    // Whisper keeps at most ~224 prompt tokens; cut at a name boundary well inside that.
-    constexpr std::size_t max_prompt_chars = 900;
-    if (glossary.size() > max_prompt_chars) {
-        const auto cut = glossary.rfind(", ", max_prompt_chars);
-        glossary.resize(cut == std::string::npos ? max_prompt_chars : cut);
+    std::vector<std::string> names;
+    for (std::size_t start = 0; start < project_words.size() && names.size() < 400;) {
+        const auto comma = project_words.find(',', start);
+        const auto end = comma == std::string::npos ? project_words.size() : comma;
+        auto name = project_words.substr(start, end - start);
+        name.erase(0, name.find_first_not_of(' '));
+        name.erase(name.find_last_not_of(' ') + 1);
+        if (!name.empty()) names.push_back(name);
+        start = end + 1;
     }
+    const auto prompt_with = [&](std::size_t kept) {
+        std::string text;
+        for (std::size_t i = 0; i < kept; ++i) text += (i ? ", " : "") + names[i];
+        return kept ? "Project: " + text + ". " + fixed_glossary : fixed_glossary;
+    };
+    const int prompt_budget = whisper_n_text_ctx(context.get()) / 2 - 2;
+    std::vector<whisper_token> scratch(1024);
+    std::size_t kept = names.size();
+    std::string glossary = prompt_with(kept);
+    // Negative: more tokens than the scratch buffer holds, so over budget too.
+    const auto over_budget = [&](const std::string &text) {
+        const int n = whisper_tokenize(context.get(), text.c_str(), scratch.data(),
+                                       static_cast<int>(scratch.size()));
+        return n < 0 || n > prompt_budget;
+    };
+    while (kept > 0 && over_budget(glossary)) glossary = prompt_with(--kept);
     params.initial_prompt = glossary.c_str();
     params.no_timestamps = true;
     params.print_special = false;
