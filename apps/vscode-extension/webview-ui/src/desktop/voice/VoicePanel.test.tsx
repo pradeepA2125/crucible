@@ -1,8 +1,26 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ChatMsg } from "../../types";
 import { VoicePanel } from "./VoicePanel";
-import type { VoiceBridge } from "./voiceBridge";
+import type { VoiceBridge, VoiceCommand } from "./voiceBridge";
+import { CAPTURE_FRAME_BYTES, type CaptureFrame } from "./speechSegments";
+
+const microphone = vi.hoisted(() => ({ onFrame: undefined as ((frame: CaptureFrame) => void) | undefined }));
+
+vi.mock("./voiceAudio", () => ({
+  VoiceAudio: class {
+    playing = false;
+    paused = false;
+    play = vi.fn(); stopPlayback = vi.fn(); close = vi.fn(); closeMicrophone = vi.fn();
+    setMicrophoneEnabled = vi.fn(); cue = vi.fn(() => 400); pausePlayback = vi.fn(); resumePlayback = vi.fn();
+    outputLevel = vi.fn(() => 0);
+    openMicrophone = vi.fn(async (options: { onFrame(frame: CaptureFrame): void }) => {
+      microphone.onFrame = options.onFrame;
+      return true;
+    });
+    resume = vi.fn(async () => {});
+  },
+}));
 
 const msg = (id: string, role: "user" | "agent", content: string, metadata: Record<string, unknown>): ChatMsg =>
   ({ id, role, content, type: "text", timestamp: "2026-11-11T00:00:00Z", metadata });
@@ -23,5 +41,34 @@ describe("VoicePanel", () => {
     expect(transcript.textContent).toContain("Step two of three.");
     expect(transcript.textContent).not.toContain("add a readme");
     await waitFor(() => expect(bridge.request).toHaveBeenCalled());
+  });
+
+  it("an error about an earlier spoken turn clears once a later one goes through", async () => {
+    let failing = true;
+    const bridge: VoiceBridge = {
+      request: vi.fn(async (command: VoiceCommand) => {
+        switch (command.type) {
+          case "status": return { available: true, installed: ["whisper-small"], tts: ["system"] };
+          case "start": return { sessionId: "session" };
+          case "decode": return { text: "Use SQLite for the tests" };
+          case "decide": return failing ? { refused: "voice_agent_unavailable", message: "The model did not answer." }
+            : { decisionId: "d2", turn: "complete", action: "reply", say: "Sure.", request: "" };
+          case "commit": return { action: "reply" };
+          default: return {};
+        }
+      }),
+      subscribe: () => () => {},
+    };
+    render(<VoicePanel id="voice" bridge={bridge} threadId="thread" messages={[]} />);
+    fireEvent.click(await screen.findByText("Start voice session"));
+    await waitFor(() => expect(microphone.onFrame).toBeDefined());
+    const speak = (frames: number, rms: number) => {
+      for (let n = 0; n < frames; n += 1) microphone.onFrame!({ pcm: new ArrayBuffer(CAPTURE_FRAME_BYTES), rms });
+    };
+    speak(12, 0.03); speak(400, 0);
+    expect((await screen.findByRole("alert")).textContent).toContain("did not answer");
+    failing = false;
+    speak(12, 0.03); speak(40, 0);
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 });

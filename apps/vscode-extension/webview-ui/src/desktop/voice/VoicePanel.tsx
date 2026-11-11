@@ -140,9 +140,13 @@ export function VoicePanel({ bridge, threadId, id, messages }: Props) {
     try {
       next = new VoiceSession(bridge, {
         state: patch => setState(previous => ({ ...previous, ...patch })),
-        utterance: (utteranceId, message, decisionId) => setLiveTurns(previous => [
-          ...previous, { id: utteranceId, text: message, ...(decisionId ? { decisionId } : {}) },
-        ].slice(-30)),
+        utterance: (utteranceId, message, decisionId) => {
+          // A later turn went through: an error about an earlier one is no longer true.
+          setError("");
+          setLiveTurns(previous => [
+            ...previous, { id: utteranceId, text: message, ...(decisionId ? { decisionId } : {}) },
+          ].slice(-30));
+        },
         reply: (utteranceId, reply, final) => setLiveTurns(previous => previous.map(turn =>
           turn.id === utteranceId ? { ...turn, reply, final } : turn)),
         receipt: receipt => setLiveTurns(previous => previous.map(turn =>
