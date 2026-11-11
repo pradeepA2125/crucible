@@ -4,7 +4,8 @@ export type IconName =
   | "folder" | "image" | "hash" | "braces" | "markdown" | "wrap" | "more" | "info" | "panel-right" | "spark" | "search" | "plus" | "clock" | "chev-r" | "chev-l" | "chev-d"
   | "check" | "x" | "copy" | "file" | "term" | "list" | "diff" | "warn"
   | "send" | "stop" | "retry" | "bolt" | "bug"
-  | "home" | "key" | "plug" | "book" | "shield" | "chip" | "gear" | "menu" | "db" | "orbit" | "fork" | "expand";
+  | "home" | "key" | "plug" | "book" | "shield" | "chip" | "gear" | "menu" | "db" | "orbit" | "fork" | "expand"
+  | "waveform";
 
 interface Props {
   name: IconName;
@@ -15,6 +16,8 @@ interface Props {
 // Each entry is the inner content of the 16×16 viewBox symbol, converted to JSX.
 // Colors remain currentColor so CSS drives them — no hardcoded fills/strokes.
 const ICONS: Record<IconName, ReactNode> = {
+  // A voice agent's sound bars, deliberately not a microphone: the mic is reserved for dictation.
+  waveform: (<path d="M2 6.5v3M5 4v8M8 2v12M11 4.5v7M14 6.5v3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />),
   folder: (<path d="M1.5 4V3a1 1 0 0 1 1-1H6l2 2h5.5a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V4z" fill="none" stroke="currentColor" strokeWidth="1.2" />),
   image: (<><rect x="2" y="2" width="12" height="12" rx="2" fill="none" stroke="currentColor" strokeWidth="1.2" /><circle cx="5.5" cy="5.5" r="1" fill="currentColor" /><path d="m3 12 3-3 2 2 3-4 3 5" fill="none" stroke="currentColor" strokeWidth="1.2" /></>),
   hash: (<path d="M6 2 4 14M12 2l-2 12M2 6h12M1 10h12" fill="none" stroke="currentColor" strokeWidth="1.3" />),

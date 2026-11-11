@@ -23,6 +23,7 @@ export function UserMessage({
   onRewind,
   queued = false,
   spoken = false,
+  spokenLabel = "Spoken",
 }: {
   content: string;
   mentionedFiles?: string[];
@@ -33,6 +34,8 @@ export function UserMessage({
   onRewind?: () => void;
   /** Heard by the voice assistant (speech recognition), not typed. */
   spoken?: boolean;
+  /** The tag above a spoken bubble; "Hearing" while the words are still coming in. */
+  spokenLabel?: string;
 }) {
   const codeParts = content.split(/(`[^`]+`)/);
   const [open, setOpen] = useState<{ src: string; name: string } | null>(null);
@@ -96,7 +99,7 @@ export function UserMessage({
           ))}
         </div>
       )}
-      {spoken && <span className="text-caption text-text-3">Spoken</span>}
+      {spoken && <span className="text-caption text-text-3">{spokenLabel}</span>}
       {(content.trim() || queued) && (
         <div
           data-testid="user-bubble"

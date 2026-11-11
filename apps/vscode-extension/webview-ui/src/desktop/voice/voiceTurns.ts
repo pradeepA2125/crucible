@@ -9,6 +9,8 @@ export interface VoiceTurn {
   receipt?: VoiceReceipt;
   /** The voice decision the saved exchange carries; set on live turns once decided. */
   decisionId?: string;
+  /** Typed into the composer during the session (no Spoken tag). */
+  typed?: boolean;
 }
 
 const MAX_TURNS = 30;
