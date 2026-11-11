@@ -1,5 +1,6 @@
 export type VoiceRecognizer = "whisper-base" | "whisper-small";
-export type VoiceSynthesizer = "system" | "pocket";
+/** "none": a text-only session (replies shown, not spoken). */
+export type VoiceSynthesizer = "system" | "pocket" | "none";
 export type VoiceIntent = "auto" | "question" | "steer";
 export type VoiceModelAsset = VoiceRecognizer | "pocket";
 
@@ -7,8 +8,12 @@ export interface VoiceStatus {
   available: boolean;
   reason?: string;
   installed: VoiceRecognizer[];
-  tts: VoiceSynthesizer[];
+  tts: Exclude<VoiceSynthesizer, "none">[];
   pocketAvailable: boolean;
+  /** Bytes the Pocket download takes on this computer (0 without Pocket). */
+  pocketDownloadBytes: number;
+  /** Pocket's engine here: CoreML on Apple Silicon, sherpa-onnx on Windows and Linux. */
+  pocketEngine: "coreml" | "onnx" | null;
 }
 
 export interface VoiceReceipt {
@@ -107,6 +112,8 @@ export async function readVoiceStatus(bridge: VoiceBridge): Promise<VoiceStatus>
     pocketAvailable: status.pocketAvailable === true,
     reason: typeof status.reason === "string" ? status.reason : undefined,
     installed: installed.filter((value): value is VoiceRecognizer => value === "whisper-base" || value === "whisper-small"),
-    tts: tts.filter((value): value is VoiceSynthesizer => value === "system" || value === "pocket"),
+    tts: tts.filter((value): value is Exclude<VoiceSynthesizer, "none"> => value === "system" || value === "pocket"),
+    pocketDownloadBytes: typeof status.pocketDownloadBytes === "number" && status.pocketDownloadBytes > 0 ? status.pocketDownloadBytes : 0,
+    pocketEngine: status.pocketEngine === "coreml" || status.pocketEngine === "onnx" ? status.pocketEngine : null,
   };
 }

@@ -69,4 +69,33 @@ describe("VoicePanel", () => {
     speak(12, 0.03); speak(40, 0);
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
+
+  function statusBridge(status: Record<string, unknown>): VoiceBridge {
+    return { request: vi.fn(async () => status), subscribe: () => () => {} };
+  }
+
+  it("offers text-only replies and starts without a voice", async () => {
+    render(<VoicePanel id="voice" bridge={statusBridge({ available: true, installed: ["whisper-small"], tts: [],
+      pocketAvailable: true, pocketDownloadBytes: 199_269_026, pocketEngine: "onnx" })} threadId="thread" messages={[]} />);
+    const replies = await screen.findByLabelText("Spoken replies") as HTMLSelectElement;
+    expect(replies.value).toBe("none");
+    expect(replies.selectedOptions[0]?.textContent).toBe("Text only");
+    expect((screen.getByText("Start voice session") as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.getByText("Install spoken replies (about 200 MB)")).toBeTruthy();
+  });
+
+  it("shows the processor reason and disables start", async () => {
+    render(<VoicePanel id="voice" bridge={statusBridge({ available: false, installed: [], tts: [], pocketAvailable: false,
+      pocketDownloadBytes: 0, pocketEngine: "onnx",
+      reason: "Local voice needs a processor with AVX2 (most made since 2013)." })} threadId="thread" messages={[]} />);
+    expect(await screen.findByText("Local voice needs a processor with AVX2 (most made since 2013).")).toBeTruthy();
+    expect(screen.queryByText("Start voice session")).toBeNull();
+  });
+
+  it("Apple Silicon keeps Install Pocket TTS", async () => {
+    render(<VoicePanel id="voice" bridge={statusBridge({ available: true, installed: ["whisper-small"], tts: [],
+      pocketAvailable: true, pocketDownloadBytes: 528_850_937, pocketEngine: "coreml" })} threadId="thread" messages={[]} />);
+    expect(await screen.findByText("Install Pocket TTS")).toBeTruthy();
+    expect(screen.queryByText(/Install spoken replies/)).toBeNull();
+  });
 });

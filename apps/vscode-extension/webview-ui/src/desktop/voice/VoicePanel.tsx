@@ -17,7 +17,14 @@ const RECOGNIZERS: ReadonlyArray<{ id: VoiceRecognizer; label: string }> = [
 const SYNTHESIZERS: Record<VoiceSynthesizer, string> = {
   system: "macOS system voice",
   pocket: "Pocket TTS",
+  none: "Text only",
 };
+
+/** The spoken-reply download, named the way each platform knows it. */
+function pocketInstallLabel(status: VoiceStatus): string {
+  if (status.pocketEngine !== "onnx") return "Install Pocket TTS";
+  return `Install spoken replies (about ${Math.round(status.pocketDownloadBytes / 1e7) * 10} MB)`;
+}
 const RECEIPT_LABELS: Record<VoiceReceipt["status"], string> = {
   answered: "Answered",
   queued: "Correction queued",
@@ -75,7 +82,7 @@ export function VoicePanel({ bridge, threadId, id, messages }: Props) {
       setStatus(next);
       if (initial) {
         setStt(initialRecognizer(next.installed));
-        setTts(next.tts.includes("system") ? "system" : next.tts[0] ?? (next.pocketAvailable ? "pocket" : "system"));
+        setTts(next.tts.includes("system") ? "system" : next.tts.includes("pocket") ? "pocket" : "none");
       }
     }).catch(failure => {
       if (alive.current) setError(errorText(failure));
@@ -128,12 +135,14 @@ export function VoicePanel({ bridge, threadId, id, messages }: Props) {
   }, [turns, state.partial]);
 
   const modelReady = status?.installed.includes(stt) ?? false;
-  const synthReady = status?.tts.includes(tts) ?? false;
+  const synthReady = tts === "none" || (status?.tts.includes(tts) ?? false);
   const manualMode = pushToTalk;
-  const synthOptions = [...(status?.tts ?? [])];
+  const synthOptions: VoiceSynthesizer[] = [...(status?.tts ?? [])];
   if (status?.pocketAvailable && !synthOptions.includes("pocket")) synthOptions.push("pocket");
+  synthOptions.push("none");
+  const offerPocket = !!status?.pocketAvailable && !status.tts.includes("pocket");
   const start = async () => {
-    if (session.current || starting || !status?.available || !modelReady || !status.tts.includes(tts)) return;
+    if (session.current || starting || !status?.available || !modelReady || !synthReady) return;
     setStarting(true);
     setError("");
     setState(INITIAL_VOICE_STATE);
@@ -329,26 +338,30 @@ export function VoicePanel({ bridge, threadId, id, messages }: Props) {
               </select>
             </label>
             <label>Spoken replies
-              <select value={tts} disabled={!!operation || starting || !synthOptions.length} onChange={event => setTts(event.target.value as VoiceSynthesizer)}>
-                {synthOptions.length ? synthOptions.map(model => <option key={model} value={model}>
-                  {SYNTHESIZERS[model]}{status.tts.includes(model) ? "" : " · download required"}
-                </option>) : <option value="system">Unavailable</option>}
+              <select value={tts} disabled={!!operation || starting} onChange={event => setTts(event.target.value as VoiceSynthesizer)}>
+                {synthOptions.map(model => <option key={model} value={model}>
+                  {SYNTHESIZERS[model]}{model === "none" || status.tts.includes(model) ? "" : " · download required"}
+                </option>)}
               </select>
             </label>
             <div className="crucible-voice-actions">
               {operation?.type === "install" ? <>
-                <span role="status">{operation.model === "pocket" ? "Installing Pocket TTS…" : "Installing speech model…"}</span>
+                <span role="status">{operation.model !== "pocket" ? "Installing speech model…"
+                  : status.pocketEngine === "onnx" ? "Installing spoken replies…" : "Installing Pocket TTS…"}</span>
                 <BtnGhost onClick={cancelInstallation}>Cancel download</BtnGhost>
               </> : !modelReady ? <BtnPrimary onClick={() => void changeInstallation("install", stt)} disabled={!!operation}>
                 Install speech model
               </BtnPrimary> : tts === "pocket" && !synthReady && status.pocketAvailable ? <BtnPrimary
-                onClick={() => void changeInstallation("install", "pocket")} disabled={!!operation}>Install Pocket TTS</BtnPrimary> : <>
+                onClick={() => void changeInstallation("install", "pocket")} disabled={!!operation}>{pocketInstallLabel(status)}</BtnPrimary> : <>
                 <BtnPrimary onClick={() => void start()} disabled={starting || !!operation || !synthReady}>
                   {starting ? "Starting voice…" : "Start voice session"}
                 </BtnPrimary>
                 <BtnGhost onClick={() => void changeInstallation("remove", stt)} disabled={starting || !!operation}>
                   {operation?.model === stt ? "Removing…" : "Remove speech model"}
                 </BtnGhost>
+                {tts === "none" && offerPocket && <BtnGhost onClick={() => void changeInstallation("install", "pocket")} disabled={starting || !!operation}>
+                  {pocketInstallLabel(status)}
+                </BtnGhost>}
                 {tts === "pocket" && synthReady && <BtnGhost onClick={() => void changeInstallation("remove", "pocket")} disabled={starting || !!operation}>
                   {operation?.model === "pocket" ? "Removing…" : "Remove Pocket TTS"}
                 </BtnGhost>}
