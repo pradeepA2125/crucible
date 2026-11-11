@@ -14,7 +14,7 @@ import os
 import shutil
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
@@ -456,7 +456,6 @@ def _with_mentioned_files(message: str, mentioned_files: list[dict[str, str]] | 
     return message + referenced_files_block(mentioned_files)
 
 
-_VOICE_LOG_LINES = 6
 _VOICE_DECISION_TTL_SEC = 120.0
 _VOICE_DECISION_LIMIT = 64
 
@@ -470,16 +469,18 @@ class _VoiceDecisionEntry:
     say: str
     request: str
     created_at: float
+    basis: str = ""
 
 
-def voice_request_block(request: str, log: Sequence[dict[str, str]]) -> str:
-    """The goal's note for a spoken request: the voice agent's reading (advisory, after
-    the user's own words) and the recent voice exchange, newest last."""
-    lines = "\n".join(f"{entry['role']}: {' '.join(entry['text'].split())}"
-                      for entry in list(log)[-_VOICE_LOG_LINES:])
-    return ("\n\n---\nSpoken request. The user's words above take precedence over this "
-            f"reading.\nVoice assistant's reading: {request}\nRecent voice conversation:\n"
-            + (lines or "(none)"))
+def voice_request_block(request: str, basis: str) -> str:
+    """The goal's note for a spoken request: the voice agent's self-contained reading
+    (advisory, after the user's own words) and only the exchange it rests on. Small talk
+    from the voice conversation never reaches the coding agent."""
+    block = ("\n\n---\nSpoken request. The user's words above take precedence over this "
+             f"reading.\nVoice assistant's reading: {request}")
+    if basis:
+        block += f"\nIt rests on this spoken exchange:\n{basis}"
+    return block
 
 
 # How often a turn may be held open for agent reports that are still arriving (spec §5.2).
@@ -700,6 +701,8 @@ class ChatController:
         # The voice front-man: decides at a pause, commits separately (spec §1).
         self._voice = VoiceAgent(self._conversation_transport)
         self._voice_pending: OrderedDict[str, _VoiceDecisionEntry] = OrderedDict()
+        # thread -> (reading, basis) of the last committed spoken task, until its message.
+        self._voice_basis: dict[str, tuple[str, str]] = {}
         self._clock: Callable[[], float] = time.monotonic
 
     def _conversation_transport(self) -> tuple[object, str] | None:
@@ -753,7 +756,7 @@ class ChatController:
         self._voice_pending[decision_id] = _VoiceDecisionEntry(
             thread_id=thread_id, utterance=utterance, turn_id=turn_id,
             action=decision.action, say=decision.say, request=decision.request,
-            created_at=self._clock())
+            created_at=self._clock(), basis=decision.basis)
         self._prune_voice_decisions()
         return {"decision_id": decision_id, "turn": decision.turn, "action": decision.action,
                 "say": decision.say, "request": decision.request, "turn_id": turn_id}
@@ -773,7 +776,8 @@ class ChatController:
         if entry.action == "steer":
             receipt = self._conversation.enqueue_correction(
                 thread_id, decision_id,
-                f"{entry.utterance}\n\n(Voice assistant's reading, advisory: {entry.request})",
+                f"{entry.utterance}\n\n(Voice assistant's reading, advisory: {entry.request})"
+                + (f"\nIt rests on this spoken exchange:\n{entry.basis}" if entry.basis else ""),
                 entry.turn_id or "")
             self._voice.record(thread_id, entry.utterance, entry.say)
             return {"action": "steer", "receipt": receipt.view()}
@@ -783,6 +787,9 @@ class ChatController:
                     "code": "turn_active",
                     "active_turn_id": self._conversation.active_turn_id(thread_id)})
             self._voice.record(thread_id, entry.utterance, entry.say)
+            # The client carries only the reading back to /message; the basis stays here,
+            # server-derived, and joins the goal when that reading arrives.
+            self._voice_basis[thread_id] = (entry.request, entry.basis)
             return {"action": "start_task", "message": entry.utterance,
                     "voice_request": entry.request}
         self._voice.record(thread_id, entry.utterance, entry.say)
@@ -1028,7 +1035,9 @@ class ChatController:
                       **({"voice": True} if voice_request else {})}))
         turn_message = _with_mentioned_files(message, mentioned_files)
         if voice_request:
-            turn_message += voice_request_block(voice_request, self._voice.log(thread_id))
+            reading, basis = self._voice_basis.pop(thread_id, ("", ""))
+            turn_message += voice_request_block(
+                voice_request, basis if reading == voice_request else "")
         await self._run_user_turn(
             thread, thread_id, anchor_message_id, turn_message,
             channel_id, step_review=step_review, plan_mode=plan_mode,

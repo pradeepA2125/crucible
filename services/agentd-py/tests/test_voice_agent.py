@@ -90,6 +90,34 @@ async def test_steer_while_idle_asks_before_starting_work() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_vague_referential_request_becomes_a_clarifying_question() -> None:
+    # "Do it" with nothing resolved must never start work on a guess.
+    agent = _agent(FakeJson(_reply(action="start_task", say="On it.", request="Do it.")))
+    decision = await agent.decide("t1", _ctx("do it"))
+    assert decision.action == "clarify"
+    assert decision.say == "Which change should I make?"
+
+
+@pytest.mark.asyncio
+async def test_a_vague_referential_steer_becomes_a_clarifying_question() -> None:
+    agent = _agent(FakeJson(_reply(action="steer", say="OK.", request="")))
+    decision = await agent.decide("t1", _ctx("Go ahead!", progress=PROGRESS))
+    assert decision.action == "clarify"
+    assert decision.say == "Which change should I make?"
+
+
+@pytest.mark.asyncio
+async def test_a_resolved_referential_request_starts() -> None:
+    raw = {**_reply(action="start_task", say="On it.",
+                    request="Add a contact form to the About page"),
+           "basis": "user: should About have a contact form?\nvoice: Yes, name and email."}
+    decision = await _agent(FakeJson(raw)).decide("t1", _ctx("do it"))
+    assert decision.action == "start_task"
+    assert decision.request == "Add a contact form to the About page"
+    assert decision.basis == "user: should About have a contact form?\nvoice: Yes, name and email."
+
+
+@pytest.mark.asyncio
 async def test_empty_request_uses_utterance() -> None:
     agent = _agent(FakeJson(_reply(action="start_task", say="On it.", request="  ")))
     decision = await agent.decide("t1", _ctx("review the voice feature"))

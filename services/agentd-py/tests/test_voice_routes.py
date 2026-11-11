@@ -16,7 +16,7 @@ from tests.test_voice_agent import FakeJson
 
 def _decision(action: str, say: str = "On it.", request: str = "use sqlite",
               turn: str = "complete") -> dict[str, object]:
-    return {"turn": turn, "action": action, "say": say, "request": request}
+    return {"turn": turn, "action": action, "say": say, "request": request, "basis": ""}
 
 
 def _voice(ctrl, reply: dict[str, object] | None = None, *, text: str = "") -> FakeJson:  # type: ignore[no-untyped-def]
@@ -177,8 +177,33 @@ async def test_voice_request_folds_into_goal_not_transcript(
     assert goal.startswith(words)
     assert goal.index("The user's words above take precedence") < goal.index(
         "Voice assistant's reading: Switch the database to SQLite, not Postgres")
-    assert goal.index("Voice assistant's reading:") < goal.index("Recent voice conversation:")
-    assert "voice: Nothing is running." in goal
+    # Small talk never rides along: only the exchange a request rests on does.
+    assert "Recent voice conversation" not in goal
+    assert "Nothing is running." not in goal
+
+
+@pytest.mark.asyncio
+async def test_work_request_goal_carries_basis_not_recent_conversation(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctrl, _store, tid = _setup(tmp_path, monkeypatch, [ANSWER], {})
+    basis = ("user: should the About page have a contact form?\n"
+             "voice: Yes, with name, email and message fields.")
+    _voice(ctrl, {**_decision("start_task", request="Add a contact form to the About page "
+                                                     "with name, email and message fields"),
+                  "basis": basis})
+    ctrl._voice.record(tid, "how is it going", "Nothing is running.")
+    decided = await ctrl.voice_decide(tid, "do it", 900, False)
+    committed = ctrl.voice_commit(tid, str(decided["decision_id"]))
+    payloads: list[dict[str, object]] = []
+    _gated_steps(monkeypatch, lambda _n, _h: None, payloads=payloads)
+    await ctrl.handle_message(tid, "do it", channel_id=f"chat:{tid}",
+                              voice_request=str(committed["voice_request"]))
+    goal = str(payloads[0]["goal"])
+    assert goal.startswith("do it")
+    assert "Voice assistant's reading: Add a contact form to the About page" in goal
+    assert "should the About page have a contact form?" in goal
+    assert "Yes, with name, email and message fields." in goal
+    assert "Nothing is running." not in goal
 
 
 @pytest.mark.asyncio
