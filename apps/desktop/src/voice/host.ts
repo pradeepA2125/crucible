@@ -119,9 +119,13 @@ export class VoiceHost {
       pocketPackFor(options.platform, options.architecture) ?? null);
   }
 
-  /** Runs `crucible-whisper --check-cpu` once: x64 builds need AVX2, FMA and F16C. */
-  private checkCpu(): Promise<"ok" | "unsupported" | "failed"> {
-    this.cpuCheck ??= new Promise(resolve => {
+  /** Runs `crucible-whisper --check-cpu`: x64 builds need AVX2, BMI2, FMA and F16C. arm64 builds
+   *  have no x86 baseline, so they are never asked (Apple Silicon status spawns nothing, as before).
+   *  Only a definite answer is kept; a check that could not run (a busy machine, a first-run
+   *  security scan) is tried again on the next status. */
+  private async checkCpu(): Promise<"ok" | "unsupported" | "failed"> {
+    if (this.options.architecture === "arm64") return "ok";
+    this.cpuCheck ??= new Promise<"ok" | "unsupported" | "failed">(resolve => {
       execFile(this.helper("crucible-whisper"), ["--check-cpu"], {
         env: helperEnvironment(this.options.platform, process.env, this.options.helpers), timeout: 5_000, shell: false,
       }, (_error, stdout) => {
@@ -130,7 +134,9 @@ export class VoiceHost {
         resolve(answer === "cpu ok" ? "ok" : answer === "cpu unsupported" ? "unsupported" : "failed");
       });
     });
-    return this.cpuCheck;
+    const result = await this.cpuCheck;
+    if (result === "failed") this.cpuCheck = undefined;
+    return result;
   }
 
   /** Pocket can run here: the CoreML helper on Apple Silicon, the sherpa-onnx worker elsewhere. */

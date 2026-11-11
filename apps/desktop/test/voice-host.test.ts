@@ -125,6 +125,22 @@ describe("voice capabilities on every platform", () => {
     });
   });
 
+  it("a CPU check that could not run is tried again", async () => {
+    const path = await helpers([]);
+    // Fails the first time (a busy machine, a first-run security scan), answers the second.
+    await writeFile(join(path, "crucible-whisper"),
+      `#!/bin/sh\nif [ -f "${path}/ran" ]; then echo 'cpu ok'; else touch "${path}/ran"; exit 1; fi\n`, { mode: 0o700 });
+    const host = statusHost(path, "linux", "x64");
+    expect(await host.status()).toMatchObject({ available: false, reason: "Local voice could not start its speech helper." });
+    expect(await host.status()).toMatchObject({ available: true });
+  });
+
+  it("Apple Silicon status spawns no CPU check", async () => {
+    // A helper that would refuse if asked: arm64 builds have no x86 baseline, so it is never asked.
+    const path = await helpers(["crucible-whisper", "crucible-tts"], "cpu unsupported");
+    expect(await statusHost(path, "darwin", "arm64").status()).toMatchObject({ available: true });
+  });
+
   it("a build without the speech helper says so", async () => {
     const path = await helpers([]);
     expect(await statusHost(path, "linux", "x64").status()).toMatchObject({
