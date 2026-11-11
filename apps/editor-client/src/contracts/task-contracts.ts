@@ -205,6 +205,8 @@ export type StreamEvent =
   | { type: "env_install_done"; payload: { scope_key: string; exit_ok: boolean; tail: string } }
   | { type: "chat_breadcrumb"; payload: { text: string; task_id: string; edit_outcome?: boolean } }
   | { type: "chat_progress"; payload: { note: string } }
+  // A saved voice exchange or narration (wire shape; parse with parseWireChatMessage).
+  | { type: "chat_voice_message"; payload: { message: Record<string, unknown> } }
   | { type: "memory_compacted"; payload: { evicted: number; anchor_version: number } }
   | { type: "agent_started"; payload: { agent_id: string; parent_agent_id: string | null; depth: number; name: string; label: string } }
   | { type: "agent_status"; payload: { agent_id: string; status: string } }

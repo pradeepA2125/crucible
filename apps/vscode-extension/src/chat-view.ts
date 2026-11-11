@@ -91,6 +91,10 @@ export class ChatView {
     this.viewPort.postMessage({ type: "appendMessage", message });
   }
 
+  appendVoiceMessage(message: ChatMessage): void {
+    this.viewPort.postMessage({ type: "appendVoiceMessage", message });
+  }
+
   appendChunk(chunk: string): void {
     this.viewPort.postMessage({ type: "appendChunk", chunk });
   }

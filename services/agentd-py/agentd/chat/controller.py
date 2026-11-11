@@ -800,11 +800,19 @@ class ChatController:
         """What was heard and what was said, visible in the chat and kept across restarts.
         Marked as voice so no context reader treats it as a request or as permission."""
         marker = {"voice": "exchange", "voice_decision": decision_id}
-        self._store.append_message(thread_id, ChatMessage(role="user", content=heard,
-                                                          metadata=dict(marker)))
+        self._save_voice_message(thread_id, ChatMessage(role="user", content=heard,
+                                                        metadata=dict(marker)))
         if said:
-            self._store.append_message(thread_id, ChatMessage(role="agent", content=said,
-                                                              metadata=dict(marker)))
+            self._save_voice_message(thread_id, ChatMessage(role="agent", content=said,
+                                                            metadata=dict(marker)))
+
+    def _save_voice_message(self, thread_id: str, message: ChatMessage) -> None:
+        """Persist, then push on the thread's chat channel so a turn streaming there shows
+        it now. The id lets every client add it once (a later reload carries it too)."""
+        message = message.model_copy(update={"id": message.id or uuid4().hex})
+        self._store.append_message(thread_id, message)
+        self._broadcaster.broadcast(f"chat:{thread_id}", {
+            "type": "chat_voice_message", "payload": {"message": message.model_dump(mode="json")}})
 
     async def voice_narrate(self, thread_id: str, heard: str, answer: str,
                             voice_model: str = "") -> str:
@@ -817,7 +825,7 @@ class ChatController:
         answer_id = next((m.id for m in reversed(thread.messages if thread else [])
                           if m.role == "agent" and m.type == "text" and m.content.strip()
                           and not m.metadata.get("breadcrumb") and not is_voice_message(m)), None)
-        self._store.append_message(thread_id, ChatMessage(
+        self._save_voice_message(thread_id, ChatMessage(
             role="agent", content=spoken, metadata={"voice": "narration", "answer_id": answer_id}))
         return spoken
 

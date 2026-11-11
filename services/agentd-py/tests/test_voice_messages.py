@@ -80,6 +80,31 @@ async def test_start_task_commit_writes_no_voice_message(
     assert store.get_thread(tid).messages == []  # type: ignore[union-attr]
 
 
+def _voice_events(ctrl, tid: str) -> list[dict[str, object]]:  # type: ignore[no-untyped-def]
+    queue = ctrl._broadcaster.subscribe(f"chat:{tid}")
+    events = []
+    while not queue.empty():
+        event = queue.get_nowait()
+        if event.get("type") == "chat_voice_message":
+            events.append(event["payload"]["message"])
+    return events
+
+
+@pytest.mark.asyncio
+async def test_saved_voice_messages_are_pushed_live_with_their_ids(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A turn streaming on this thread shows the exchange now, not on its next reload.
+    ctrl, store, tid = _setup(tmp_path, monkeypatch, [], {})
+    await _exchange(ctrl, tid, "how is it going", "Step two of three.")
+    _voice(ctrl, text="Fixed it.")
+    await ctrl.voice_narrate(tid, "fix it", "Fixed.")
+    saved = store.get_thread(tid).messages  # type: ignore[union-attr]
+    pushed = _voice_events(ctrl, tid)
+    assert [(m["id"], m["role"], m["content"]) for m in pushed] == [
+        (m.id, m.role, m.content) for m in saved]
+    assert [m["metadata"]["voice"] for m in pushed] == ["exchange", "exchange", "narration"]
+
+
 @pytest.mark.asyncio
 async def test_narration_is_saved_against_the_answer(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

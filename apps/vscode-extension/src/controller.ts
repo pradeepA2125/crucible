@@ -110,6 +110,8 @@ export interface ControllerUI {
   promptSetup(message: string): void;
   openChatPanel(): void;
   appendChatMessage(message: ChatMessage): void;
+  /** A saved voice exchange or narration: added by id, never sealing a streaming answer. */
+  appendVoiceMessage(message: ChatMessage): void;
   appendChatChunk(chunk: string): void;
   showChatThinking(message: string): void;
   updateChatThinking(message: string): void;
@@ -271,11 +273,6 @@ export class CrucibleController {
   // Set only from a getChatThread result (spec §6): the transcript length the webview has.
   private lastReconciledCount = 0;
   private reconcilePending = false;
-  // Ids of saved messages on screen. During this client's own streaming turn the full
-  // reload waits for the turn's end; voice exchanges are appended by id meanwhile.
-  private shownMessageIds = new Set<string>();
-  private voiceFollowCount = -1;
-  private voiceFollowing = false;
   // (threadId -> pendingGates) last notified, so a waiting gate does not re-notify.
   private readonly attentionNotified = new Map<string, number>();
   private readonly attentionListeners: Array<(threadId: string, pendingGates: number) => void> = [];
@@ -396,7 +393,7 @@ export class CrucibleController {
     this.ui.clearChatThread(threadId);
     const cached = this.historyCache.get(this.historyKey(threadId));
     this.historySaved = cached !== undefined;
-    if (cached) this.showSavedMessages(cached);
+    if (cached) this.ui.replaceChatMessages(cached);
     this.publishHistory();
     if (!this.historyTimer) this.historyTimer = setInterval(() => {
       if (this.disposed || !this.activeThreadId) return;
@@ -1277,35 +1274,6 @@ await this.runProjectWork(threadId, "team_plan", gateId, async (verifyWork, isCu
   /** Reconcile by replacement (spec §6): messages written while nothing streamed this
    * thread — a notice marker, a breadcrumb — reach the webview without a reload. Swaps
    * the messages only; agents, views, live cards and subscriptions are untouched. */
-  private showSavedMessages(messages: ChatMessage[]): void {
-    this.shownMessageIds = new Set(messages.flatMap(m => m.id ? [m.id] : []));
-    this.ui.replaceChatMessages(messages);
-  }
-
-  /** A status question answered by voice while this client streams a turn: show the
-   *  exchange now, without replacing the answer being streamed. Everything else waits for
-   *  the full reload at the turn's end. */
-  private async followVoiceMidTurn(threadId: string, expected: number): Promise<void> {
-    if (expected === this.voiceFollowCount || this.voiceFollowing) return;
-    this.voiceFollowing = true;
-    const turn = this.turnAbort, epoch = this.contextView();
-    try {
-      const thread = await this.clientForChat().getChatThread(threadId, turn?.signal);
-      if (this.disposed || this.activeThreadId !== threadId || this.turnAbort !== turn
-        || !this.contextState.current(epoch, this.settings.getBackendBaseUrl())) return;
-      this.voiceFollowCount = expected;
-      for (const message of thread.messages) {
-        if (!message.id || !isVoiceMessage(message) || this.shownMessageIds.has(message.id)) continue;
-        this.shownMessageIds.add(message.id);
-        this.ui.appendChatMessage(message);
-      }
-    } catch {
-      // Best effort: the reload at the turn's end shows them anyway.
-    } finally {
-      this.voiceFollowing = false;
-    }
-  }
-
   private readSavedHistory(threadId: string, client = this.clientForChat(), key = this.historyKey(threadId)): Promise<ChatMessage[]> {
     return this.historyReader.read(key, async signal => {
       const thread = await client.getChatThread(threadId, signal);
@@ -1317,9 +1285,7 @@ await this.runProjectWork(threadId, "team_plan", gateId, async (verifyWork, isCu
   private async reconcileTranscript(threadId: string, expected: number, force = false): Promise<void> {
     const epoch = this.contextView();
     if (this.activeThreadId !== threadId || this.disposed || this.turnAbort || this.pendingAdmissions.size) {
-      this.reconcilePending = true;
-      if (this.turnAbort && this.activeThreadId === threadId && !this.disposed) void this.followVoiceMidTurn(threadId, expected);
-      return;
+      this.reconcilePending = true; return;
     }
     if (Date.now() < this.historyNextAt && (this.historyFailures > 0 || !force && expected === this.lastReconciledCount)) return;
     const key = this.historyKey(threadId), mutation = this.historyMutation;
@@ -1341,7 +1307,7 @@ await this.runProjectWork(threadId, "team_plan", gateId, async (verifyWork, isCu
       this.historyLoaded = true; this.historySaved = true; this.historyFailed = false; this.historyFailures = 0;
       this.historyNotice = this.historyCache.put(key, messages) ? undefined : "This conversation is too large to keep an extra saved copy.";
       this.lastReconciledCount = messages.length; this.reconcilePending = false;
-      this.showSavedMessages(messages); this.publishHistory();
+      this.ui.replaceChatMessages(messages); this.publishHistory();
     } catch {
       if (!current()) return;
       this.historyFailed = true;
@@ -1760,6 +1726,15 @@ if (!entered) {
           const chunk = (event.payload["chunk"] as string) ?? "";
           this.ui.appendChatChunk(chunk);
           if (chunk) voice?.chunk(chunk);
+        } else if (event.type === "chat_voice_message") {
+          // A status question answered by voice while this turn streams: shown now, above
+          // the answer still being written, which keeps streaming.
+          try {
+            const message = parseWireChatMessage(event.payload.message);
+            if (isVoiceMessage(message)) this.ui.appendVoiceMessage(message);
+          } catch {
+            // Malformed: the reload at the turn's end shows the saved copy.
+          }
         } else if (event.type === "chat_breadcrumb") {
           // Controller decisions (mode choice, edit accept/reject) broadcast their
           // breadcrumbs on THIS turn stream. streamTurn previously had no branch for
