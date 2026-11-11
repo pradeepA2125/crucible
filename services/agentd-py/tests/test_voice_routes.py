@@ -7,7 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agentd.chat.conversation import ConversationError
-from agentd.chat.models import ChatMessage
+from agentd.chat.models import ChatMessage, is_voice_message
 from agentd.chat.voice_agent import VoiceAgent
 from tests.test_background_dispatch import _setup
 from tests.test_conversation_steering import ANSWER, _app, _gated_steps, _own_approval, _snapshot
@@ -27,7 +27,7 @@ def _voice(ctrl, reply: dict[str, object] | None = None, *, text: str = "") -> F
 
 @pytest.mark.asyncio
 async def test_decide_has_no_side_effects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    ctrl, _store, tid = _setup(tmp_path, monkeypatch, [], {})
+    ctrl, store, tid = _setup(tmp_path, monkeypatch, [], {})
     fake = _voice(ctrl, _decision("steer"))
     ctrl._conversation.open_turn(tid, "turn-a", _snapshot)
     decided = await ctrl.voice_decide(tid, "use sqlite", 800, False)
@@ -35,14 +35,14 @@ async def test_decide_has_no_side_effects(tmp_path: Path, monkeypatch: pytest.Mo
     assert fake.calls[-1]["user_payload"]["progress"] == _snapshot()  # type: ignore[index]
     assert ctrl._conversation._active[tid].pending == []
     assert ctrl.conversation_receipt(tid, str(decided["decision_id"])) is None
-    assert ctrl._voice.log(tid) == []
+    assert store.get_thread(tid).messages == []  # type: ignore[union-attr]
     ctrl._conversation.close_turn(tid, "turn-a")
 
 
 @pytest.mark.asyncio
 async def test_commit_steer_queues_on_decided_turn(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    ctrl, _store, tid = _setup(tmp_path, monkeypatch, [], {})
+    ctrl, store, tid = _setup(tmp_path, monkeypatch, [], {})
     _voice(ctrl, _decision("steer", request="switch to SQLite"))
     steering = ctrl._conversation.open_turn(tid, "turn-a", _snapshot)
     decided = await ctrl.voice_decide(tid, "actually use sqlite", 800, False)
@@ -53,8 +53,8 @@ async def test_commit_steer_queues_on_decided_turn(
     content = str(entry["content"])
     assert content.index("actually use sqlite") < content.index(
         "(Voice assistant's reading, advisory: switch to SQLite)")
-    assert ctrl._voice.log(tid) == [{"role": "user", "text": "actually use sqlite"},
-                                    {"role": "voice", "text": "On it."}]
+    assert [(m.role, m.content) for m in store.get_thread(tid).messages] == [  # type: ignore[union-attr]
+        ("user", "actually use sqlite"), ("agent", "On it.")]
     ctrl._conversation.close_turn(tid, "turn-a")
 
 
@@ -104,22 +104,22 @@ async def test_commit_start_task_after_turn_started_is_409_turn_active(
 @pytest.mark.asyncio
 async def test_commit_reply_records_the_exchange(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    ctrl, _store, tid = _setup(tmp_path, monkeypatch, [], {})
+    ctrl, store, tid = _setup(tmp_path, monkeypatch, [], {})
     _voice(ctrl, _decision("reply", say="It's on step two."))
     decided = await ctrl.voice_decide(tid, "how is it going", 800, False)
     assert ctrl.voice_commit(tid, str(decided["decision_id"])) == {"action": "reply"}
-    assert ctrl._voice.log(tid)[-1] == {"role": "voice", "text": "It's on step two."}
+    assert store.get_thread(tid).messages[-1].content == "It's on step two."  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio
 async def test_listen_is_not_committable_state(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    ctrl, _store, tid = _setup(tmp_path, monkeypatch, [], {})
+    ctrl, store, tid = _setup(tmp_path, monkeypatch, [], {})
     _voice(ctrl, _decision("start_task", turn="thinking"))
     decided = await ctrl.voice_decide(tid, "I want you to", 800, False)
     assert decided["action"] == "listen"
     assert ctrl.voice_commit(tid, str(decided["decision_id"])) == {"action": "listen"}
-    assert ctrl._voice.log(tid) == []
+    assert store.get_thread(tid).messages == []  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio
@@ -164,13 +164,14 @@ async def test_voice_request_folds_into_goal_not_transcript(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ctrl, store, tid = _setup(tmp_path, monkeypatch, [ANSWER], {})
     _voice(ctrl)
-    ctrl._voice.record(tid, "how is it going", "Nothing is running.")
+    ctrl._save_voice_exchange(tid, "d0", "how is it going", "Nothing is running.")
     payloads: list[dict[str, object]] = []
     _gated_steps(monkeypatch, lambda _n, _h: None, payloads=payloads)
     words = "use sqlite, um, not postgres"
     await ctrl.handle_message(tid, words, channel_id=f"chat:{tid}",
                               voice_request="Switch the database to SQLite, not Postgres")
-    user = next(m for m in store.get_thread(tid).messages if m.role == "user")  # type: ignore[union-attr]
+    user = next(m for m in store.get_thread(tid).messages  # type: ignore[union-attr]
+                if m.role == "user" and not is_voice_message(m))
     assert user.content == words
     assert user.metadata.get("voice") is True
     goal = str(payloads[0]["goal"])
@@ -191,7 +192,7 @@ async def test_work_request_goal_carries_basis_not_recent_conversation(
     _voice(ctrl, {**_decision("start_task", request="Add a contact form to the About page "
                                                      "with name, email and message fields"),
                   "basis": basis})
-    ctrl._voice.record(tid, "how is it going", "Nothing is running.")
+    ctrl._save_voice_exchange(tid, "d0", "how is it going", "Nothing is running.")
     decided = await ctrl.voice_decide(tid, "do it", 900, False)
     committed = ctrl.voice_commit(tid, str(decided["decision_id"]))
     payloads: list[dict[str, object]] = []

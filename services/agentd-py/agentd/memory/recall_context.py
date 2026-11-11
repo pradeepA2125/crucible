@@ -9,6 +9,8 @@ from typing import Any, Protocol
 PAIR_TOKENS = 512
 MEMORY_TOKENS = 256
 QUERY_TOKENS = 380
+# agentd.chat.models.VOICE_MESSAGE_KINDS, copied: this module stays import-light.
+VOICE_MESSAGE_KINDS = ("exchange", "narration")
 
 
 def clean_closing(text: str) -> str:
@@ -29,9 +31,9 @@ def previous_closing(messages: Iterable[Mapping[str, object]]) -> str:
     """Consume newest-first messages; skip notices, progress and unfinished answers."""
     for message in messages:
         metadata = message.get("metadata")
-        if isinstance(metadata, Mapping) and any(metadata.get(key) for key in (
+        if isinstance(metadata, Mapping) and (any(metadata.get(key) for key in (
             "system_notice", "breadcrumb", "progress", "inflight_turn_id",
-        )):
+        )) or metadata.get("voice") in VOICE_MESSAGE_KINDS):
             continue
         if message.get("role") == "agent" and message.get("type", "text") == "text":
             text = clean_closing(str(message.get("content") or ""))

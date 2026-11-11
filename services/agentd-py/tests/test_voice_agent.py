@@ -183,37 +183,23 @@ def test_history_skips_breadcrumbs_cards_and_empty() -> None:
         ChatMessage(role="agent", content="diff", type="diff_card"),
         ChatMessage(role="agent", content=""),
         ChatMessage(role="agent", content="x" * 2000),
+        ChatMessage(role="user", content="how is it going", metadata={"voice": "exchange"}),
+        ChatMessage(role="agent", content="Halfway.", metadata={"voice": "exchange"}),
     ]
-    log = [{"role": "user", "text": "how is it going"}, {"role": "voice", "text": "Halfway."}]
-    history = voice_history(messages, log)
+    history = voice_history(messages)
     assert history[0] == {"role": "user", "text": "build a tetris game"}
-    assert history[1]["role"] == "agent" and len(history[1]["text"]) == 2000  # latest answer, kept
-    assert history[2:] == log
+    # The latest written answer stays long even with spoken lines after it.
+    assert history[1]["role"] == "agent" and len(history[1]["text"]) == 2000
+    assert history[2:] == [{"role": "user", "text": "how is it going"},
+                           {"role": "voice", "text": "Halfway."}]
 
 
 def test_history_keeps_the_newest_12() -> None:
     messages = [ChatMessage(role="user", content=f"m{i}") for i in range(20)]
-    history = voice_history(messages, [])
+    history = voice_history(messages)
     assert len(history) == 12
     assert history[-1]["text"] == "m19"
     assert history[0]["text"] == "m8"
-
-
-def test_record_keeps_last_24() -> None:
-    agent = _agent(None)
-    for i in range(20):
-        agent.record("t1", f"heard {i}", f"said {i}")
-    log = agent.log("t1")
-    assert len(log) == 24
-    assert log[-1] == {"role": "voice", "text": "said 19"}
-    assert log[0] == {"role": "user", "text": "heard 8"}
-    assert agent.log("other") == []
-
-
-def test_record_without_said_logs_only_the_user() -> None:
-    agent = _agent(None)
-    agent.record("t1", "use sqlite", "")
-    assert agent.log("t1") == [{"role": "user", "text": "use sqlite"}]
 
 
 @pytest.mark.asyncio
@@ -436,7 +422,7 @@ def test_history_keeps_the_latest_answer_long_enough_to_explain() -> None:
     old, latest = "o" * 3000, "n" * 6000
     messages = [ChatMessage(role="agent", content=old), ChatMessage(role="user", content="explain"),
                 ChatMessage(role="agent", content=latest)]
-    history = voice_history(messages, [])
+    history = voice_history(messages)
     assert len(history[0]["text"]) == 1200
     assert len(history[-1]["text"]) == 4000
 

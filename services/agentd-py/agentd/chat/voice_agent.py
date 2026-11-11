@@ -17,13 +17,12 @@ import logging
 import os
 import re
 import time
-from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from agentd.chat.conversation import TransportSource
-from agentd.chat.models import ChatMessage
+from agentd.chat.models import ChatMessage, is_voice_message
 from agentd.providers.plan_access import PlanUnsupportedCapability, ProviderAccessStopped
 from agentd.providers.reasoning_effort import EFFORT_OVERRIDE
 from agentd.providers.side_calls import low_effort, record_usage, small_plan_model
@@ -50,7 +49,6 @@ _HISTORY_ENTRIES = 12
 _HISTORY_ENTRY_CHARS = 1200
 # The latest agent answer is what "explain that" and "what are the issues" are about.
 _LATEST_ANSWER_CHARS = 4000
-_LOG_ENTRIES = 24
 _NARRATE_INPUT_CHARS = 16000
 
 VOICE_DECISION_SCHEMA: dict[str, object] = {
@@ -170,19 +168,21 @@ def _collapse(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
-def voice_history(messages: Sequence[ChatMessage],
-                  log: Sequence[dict[str, str]]) -> list[dict[str, str]]:
-    """Conversation text the voice agent may see: user and agent text messages (never
-    breadcrumbs, cards or pills-only rows), then the voice exchange log; newest kept."""
-    entries: list[dict[str, str]] = []
+def voice_history(messages: Sequence[ChatMessage]) -> list[dict[str, str]]:
+    """Conversation text the voice agent may see: user and agent text messages, including
+    the saved voice exchanges and narrations (never breadcrumbs, cards or pills-only rows);
+    newest kept. What was spoken aloud is labelled "voice", so the voice agent can tell its
+    own words from the coding agent's written answers."""
     texts = [m for m in messages
              if m.type == "text" and not m.metadata.get("breadcrumb") and m.content.strip()]
-    latest_answer = next((m for m in reversed(texts) if m.role == "agent"), None)
-    for message in texts:
+    latest_answer = next((m for m in reversed(texts)
+                          if m.role == "agent" and not is_voice_message(m)), None)
+    entries: list[dict[str, str]] = []
+    for message in texts[-_HISTORY_ENTRIES:]:
         limit = _LATEST_ANSWER_CHARS if message is latest_answer else _HISTORY_ENTRY_CHARS
-        entries.append({"role": message.role, "text": message.content.strip()[:limit]})
-    entries.extend(dict(entry) for entry in log)
-    return entries[-_HISTORY_ENTRIES:]
+        role = "voice" if message.role == "agent" and is_voice_message(message) else message.role
+        entries.append({"role": role, "text": message.content.strip()[:limit]})
+    return entries
 
 
 def _normalize(raw: dict[str, object], ctx: VoiceContext) -> VoiceDecision:
@@ -262,18 +262,8 @@ def _is_model_rejection(exc: BaseException) -> bool:
 class VoiceAgent:
     def __init__(self, transport_source: TransportSource | None) -> None:
         self._transport_source = transport_source
-        self._logs: dict[str, deque[dict[str, str]]] = {}
         # (transport id, model) pairs the provider refused; the agent's model is used.
         self._rejected: set[tuple[int, str]] = set()
-
-    def log(self, thread_id: str) -> list[dict[str, str]]:
-        return list(self._logs.get(thread_id, ()))
-
-    def record(self, thread_id: str, heard: str, said: str) -> None:
-        log = self._logs.setdefault(thread_id, deque(maxlen=_LOG_ENTRIES))
-        log.append({"role": "user", "text": heard[:_HISTORY_ENTRY_CHARS]})
-        if said:
-            log.append({"role": "voice", "text": said[:_HISTORY_ENTRY_CHARS]})
 
     def _transport(self) -> tuple[Any, str]:
         source = self._transport_source() if self._transport_source is not None else None

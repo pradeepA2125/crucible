@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from agentd.chat.models import ChatMessage
+from agentd.chat.models import ChatMessage, is_voice_message
 from agentd.chat.storage import ChatThreadStore
 from agentd.runtime.artifacts import chat_turn_artifacts_root
 
@@ -99,7 +99,7 @@ def _read_traces(workspace_path: Path, thread_id: str,
 
 def _window(messages: list[ChatMessage], request_id: str | None,
             ) -> tuple[ChatMessage | None, datetime | None]:
-    users = [m for m in messages if m.role == "user"]
+    users = [m for m in messages if m.role == "user" and not is_voice_message(m)]
     if not users:
         return None, None
     index = next((i for i, m in enumerate(users) if request_id and m.id == request_id),
@@ -111,7 +111,8 @@ def _window(messages: list[ChatMessage], request_id: str | None,
 def _is_answer(message: ChatMessage) -> bool:
     meta = message.metadata or {}
     return (message.role == "agent" and message.type == "text" and bool(message.content.strip())
-            and not meta.get("breadcrumb") and not meta.get("tool_events"))
+            and not meta.get("breadcrumb") and not meta.get("tool_events")
+            and not is_voice_message(message))
 
 
 def build_episode(store: ChatThreadStore, workspace_path: Path, thread_id: str, *,

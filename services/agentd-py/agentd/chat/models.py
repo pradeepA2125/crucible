@@ -50,6 +50,17 @@ class ChatMessage(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+# metadata["voice"] on a message saved only for the user to read. A spoken request that
+# started work carries `True` instead: it is an ordinary user message (the task's goal).
+VOICE_MESSAGE_KINDS = ("exchange", "narration")
+
+
+def is_voice_message(message: ChatMessage) -> bool:
+    """A spoken exchange or narration: shown in the chat, but never the coding agent's
+    context, never permission for the approval judge, never the latest request."""
+    return message.metadata.get("voice") in VOICE_MESSAGE_KINDS
+
+
 class AgentRecord(BaseModel):
     """One sub-agent (spec §3.1) — a `chat_agents` row. v2 makes it a durable record that
     can run more than once (activations), so the model history and the definition it was

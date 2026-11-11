@@ -71,6 +71,7 @@ from agentd.chat.models import (
     GateTeam,
     NoticeRecord,
     PendingGate,
+    is_voice_message,
 )
 from agentd.chat.protected_paths import (
     AgentProtection,
@@ -748,7 +749,7 @@ class ChatController:
         turn_id = self._conversation.active_turn_id(thread_id)
         ctx = VoiceContext(
             utterance=utterance, silence_ms=silence_ms, final_call=final_call,
-            history=voice_history(thread.messages, self._voice.log(thread_id)),
+            history=voice_history(thread.messages),
             progress=self._conversation.active_snapshot(thread_id),
             project=Path(self._workspace_path).name, model_override=voice_model)
         decision = await self._voice.decide(thread_id, ctx)
@@ -779,28 +780,45 @@ class ChatController:
                 f"{entry.utterance}\n\n(Voice assistant's reading, advisory: {entry.request})"
                 + (f"\nIt rests on this spoken exchange:\n{entry.basis}" if entry.basis else ""),
                 entry.turn_id or "")
-            self._voice.record(thread_id, entry.utterance, entry.say)
+            self._save_voice_exchange(thread_id, decision_id, entry.utterance, entry.say)
             return {"action": "steer", "receipt": receipt.view()}
         if entry.action == "start_task":
             if thread_id in self._active_turns:
                 raise ConversationError(409, {
                     "code": "turn_active",
                     "active_turn_id": self._conversation.active_turn_id(thread_id)})
-            self._voice.record(thread_id, entry.utterance, entry.say)
-            # The client carries only the reading back to /message; the basis stays here,
+            # handle_message saves the spoken request as the turn's own user message. The
+            # client carries only the reading back to /message; the basis stays here,
             # server-derived, and joins the goal when that reading arrives.
             self._voice_basis[thread_id] = (entry.request, entry.basis)
             return {"action": "start_task", "message": entry.utterance,
                     "voice_request": entry.request}
-        self._voice.record(thread_id, entry.utterance, entry.say)
+        self._save_voice_exchange(thread_id, decision_id, entry.utterance, entry.say)
         return {"action": entry.action}
+
+    def _save_voice_exchange(self, thread_id: str, decision_id: str, heard: str, said: str) -> None:
+        """What was heard and what was said, visible in the chat and kept across restarts.
+        Marked as voice so no context reader treats it as a request or as permission."""
+        marker = {"voice": "exchange", "voice_decision": decision_id}
+        self._store.append_message(thread_id, ChatMessage(role="user", content=heard,
+                                                          metadata=dict(marker)))
+        if said:
+            self._store.append_message(thread_id, ChatMessage(role="agent", content=said,
+                                                              metadata=dict(marker)))
 
     async def voice_narrate(self, thread_id: str, heard: str, answer: str,
                             voice_model: str = "") -> str:
         if self._store.get_thread(thread_id) is None:
             raise ConversationError(404, "Thread not found")
         spoken = await self._voice.narrate(thread_id, heard, answer, model_override=voice_model)
-        self._voice.record(thread_id, heard, spoken)
+        # Saved as a spoken summary attached to the written answer it narrates: it often
+        # ends with its own question, which a following "do it" must be able to resolve.
+        thread = self._store.get_thread(thread_id)
+        answer_id = next((m.id for m in reversed(thread.messages if thread else [])
+                          if m.role == "agent" and m.type == "text" and m.content.strip()
+                          and not m.metadata.get("breadcrumb") and not is_voice_message(m)), None)
+        self._store.append_message(thread_id, ChatMessage(
+            role="agent", content=spoken, metadata={"voice": "narration", "answer_id": answer_id}))
         return spoken
 
     def project_activity(self, requested_workspace: str) -> dict[str, object]:
@@ -1015,7 +1033,7 @@ class ChatController:
             # message in one thread must not accept edits waiting in another.
             self._set_legacy_review(not step_review)
         # Auto-name the thread from its first user message (mirrors ChatAgent).
-        if not any(m.role == "user" for m in thread.messages):
+        if not any(m.role == "user" and not is_voice_message(m) for m in thread.messages):
             title = message.strip().replace("\n", " ")[:50]
             self._store.update_title(thread_id, title)
             self._broadcaster.broadcast(channel_id, {
@@ -1215,7 +1233,7 @@ class ChatController:
         if thread is None:
             return None
         for message in reversed(thread.messages):
-            if message.role == "user":
+            if message.role == "user" and not is_voice_message(message):
                 return message.id
         return None
 
@@ -1418,7 +1436,8 @@ class ChatController:
             plan_context["memory_budget_key"] = (
                 self._store.turn_message_id(thread_id, turn_id or "")
                 or next((message.id for message in reversed(thread.messages if thread else [])
-                         if message.role == "user" and message.id), None)
+                         if message.role == "user" and message.id
+                         and not is_voice_message(message)), None)
                 or turn_id or channel_id
             )
             from agentd.memory.recall_context import previous_closing
@@ -5230,7 +5249,8 @@ class ChatController:
         if not created:
             return receipt
         channel_id = f"chat:{thread_id}"
-        goal = next((m.content for m in reversed(thread.messages) if m.role == "user"), "")
+        goal = next((m.content for m in reversed(thread.messages)
+                     if m.role == "user" and not is_voice_message(m)), "")
         if claim.kind == "mode":
             # Accepted authority, not the card's independent setPlanMode message.
             self._plan_mode = False

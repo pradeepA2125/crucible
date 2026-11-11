@@ -24,6 +24,7 @@ from agentd.chat.models import (
     GateAmbiguousError,
     GateNotFoundError,
     TeamPlanDecisionRequest,
+    is_voice_message,
 )
 from agentd.chat.rewind import RewindStore, resolve_rewind_anchor
 from agentd.domain.models import (
@@ -2126,7 +2127,8 @@ def build_router(
             goal = ""
             if thread is not None:
                 goal = next(
-                    (m.content for m in reversed(thread.messages) if m.role == "user"), "")
+                    (m.content for m in reversed(thread.messages)
+                     if m.role == "user" and not is_voice_message(m)), "")
 
             _active = getattr(_chat_agent, "_active_turns", None)
 
@@ -2206,7 +2208,8 @@ def build_router(
             goal = ""
             if thread is not None:
                 goal = next(
-                    (m.content for m in reversed(thread.messages) if m.role == "user"), "")
+                    (m.content for m in reversed(thread.messages)
+                     if m.role == "user" and not is_voice_message(m)), "")
 
             _active = getattr(_chat_agent, "_active_turns", None)
             if _active is not None:

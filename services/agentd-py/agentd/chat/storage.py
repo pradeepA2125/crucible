@@ -16,6 +16,7 @@ from agentd.chat.models import (
     Checkpoint,
     NoticeRecord,
     PendingGate,
+    is_voice_message,
 )
 from agentd.providers.usage import Usage
 from agentd.teams.store import TeamStore
@@ -1224,7 +1225,8 @@ class ChatThreadStore:
 
     def last_user_message_at(self, thread_id: str) -> datetime | None:
         thread = self.get_thread(thread_id)
-        stamps = [m.timestamp for m in (thread.messages if thread else []) if m.role == "user"]
+        stamps = [m.timestamp for m in (thread.messages if thread else [])
+                  if m.role == "user" and not is_voice_message(m)]
         return stamps[-1] if stamps else None
 
     def set_agent_history(self, agent_id: str, history: list[dict[str, Any]]) -> None:

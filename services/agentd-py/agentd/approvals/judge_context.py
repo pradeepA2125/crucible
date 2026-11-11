@@ -12,7 +12,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from agentd.chat.models import ChatMessage
+from agentd.chat.models import ChatMessage, is_voice_message
 from agentd.context_metrics import count_text_tokens
 
 AUTHORIZATION_TOKEN_CAP = 4000
@@ -89,6 +89,9 @@ def _actions(entry: dict[str, object]) -> list[str]:
 
 
 def _authorization_text(message: ChatMessage) -> str | None:
+    # Spoken small talk, possibly misheard, never authorizes a command.
+    if is_voice_message(message):
+        return None
     if message.role == "user":
         return message.content
     record = (message.metadata or {}).get("authorization")
