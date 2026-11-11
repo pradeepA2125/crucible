@@ -18,6 +18,14 @@ await Promise.all([build({ entryPoints: [resolve(base, "src/main.ts")], bundle: 
   build({ entryPoints: [resolve(base, "src/preload.ts")], bundle: true, platform: "browser", target: "chrome130", format: "cjs", external: ["electron"], outfile: resolve(dist, "preload.cjs") })]);
 await build({entryPoints:[resolve(base,"src/terminal-worker.ts")],bundle:true,platform:"node",target:"node22",format:"cjs",external:["node-pty"],outfile:resolve(dist,"terminal-worker.cjs")});
 await build({entryPoints:[resolve(base,"src/update-worker.ts")],bundle:true,platform:"node",target:"node22",format:"cjs",outfile:resolve(dist,"update-worker.cjs")});
+// Spoken replies off Apple Silicon: sherpa-onnx's Node addon stays outside the bundle, beside
+// its prebuilt platform package (sherpa-onnx-<win|linux|darwin>-<arch>), which it loads as a sibling.
+await build({entryPoints:[resolve(base,"src/voice/pocket-worker.ts")],bundle:true,platform:"node",target:"node22",format:"cjs",external:["sherpa-onnx-node"],outfile:resolve(dist,"voice-pocket-worker.cjs")});
+const sherpaPlatform=`sherpa-onnx-${process.platform==="win32"?"win":process.platform}-${process.arch}`;
+for(const name of ["sherpa-onnx-node",sherpaPlatform]){
+  const root=dirname(createRequire(import.meta.url).resolve(`${name}/package.json`));
+  await cp(root,resolve(dist,"node_modules",name),{recursive:true,dereference:true});
+}
 await cp(resolve(base, "../vscode-extension/webview-ui/dist"), resolve(dist, "renderer"), { recursive: true });
 await build({
   entryPoints: [resolve(base, "../vscode-extension/webview-ui/src/desktop/voice/capture-worklet.ts")],

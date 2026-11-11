@@ -7,7 +7,7 @@ import type {
 import { VoiceAssets, type VoiceModel } from "./assets.js";
 import type { VoiceRequest } from "./protocol.js";
 import { firstSentences, speakable } from "./speakable.js";
-import { Detector, helperPath, helperUsable, Recognizer, Synthesizer } from "./workers.js";
+import { Detector, helperPath, helperUsable, LineWorker, Recognizer, Synthesizer } from "./workers.js";
 import type { DiagnosticSource, DiagnosticValue } from "./diagnostics.js";
 
 export interface VoiceSnapshot {
@@ -212,8 +212,9 @@ export class VoiceHost {
       abort.signal.throwIfAborted();
       recognizer = new Recognizer(this.helper("crucible-whisper"), modelPath, failed,
         words.length ? words.join(", ") : undefined);
-      synthesizer = new Synthesizer(this.helper(tts === "system" ? "crucible-tts" : "crucible-pocket-tts"),
-        tts === "system" ? ["--engine", "system"] : ["--models", pocketPath!], failed);
+      const synthPath = this.helper(tts === "system" ? "crucible-tts" : "crucible-pocket-tts");
+      const synthArgs = tts === "system" ? ["--engine", "system"] : ["--models", pocketPath!];
+      synthesizer = new Synthesizer((onLine, onFailure) => new LineWorker(synthPath, synthArgs, onLine, onFailure), failed);
       const synth = synthesizer;
       await Promise.all([
         recognizer.wait(abort.signal),

@@ -44,7 +44,16 @@ interface Job<T> {
   reject(reason: Error): void;
 }
 
-export class LineWorker {
+/** A worker speaking a line protocol, whatever process hosts it. */
+export interface WorkerChannel {
+  send(line: string): void;
+  close(): Promise<void>;
+}
+
+/** Opens a channel; the channel delivers each line and reports an unexpected stop. */
+export type OpenChannel = (onLine: (line: string) => void, onFailure: (error: Error) => void) => WorkerChannel;
+
+export class LineWorker implements WorkerChannel {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly completion: Promise<void>;
   private readonly decoder = new StringDecoder();
@@ -259,11 +268,12 @@ const ttsMessage = z.discriminatedUnion("type", [
 
 export class Synthesizer {
   private readonly ready = new Readiness();
-  private readonly worker: LineWorker;
+  private readonly worker: WorkerChannel;
   private job: (Job<void> & { audio(pcm: ArrayBuffer, sampleRate: number): void }) | undefined;
 
-  constructor(path: string, args: string[], failure: (error: Error) => void) {
-    this.worker = new LineWorker(path, args, line => {
+  /** `open` starts the speech worker: a native helper (LineWorker) or the Pocket utility process. */
+  constructor(open: OpenChannel, failure: (error: Error) => void) {
+    this.worker = open(line => {
       let data: unknown;
       try { data = JSON.parse(line); } catch { return; }
       const parsed = ttsMessage.safeParse(data);
