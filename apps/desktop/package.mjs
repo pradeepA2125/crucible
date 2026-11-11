@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { createHash, createPublicKey } from "node:crypto";
 import { sealCommunityApp } from "./adhoc-sign.mjs";
 import { bundleLinks, fileManifest, packageArguments, validateReleaseManifest } from "./package-utils.mjs";
+import { thirdPartyNotices, voicePayload } from "./voice-payload.mjs";
 const exec=promisify(execFile),root=import.meta.dirname,opts=packageArguments(process.argv.slice(2));
 const platform=`${process.platform}-${process.arch}`;if(!["darwin-arm64","darwin-x64","linux-x64","win32-x64"].includes(platform))throw new Error(`Unsupported native package target: ${platform}`);
 if(!isAbsolute(opts.out))throw new Error("Output path must be absolute.");const output=resolve(opts.out);
@@ -24,6 +25,9 @@ const voiceRoot=join(dist,"voice-native");
 const voiceHelper=async name=>lstat(join(voiceRoot,name)).then(stat=>stat.isFile(),error=>{if(error.code==="ENOENT")return false;throw error;});
 const voiceBundled=platform==="darwin-arm64" && await voiceHelper("crucible-whisper") &&
  (await voiceHelper("crucible-tts") || await voiceHelper("crucible-pocket-tts"));
+// Windows and Linux: voice ships when build-portable.mjs produced the whisper helper.
+const portableVoice=voicePayload(platform).length>0&&platform!=="darwin-arm64"&&
+ await voiceHelper(process.platform==="win32"?"crucible-whisper.exe":"crucible-whisper");
 const require=createRequire(import.meta.url),electron=dirname(require.resolve("electron/package.json")),distribution=join(electron,"dist");
 const name=opts.preview?"Crucible Preview":"Crucible",identity=opts.preview?"io.crucible.desktop.preview":"io.crucible.desktop";
 await mkdir(output,{recursive:false});let complete=false;
@@ -37,6 +41,11 @@ try{
  const target=join(payload,"dist");await mkdir(target);for(const f of ["main.cjs","preload.cjs","terminal-worker.cjs","update-worker.cjs","renderer","resources"])await cp(join(dist,f),join(target,f),{recursive:true});
  if(voiceBundled)await cp(voiceRoot,join(target,"voice-native"),{recursive:true,
   filter:file=>!(/^(?:crucible-turn-detector|smart-turn-.*\.onnx|libonnxruntime\..*\.dylib|LICENSE\.(?:SmartTurn|ONNXRuntime)|ThirdPartyNotices\.ONNXRuntime\.txt)$/.test(basename(file)))});
+ if(portableVoice){
+  for(const path of voicePayload(platform))await cp(join(dist,path),join(target,path),{recursive:true,dereference:true});
+  const pocketPack=JSON.parse(await readFile(join(root,"voice-native/pocket-onnx-assets.json"),"utf8"));
+  await writeFile(join(target,"voice-native/THIRD_PARTY_NOTICES"),thirdPartyNotices(pocketPack.attribution));
+ }
  const pty=join(target,"node_modules/node-pty");await mkdir(pty,{recursive:true});for(const f of ["lib","package.json","LICENSE",`prebuilds/${platform}`])await cp(join(dist,"node_modules/node-pty",f),join(pty,f),{recursive:true});
  if(process.platform!=="win32")await chmod(join(pty,`prebuilds/${platform}/spawn-helper`),0o755);
  if(opts["update-key"]){const keyText=await readFile(resolve(opts["update-key"]),"utf8");if(!keyText.includes("BEGIN PUBLIC KEY")||keyText.includes("PRIVATE KEY"))throw new Error("Provide only the public update verification key.");const key=createPublicKey(keyText);if(key.asymmetricKeyType!=="ed25519")throw new Error("Update verification requires an Ed25519 public key.");await writeFile(join(target,"resources/desktop-update-key.pem"),key.export({type:"spki",format:"pem"}));}

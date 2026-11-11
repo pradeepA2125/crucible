@@ -41,7 +41,8 @@ same model family as the Mac's Pocket voice) run by **sherpa-onnx**:
   system for speech output.
 - **Model:** `sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2` from sherpa-onnx's `tts-models`
   GitHub release (int8 ONNX: `lm_flow`, `lm_main`, `encoder`, `decoder`, `text_conditioner`,
-  `vocab.json`, `token_scores.json`). Reported ~94 MB download, ~203 MB unpacked. The weights
+  `vocab.json`, `token_scores.json`). Downloaded file by file from the sherpa-onnx author's
+  Hugging Face mirror (`csukuangfj2/sherpa-onnx-pocket-tts-int8-2026-01-26`), about 199 MB. The weights
   are **CC-BY-4.0** (Kyutai's model card), so redistribution is allowed with attribution. The
   Kyutai Hugging Face repository is gated; the sherpa-onnx release is not.
 - **Voice:** sherpa-onnx picks the voice from a short reference recording. Ship one reference
@@ -83,8 +84,8 @@ project-words prompt, the same models and the same VAD the Mac was tuned on.
 
 Voice no longer requires a text-to-speech engine to start. Without one, everything works except
 speaking: the decision, the chat messages and the panel's live line are the same, replies are
-not spoken, and the panel offers the spoken-reply download ("Install spoken replies, about
-95 MB"). This is the state of a fresh Windows or Linux install until the user installs Pocket.
+not spoken, and the panel offers the spoken-reply download ("Install spoken replies (about
+200 MB)": the pinned files are downloaded one by one, not as the ~94 MB compressed archive). This is the state of a fresh Windows or Linux install until the user installs Pocket.
 
 ### 4. Capabilities, not platform names
 
@@ -107,7 +108,9 @@ each missing piece with its install action.
 
 ### 6. Packaging and CI
 
-- `desktop-package.yml` gains `ubuntu` and `windows` jobs that build `crucible-whisper` from
+- A new `voice-platforms.yml` workflow (the release-candidate `desktop-package.yml` is manually
+  dispatched with version inputs, so preview jobs do not belong there) runs `ubuntu` and
+  `windows` jobs that build `crucible-whisper` from
   source in the job (as the job already builds the indexer), package a **preview** (`--preview`)
   `.tar.gz` / `.zip` with the voice helper and that target's `sherpa-onnx` prebuilt, and run the
   headless voice smoke (Verification). They are not release candidates: the candidate pipeline

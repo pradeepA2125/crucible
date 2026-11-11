@@ -1,0 +1,53 @@
+name: voice-platforms
+# Local voice on Windows and Linux: build the whisper helper for the runner's platform, prove
+# Pocket speaks and whisper hears it (scripts/voice/voice-smoke.mjs), and package a preview.
+# Previews only: signing, installers and updates for these platforms come later.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - apps/desktop/**
+      - apps/vscode-extension/webview-ui/src/desktop/voice/**
+      - scripts/voice/**
+      - .github/workflows/voice-platforms.yml
+permissions:
+  contents: read
+jobs:
+  voice:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npm --prefix apps/vscode-extension/webview-ui ci
+      - run: npm run build
+      - run: npm run -w @crucible/desktop build:voice:portable
+      - name: Desktop tests (all on Linux; the platform-neutral voice tests on Windows)
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            npm run -w @crucible/desktop test -- test/pocket-protocol.test.ts test/utility-channel.test.ts test/voice-package.test.ts test/voice-assets.test.ts
+          else
+            npm run -w @crucible/desktop test
+          fi
+      - uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/voice-models
+          key: voice-models-${{ hashFiles('apps/desktop/voice-native/pocket-onnx-assets.json', 'apps/desktop/src/voice/assets.ts') }}
+      - name: Voice smoke (Pocket speaks, whisper hears it, VAD scores it)
+        run: node scripts/voice/voice-smoke.mjs --helpers apps/desktop/dist/voice-native --models "$RUNNER_TEMP/voice-models"
+      - name: Preview package
+        run: npm run -w @crucible/desktop package -- --preview --out "$RUNNER_TEMP/package"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crucible-desktop-${{ runner.os }}-x64-voice-preview
+          path: ${{ runner.temp }}/package
+          retention-days: 14

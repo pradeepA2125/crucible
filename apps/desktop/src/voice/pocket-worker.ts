@@ -4,6 +4,8 @@
 import { join } from "node:path";
 import { servePocket, type PocketEngine } from "./pocket-protocol.js";
 
+export { servePocket };
+
 type Wave = { samples: Float32Array; sampleRate: number };
 type SherpaTts = {
   sampleRate: number;
