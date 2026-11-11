@@ -20,6 +20,7 @@ import {
 } from "./chatgpt-settings.js";
 import { createClaudeHandler, isClaudeMessage, type ClaudeDeps, type ClaudeInMsg, type ClaudeOutMsg } from "./claude-settings.js";
 import type { SettingsSectionId } from "./settings-sections.js";
+import type { ModelOption as VoiceModelOption } from "./composer-models.js";
 import { APPEARANCES, ACCENTS, type Accent, type Appearance, type ThemeSettings } from "./theme-settings.js";
 
 // vscode-free message handler for the settings panel (settings-panel.ts wires it to
@@ -76,6 +77,7 @@ export type SettingsInMsg =
   | { type: "settings/trustAgent"; path: string; sha256: string }
   | { type: "settings/openFile"; path: string }
   | { type: "settings/listModels" }
+  | { type: "settings/listVoiceModels" }
   | { type: "settings/sandbox" }
   | { type: "settings/setSandboxEnabled"; enabled: boolean }
   | { type: "settings/setSandboxHosts"; hosts: string[] }
@@ -98,6 +100,8 @@ export type SettingsOutMsg =
   | { type: "settings/agents"; catalog: AgentCatalog }
   | { type: "settings/agentsError"; message: string }
   | { type: "settings/models"; models: string[] }
+  // The composer's model options for the voice-model picker; backend is the active provider.
+  | { type: "settings/voiceModels"; backend: string | null; options: VoiceModelOption[] }
   | { type: "settings/sandboxState"; config: SandboxConfig }
   | { type: "settings/sandboxError"; message: string }
   | { type: "settings/projectTrustState"; files: ProjectTrustFile[]; error?: string }
@@ -187,6 +191,8 @@ export interface SettingsDeps {
   openFile(path: string): Promise<void>;
   /** The model options the composer offers, for the agent form's model picker. */
   listModels(): Promise<string[]>;
+  /** The composer's own option list with its backend (desktop: Settings › Voice's model picker). */
+  listVoiceModels?(): Promise<{ backend: string | null; options: VoiceModelOption[] }>;
   /** Sign in with ChatGPT (spec 2026-10-06 §6). */
   chatgpt: ChatGPTDeps;
   claude?: ClaudeDeps;
@@ -518,6 +524,11 @@ export function createSettingsHandler(
         }
         case "settings/listModels": {
           post({ type: "settings/models", models: await deps.listModels() });
+          return;
+        }
+        case "settings/listVoiceModels": {
+          const list = deps.listVoiceModels ? await deps.listVoiceModels() : { backend: null, options: [] };
+          post({ type: "settings/voiceModels", backend: list.backend, options: list.options });
           return;
         }
         case "settings/restartBackend": {

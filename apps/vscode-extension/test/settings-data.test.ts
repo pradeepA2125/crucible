@@ -451,6 +451,12 @@ describe("agents messages", () => {
     expect(d.openFile).toHaveBeenCalledWith("/a.md");
     expect(await run(d, { type: "settings/listModels" }))
       .toEqual([{ type: "settings/models", models: ["gpt-5", "m2"] }]);
+    // Voice-model options are a desktop dep: without one the reply is empty, never an error.
+    expect(await run(d, { type: "settings/listVoiceModels" }))
+      .toEqual([{ type: "settings/voiceModels", backend: null, options: [] }]);
+    const option = { backend: "chatgpt", label: "ChatGPT", model: "gpt-6", display: "GPT-6", active: true };
+    expect(await run({ ...d, listVoiceModels: async () => ({ backend: "chatgpt", options: [option] }) }, { type: "settings/listVoiceModels" }))
+      .toEqual([{ type: "settings/voiceModels", backend: "chatgpt", options: [option] }]);
   });
 });
 

@@ -165,6 +165,8 @@ export function createProjectHost(ports: HostPorts) {
         }
       },
     } });
+  // Settings › Voice picks a voice model from the same catalog the composer's model menu shows.
+  settingsDeps.listVoiceModels = async () => { const list = await models.state(); return { backend: list.current?.backend ?? null, options: list.options }; };
   const settingsHandler = createSettingsHandler(settingsDeps, post, models.afterSettingsMutation);
   const setupHandler = createSetupHandler(createHostSetupDeps({ runtime, workspace: root, clientFactory,
     openChat: ports.showChat, onBackendUrl: url => { if(url!==backendURL)++backendGeneration;backendURL = url; }, openExternal: ports.openExternal,

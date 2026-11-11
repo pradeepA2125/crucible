@@ -54,7 +54,7 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
       }
       if (!["settings/state", "settings/instructions", "settings/error", "settings/localState", "settings/navigate",
         // Sections read these themselves, but each one still answers a send() that marked the panel busy.
-        "settings/sandboxState", "settings/sandboxError", "settings/agents", "settings/agentsError", "settings/models",
+        "settings/sandboxState", "settings/sandboxError", "settings/agents", "settings/agentsError", "settings/models", "settings/voiceModels",
         "settings/contextTestResult", "settings/claudeModels"].includes(msg.type)) return;
       setBusy(false);
       if (msg.type === "settings/state") {
@@ -144,7 +144,7 @@ export default function SettingsApp({ initialSection = "overview" }: { initialSe
               </BtnPrimary>
             </div>
           )}
-          {desktop && section === "voice" && <VoiceSection />}
+          {desktop && section === "voice" && <VoiceSection send={send} />}
           <div hidden={!desktop || section !== "desktop"}><DesktopPreferences hostDesktop={desktop} /></div>
           <div hidden={!desktop || section !== "updates"}><DesktopUpdates hostDesktop={desktop} /></div>
           <div hidden={!desktop || section !== "drafts"}><DraftPersistence hostDesktop={desktop} /></div>

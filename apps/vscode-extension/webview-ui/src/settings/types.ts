@@ -123,6 +123,7 @@ export type SettingsInMsg =
   | { type: "settings/trustAgent"; path: string; sha256: string }
   | { type: "settings/openFile"; path: string }
   | { type: "settings/listModels" }
+  | { type: "settings/listVoiceModels" }
   // Sign in with ChatGPT (mirror of src/chatgpt-settings.ts).
   | { type: "settings/chatgptLoad" }
   | { type: "settings/chatgptSignIn"; registrationId?: string; reconsent?: boolean }
@@ -176,6 +177,7 @@ export type SettingsOutMsg =
   | { type: "settings/sandboxError"; message: string }
   | { type: "settings/projectTrustState"; files: TrustFile[]; error?: string }
   | { type: "settings/models"; models: string[] }
+  | { type: "settings/voiceModels"; backend: string | null; options: { backend: string; model: string; display?: string }[] }
   | { type: "settings/chatgpt"; accounts: ChatGPTAccount[]; activeRegistrationId: string | null }
   | { type: "settings/chatgptError"; message: string; kind?: string }
   | { type: "settings/chatgptSignIn"; signIn: ChatGPTSignIn }

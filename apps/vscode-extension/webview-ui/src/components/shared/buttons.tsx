@@ -6,6 +6,7 @@ import type { IconName } from "../Icon";
 
 interface BtnPrimaryProps {
   onClick?: () => void;
+  "aria-label"?: string;
   disabled?: boolean;
   /** When true, applies flex-1 so the button fills its flex container. */
   flex?: boolean;
@@ -18,12 +19,13 @@ interface BtnPrimaryProps {
  * Flat accent button: --accent-fill and --on-accent text.
  * Used for the primary/affirmative action in every card.
  */
-export function BtnPrimary({ onClick, disabled, flex, icon, className = "", children }: BtnPrimaryProps) {
+export function BtnPrimary({ onClick, disabled, flex, icon, className = "", children, "aria-label": ariaLabel }: BtnPrimaryProps) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
+      aria-label={ariaLabel}
       className={[
         "inline-flex items-center justify-center gap-1.5 px-3 py-[6px]",
         "rounded-control text-caption font-[550] cursor-pointer",
@@ -46,6 +48,7 @@ export function BtnPrimary({ onClick, disabled, flex, icon, className = "", chil
 
 interface BtnGhostProps {
   onClick?: () => void;
+  "aria-label"?: string;
   disabled?: boolean;
   className?: string;
   children: ReactNode;
@@ -55,12 +58,13 @@ interface BtnGhostProps {
  * Ghost button — transparent bg, border-strong border, text-2 color.
  * Used for secondary actions (e.g. "Give feedback", "Allow & remember").
  */
-export function BtnGhost({ onClick, disabled, className = "", children }: BtnGhostProps) {
+export function BtnGhost({ onClick, disabled, className = "", children, "aria-label": ariaLabel }: BtnGhostProps) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
+      aria-label={ariaLabel}
       className={[
         "inline-flex items-center justify-center px-3 py-[6px]",
         "rounded-control text-caption font-[550] text-text-2 cursor-pointer",
@@ -80,6 +84,7 @@ export function BtnGhost({ onClick, disabled, className = "", children }: BtnGho
 
 interface BtnDangerProps {
   onClick?: () => void;
+  "aria-label"?: string;
   disabled?: boolean;
   className?: string;
   children: ReactNode;
@@ -89,12 +94,13 @@ interface BtnDangerProps {
  * Danger button — red text, red-brd border, red-bg on hover.
  * Used for destructive/rejection actions.
  */
-export function BtnDanger({ onClick, disabled, className = "", children }: BtnDangerProps) {
+export function BtnDanger({ onClick, disabled, className = "", children, "aria-label": ariaLabel }: BtnDangerProps) {
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
+      aria-label={ariaLabel}
       className={[
         "inline-flex items-center justify-center px-3 py-[6px]",
         "rounded-control text-caption font-[550] cursor-pointer",

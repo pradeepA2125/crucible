@@ -76,7 +76,7 @@ add(["projectTrustRead", "settings/projectTrust"]);
 add(["projectTrustSet", "settings/trustProjectFile"], { kind: trustKind, sha256 });
 add(["settings/setSandboxHosts"], { hosts: strings });
 add(["settings/setSandboxFolders"], { folders: strings });
-add(["settings/load", "settings/sandbox", "settings/loadInstructions", "settings/restartBackend", "settings/listAgents", "settings/listModels", "settings/chatgptLoad", "settings/chatgptCancel", "settings/claudeLoad", "settings/claudeSignIn", "settings/claudeCancel"]);
+add(["settings/load", "settings/sandbox", "settings/loadInstructions", "settings/restartBackend", "settings/listAgents", "settings/listModels", "settings/listVoiceModels", "settings/chatgptLoad", "settings/chatgptCancel", "settings/claudeLoad", "settings/claudeSignIn", "settings/claudeCancel"]);
 add(["settings/setAppearance"], { appearance: z.enum(["vscode", "dark", "light"]), accent: z.enum(["blue", "violet", "ember"]) });
 add(["settings/setProvider"], { ...providerFields, contextWindow: z.number().int().positive().optional() });
 add(["settings/testContextWindow"], { ...providerFields, contextWindow: z.number().int().positive() });
