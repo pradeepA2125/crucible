@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <iostream>
 #include <memory>
@@ -10,6 +11,11 @@
 #include "pcm-protocol.hpp"
 #include "whisper.h"
 
+#if defined(_WIN32)
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#endif
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_AMD64))
 #include <immintrin.h>
 #include <intrin.h>
@@ -119,7 +125,9 @@ bool cpu_supported() {
     const bool features = (ecx & (1u << 12)) && (ecx & (1u << 27)) && (ecx & (1u << 28)) && (ecx & (1u << 29));
     if (!features || (_xgetbv(0) & 0x6) != 0x6) return false;
     __cpuidex(info, 7, 0);
-    return (static_cast<unsigned>(info[1]) & (1u << 5)) != 0;
+    // AVX2 (5) and BMI2 (8): ggml enables BMI2 whenever it is not built for the host CPU.
+    const unsigned ebx = static_cast<unsigned>(info[1]);
+    return (ebx & (1u << 5)) && (ebx & (1u << 8));
 #elif defined(__x86_64__)
     unsigned eax = 0, ebx = 0, ecx = 0, edx = 0;
     if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx)) return false;
@@ -129,21 +137,32 @@ bool cpu_supported() {
     __asm__ volatile("xgetbv" : "=a"(xcr0_low), "=d"(xcr0_high) : "c"(0));
     if ((xcr0_low & 0x6) != 0x6) return false;  // the OS saves SSE and AVX state
     if (!__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) return false;
-    return (ebx & (1u << 5)) != 0;  // AVX2
+    return (ebx & (1u << 5)) && (ebx & (1u << 8));  // AVX2 and BMI2 (ggml enables BMI2 too)
 #else
     return true;  // arm64 builds have no x86 baseline
 #endif
 }
 
+// Model paths are absolute: `/...` everywhere, and on Windows also `C:\...`, `C:/...` or `\\server\...`.
+bool absolute_path(std::string_view path) {
+    if (!path.empty() && path[0] == '/') return true;
+#if defined(_WIN32)
+    if (path.size() >= 3 && std::isalpha(static_cast<unsigned char>(path[0])) && path[1] == ':' &&
+        (path[2] == '\\' || path[2] == '/')) return true;
+    if (path.size() >= 2 && path[0] == '\\' && path[1] == '\\') return true;
+#endif
+    return false;
+}
+
 } // namespace
 
-int main(int argc, char **argv) {
+static int run(int argc, char **argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--check-cpu") {
         const bool ok = cpu_supported();
         std::cout << (ok ? "cpu ok" : "cpu unsupported") << std::endl;
         return ok ? 0 : 3;
     }
-    if (argc == 3 && std::string_view(argv[1]) == "--vad" && argv[2][0] == '/') {
+    if (argc == 3 && std::string_view(argv[1]) == "--vad" && absolute_path(argv[2])) {
         std::ios::sync_with_stdio(false);
         return run_vad(argv[2]);
     }
@@ -151,7 +170,7 @@ int main(int argc, char **argv) {
     // names the host read from the index), added to the coding glossary below.
     bool use_gpu = true;
     std::string project_words;
-    bool usage = argc < 3 || std::string_view(argv[1]) != "--model" || argv[2][0] != '/';
+    bool usage = argc < 3 || std::string_view(argv[1]) != "--model" || !absolute_path(argv[2]);
     for (int i = 3; !usage && i < argc; ++i) {
         const std::string_view arg(argv[i]);
         if (arg == "--cpu" && use_gpu) {
@@ -249,3 +268,23 @@ int main(int argc, char **argv) {
     });
     return 0;
 }
+
+#if defined(_WIN32)
+// Windows passes arguments in the ANSI code page, which loses or mangles non-ASCII folder names
+// ("José"); whisper.cpp expects UTF-8 paths. Take the wide arguments and convert them once.
+int wmain(int argc, wchar_t **wide) {
+    std::vector<std::string> args;
+    for (int i = 0; i < argc; ++i) {
+        const int size = WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, nullptr, 0, nullptr, nullptr);
+        std::string arg(size > 1 ? static_cast<std::size_t>(size - 1) : 0, '\0');
+        if (size > 1) WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, arg.data(), size, nullptr, nullptr);
+        args.push_back(std::move(arg));
+    }
+    std::vector<char *> argv;
+    for (auto &arg : args) argv.push_back(arg.data());
+    argv.push_back(nullptr);
+    return run(argc, argv.data());
+}
+#else
+int main(int argc, char **argv) { return run(argc, argv); }
+#endif
