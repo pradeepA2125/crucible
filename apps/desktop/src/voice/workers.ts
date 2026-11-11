@@ -108,8 +108,9 @@ export class Recognizer {
   private readonly worker: LineWorker;
   private job: Job<string> | undefined;
 
-  constructor(path: string, model: string, private readonly failure: (error: Error) => void) {
-    this.worker = new LineWorker(path, ["--model", model], line => {
+  /** prompt: the project's own names, added to Whisper's coding glossary. */
+  constructor(path: string, model: string, private readonly failure: (error: Error) => void, prompt?: string) {
+    this.worker = new LineWorker(path, ["--model", model, ...(prompt ? ["--prompt", prompt] : [])], line => {
       if (line === "ready") { this.ready.ready(); return; }
       const [id, status, ...content] = line.split("\t");
       const job = this.job;

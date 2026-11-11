@@ -109,9 +109,23 @@ int main(int argc, char **argv) {
         std::ios::sync_with_stdio(false);
         return run_vad(argv[2]);
     }
-    if (argc < 3 || argc > 4 || std::string_view(argv[1]) != "--model" ||
-        argv[2][0] != '/' || (argc == 4 && std::string_view(argv[3]) != "--cpu")) {
-        std::cerr << "Usage: crucible-whisper --model /absolute/model.bin [--cpu]\n"
+    // After the model: --cpu, and --prompt with the project's own names (file and symbol
+    // names the host read from the index), added to the coding glossary below.
+    bool use_gpu = true;
+    std::string project_words;
+    bool usage = argc < 3 || std::string_view(argv[1]) != "--model" || argv[2][0] != '/';
+    for (int i = 3; !usage && i < argc; ++i) {
+        const std::string_view arg(argv[i]);
+        if (arg == "--cpu" && use_gpu) {
+            use_gpu = false;
+        } else if (arg == "--prompt" && i + 1 < argc && project_words.empty()) {
+            project_words = argv[++i];
+        } else {
+            usage = true;
+        }
+    }
+    if (usage) {
+        std::cerr << "Usage: crucible-whisper --model /absolute/model.bin [--cpu] [--prompt words]\n"
                      "       crucible-whisper --vad /absolute/silero-model.bin\n";
         return 2;
     }
@@ -120,7 +134,7 @@ int main(int argc, char **argv) {
     std::cin.tie(nullptr);
 
     auto context_params = whisper_context_default_params();
-    context_params.use_gpu = argc != 4;
+    context_params.use_gpu = use_gpu;
     const std::unique_ptr<whisper_context, decltype(&whisper_free)> context(
         whisper_init_from_file_with_params(argv[2], context_params), whisper_free);
     if (!context) {
@@ -135,8 +149,18 @@ int main(int argc, char **argv) {
     // Coding words Whisper otherwise hears as everyday ones ("repo" came back as "report",
     // "ripple" and "rapport" in live tests). A short glossary, not a sentence, so it biases
     // spelling without inviting Whisper to repeat it on near-silence.
-    params.initial_prompt = "Glossary: repo, repository, commit, branch, pull request, PR, merge, "
-                            "npm, TypeScript, Python, API, Crucible.";
+    std::string glossary = "Glossary: repo, repository, commit, branch, pull request, PR, merge, "
+                           "npm, TypeScript, Python, API, Crucible.";
+    std::replace_if(project_words.begin(), project_words.end(),
+                    [](unsigned char c) { return c < 0x20; }, ' ');
+    if (!project_words.empty()) glossary += " " + project_words;
+    // Whisper keeps at most ~224 prompt tokens; cut at a name boundary well inside that.
+    constexpr std::size_t max_prompt_chars = 900;
+    if (glossary.size() > max_prompt_chars) {
+        const auto cut = glossary.rfind(", ", max_prompt_chars);
+        glossary.resize(cut == std::string::npos ? max_prompt_chars : cut);
+    }
+    params.initial_prompt = glossary.c_str();
     params.no_timestamps = true;
     params.print_special = false;
     params.print_progress = false;

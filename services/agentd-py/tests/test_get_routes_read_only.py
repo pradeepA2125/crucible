@@ -60,6 +60,8 @@ REVIEWED_READ_ONLY_GET_ROUTES = frozenset({
     # handlers read in-memory status / public account summaries, without refresh.
     ("api/claude_auth_routes.py", "/attempts/{attempt_id}"),
     ("api/claude_auth_routes.py", "/registrations"),
+    # Reads the index snapshot (mtime-cached) for project names; writes nothing.
+    ("api/routes.py", "/voice/vocabulary"),
     ("main.py", "/health"),
     ("main.py", "/v1/project/session"),  # in-memory public identity only, never keys or writes
 })

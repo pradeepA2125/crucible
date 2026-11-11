@@ -54,6 +54,14 @@ describe("voice agent client", () => {
     expect(seen[2].body.voice_model).toBe("gpt-6-luna");
   });
 
+  it("reads the project vocabulary", async () => {
+    const seen: Seen[] = [];
+    expect(await client({ words: ["crucible", "ControllerLoop"] }, 200, seen).voiceVocabulary())
+      .toEqual(["crucible", "ControllerLoop"]);
+    expect(seen[0].url).toBe("http://test/v1/voice/vocabulary");
+    await expect(client({ words: "nope" }).voiceVocabulary()).rejects.toThrow();
+  });
+
   it("narrates", async () => {
     const seen: Seen[] = [];
     expect(await client({ say: "Done." }, 200, seen).voiceNarrate("t", { heard: "fix it", answer: "Fixed.", expectedProcessId: "p" }))

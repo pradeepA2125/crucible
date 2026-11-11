@@ -28,7 +28,12 @@ export interface VoiceThread {
   commit(decisionId: string, expectedProcessId: string, signal: AbortSignal): Promise<VoiceCommitResult>;
   narrate(heard: string, answer: string, expectedProcessId: string, signal: AbortSignal,
     voiceModel?: string): Promise<string>;
+  /** The project's own names (index snapshot), to prime speech recognition. */
+  vocabulary(signal: AbortSignal): Promise<string[]>;
 }
+
+// Project words are best effort: a session never waits longer than this for them.
+const VOCABULARY_TIMEOUT_MS = 1500;
 
 type IdleHooks = { chunk(text: string): void; finish(): void; recover(): void };
 type Identity = { sessionId: string; utteranceId: string };
@@ -202,7 +207,14 @@ export class VoiceHost {
         if (this.session?.signal === abort) this.end(error.message);
         else abort.abort(error);
       };
-      recognizer = new Recognizer(join(this.options.helpers, "crucible-whisper"), modelPath, failed);
+      const words = await thread.vocabulary(AbortSignal.any([abort.signal, AbortSignal.timeout(VOCABULARY_TIMEOUT_MS)]))
+        .catch(error => {
+          this.trace("host", "vocabulary", { fallback: true, reason: error instanceof Error ? error.message : null });
+          return [] as string[];
+        });
+      abort.signal.throwIfAborted();
+      recognizer = new Recognizer(join(this.options.helpers, "crucible-whisper"), modelPath, failed,
+        words.length ? words.join(", ") : undefined);
       synthesizer = new Synthesizer(join(this.options.helpers, tts === "system" ? "crucible-tts" : "crucible-pocket-tts"),
         tts === "system" ? ["--engine", "system"] : ["--models", pocketPath!], failed);
       const synth = synthesizer;

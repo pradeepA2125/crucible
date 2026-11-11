@@ -1808,6 +1808,13 @@ def build_router(
             if getattr(_chat_agent, "voice_decide", None) is None:
                 raise HTTPException(status_code=409, detail={"code": "voice_unsupported"})
 
+        @router.get("/voice/vocabulary")
+        async def get_voice_vocabulary() -> dict[str, list[str]]:
+            """The open project's own names, to prime speech recognition. Read-only and
+            best effort: an unreadable index gives an empty list."""
+            vocabulary = getattr(_chat_agent, "voice_vocabulary", None)
+            return {"words": await vocabulary() if vocabulary is not None else []}
+
         @router.post("/chat/threads/{thread_id}/voice/decide")
         async def post_voice_decide(
                 thread_id: str, request: dict[str, object]) -> dict[str, object]:

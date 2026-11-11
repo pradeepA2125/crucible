@@ -1797,6 +1797,12 @@ export class HttpBackendClient implements BackendTaskClient {
     return z.string().min(1).parse(raw["say"]);
   }
 
+  /** The open project's own names, to prime speech recognition. */
+  async voiceVocabulary(signal?: AbortSignal): Promise<string[]> {
+    const raw = await this.fetchJsonDetail("/v1/voice/vocabulary", { ...(signal ? { signal } : {}) });
+    return z.object({ words: z.array(z.string().min(1).max(200)).max(200) }).parse(raw).words;
+  }
+
   async conversationReceipt(threadId: string, messageId: string, signal: AbortSignal): Promise<ConversationReceipt | null> {
     try {
       return ConversationReceiptSchema.parse(await this.fetchJsonDetail(

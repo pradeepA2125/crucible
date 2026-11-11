@@ -276,6 +276,7 @@ export function createProjectHost(ports: HostPorts) {
         if (!current()) throw new Error("The voice conversation changed.");
         return client.voiceCommit(threadId, decisionId, expectedProcessId, signal);
       },
+      vocabulary: signal => client.voiceVocabulary(signal),
       narrate: (heard, answer, expectedProcessId, signal, voiceModel) => {
         if (!current()) throw new Error("The voice conversation changed.");
         return client.voiceNarrate(threadId, { heard, answer, expectedProcessId, ...(voiceModel ? { voiceModel } : {}) }, signal);

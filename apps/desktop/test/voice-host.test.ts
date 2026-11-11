@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   vadPath: vi.fn(async (): Promise<string> => "/verified/vad.bin"),
   detect: vi.fn(async (_pcm: ArrayBuffer, _signal: AbortSignal): Promise<number[]> => [0.91, 0.12]),
   speak: vi.fn<(text: string, audio: (pcm: ArrayBuffer, sampleRate: number) => void, signal: AbortSignal) => Promise<void>>(),
+  recognizer: vi.fn<(path: string, model: string, failure: (error: Error) => void, prompt?: string) => void>(),
 }));
 
 vi.mock("../src/voice/assets.js", () => ({
@@ -21,6 +22,7 @@ vi.mock("../src/voice/assets.js", () => ({
 }));
 vi.mock("../src/voice/workers.js", () => ({
   Recognizer: class {
+    constructor(...args: [string, string, (error: Error) => void, string?]) { mocks.recognizer(...args); }
     async wait() {}
     close() {}
   },
@@ -43,10 +45,13 @@ const active = (turnId: string): VoiceSnapshot => ({ active: true, turnId, proce
 afterEach(async () => {
   await Promise.all(sessions.splice(0).map(session => session.dispose()));
   mocks.speak.mockReset();
+  mocks.recognizer.mockReset();
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
-async function fixture(first: VoiceSnapshot, options: { voiceModel?: string | null } = {}) {
+async function fixture(first: VoiceSnapshot, options: {
+  voiceModel?: string | null; vocabulary?: VoiceThread["vocabulary"];
+} = {}) {
   const path = await mkdtemp(join(tmpdir(), "crucible-voice-host-"));
   directories.push(path);
   await Promise.all(["crucible-whisper", "crucible-tts"].map(file => writeFile(join(path, file), "", { mode: 0o700 })));
@@ -64,6 +69,7 @@ async function fixture(first: VoiceSnapshot, options: { voiceModel?: string | nu
   const thread: VoiceThread = {
     current: () => true, snapshot: async () => snapshot, submit, sendIdle, receipt: async () => null,
     decide, commit, narrate,
+    vocabulary: options.vocabulary ?? (async () => []),
   };
   const events: Record<string, unknown>[] = [];
   const traces: { source: string; event: string; data: Record<string, unknown> }[] = [];
@@ -80,6 +86,28 @@ async function fixture(first: VoiceSnapshot, options: { voiceModel?: string | nu
   return { host, sessionId, started, thread, submit, sendIdle, decide, commit, narrate, events, traces,
     setSnapshot: (value: VoiceSnapshot) => { snapshot = value; } };
 }
+
+describe("project words for speech recognition", () => {
+  it("start primes the recognizer with the project's names", async () => {
+    await fixture(active("turn-a"), { vocabulary: async () => ["crucible", "ControllerLoop"] });
+    expect(mocks.recognizer).toHaveBeenCalledWith(expect.stringContaining("crucible-whisper"),
+      "/verified/model.bin", expect.any(Function), "crucible, ControllerLoop");
+  });
+
+  it("a vocabulary failure starts the recognizer without project words", async () => {
+    await fixture(active("turn-a"), { vocabulary: async () => { throw new Error("offline"); } });
+    expect(mocks.recognizer.mock.calls[0]?.[3]).toBeUndefined();
+  });
+
+  it("a slow vocabulary is not waited for beyond its limit", async () => {
+    const started = performance.now();
+    await fixture(active("turn-a"), { vocabulary: signal => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason));
+    }) });
+    expect(mocks.recognizer.mock.calls[0]?.[3]).toBeUndefined();
+    expect(performance.now() - started).toBeLessThan(4000);
+  });
+});
 
 describe("desktop voice admission", () => {
   it("keeps an active utterance tied to its original turn and submits it once", async () => {

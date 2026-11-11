@@ -821,6 +821,14 @@ class ChatController:
             role="agent", content=spoken, metadata={"voice": "narration", "answer_id": answer_id}))
         return spoken
 
+    async def voice_vocabulary(self) -> list[str]:
+        """Project words for Whisper; the snapshot parse runs off the event loop."""
+        from agentd.chat.voice_vocabulary import project_vocabulary, snapshot_path_for
+
+        workspace = Path(self._workspace_path)
+        return await asyncio.to_thread(
+            project_vocabulary, snapshot_path_for(workspace), workspace.name)
+
     def project_activity(self, requested_workspace: str) -> dict[str, object]:
         from agentd.chat.activity import activity_snapshot
         from agentd.exec_sessions.manager import SessionManager
