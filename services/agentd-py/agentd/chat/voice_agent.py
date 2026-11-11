@@ -42,9 +42,19 @@ _ACTIONS = ("listen", "reply", "clarify", "start_task", "steer")
 _SAY_MAX_CHARS = 400
 _BASIS_MAX_CHARS = 2000
 VOICE_WHICH_CHANGE_TEXT = "Which change should I make?"
-# "Do it", "go ahead", "yes": words that only point at something said earlier.
-_REFERENTIAL = re.compile(
-    r"^(do it|go ahead|yes|yeah|sure|ok(ay)?|that one|please do|go for it)\W*$", re.IGNORECASE)
+# Words that only point at something said earlier ("do it", "yeah, go ahead", "yes please").
+_REFERENTIAL_WORDS = frozenset({
+    "do", "it", "go", "ahead", "yes", "yeah", "yep", "yup", "sure", "ok", "okay", "alright",
+    "please", "just", "that", "this", "one", "for", "then", "now", "right", "lets", "let's",
+    "sounds", "good", "fine", "great", "cool", "perfect", "carry", "on", "proceed", "same",
+})
+# A reading made only of these names nothing: "Do what we discussed.", "Make the change."
+_GENERIC_WORDS = _REFERENTIAL_WORDS | frozenset({
+    "the", "a", "an", "what", "we", "you", "i", "me", "us", "to", "of", "and", "with", "about",
+    "discussed", "said", "talked", "mentioned", "suggested", "proposed", "agreed", "make",
+    "change", "changes", "thing", "things", "stuff", "idea", "plan", "those", "these", "them",
+    "is", "was", "be", "as", "so", "all", "there", "here", "its", "it's",
+})
 _HISTORY_ENTRIES = 12
 _HISTORY_ENTRY_CHARS = 1200
 # The latest agent answer is what "explain that" and "what are the issues" are about.
@@ -218,10 +228,13 @@ def _words(text: str) -> list[str]:
 
 
 def _unresolved_reference(utterance: str, request: str) -> bool:
-    """A short "do it" whose reading is just as vague: starting work would be a guess."""
-    if len(_words(utterance)) > 4 or not _REFERENTIAL.match(utterance.strip()):
+    """A "do it" whose reading names nothing either: starting work would be a guess.
+    Judged by content, not length: "Fix the login bug." is resolved, "Do it." is not."""
+    said = _words(utterance)
+    if not said or any(word not in _REFERENTIAL_WORDS for word in said):
         return False
-    return len(_words(request)) < 6 or _words(request) == _words(utterance)
+    reading = _words(request)
+    return reading == said or all(word in _GENERIC_WORDS for word in reading)
 
 
 _LOG_TEXT_CHARS = 240

@@ -107,6 +107,35 @@ async def test_a_vague_referential_steer_becomes_a_clarifying_question() -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reading", [
+    "Fix the login bug.", "Add the contact form.", "Rename UserService to AccountService.",
+    "Yes, also update the tests."])
+async def test_a_short_resolved_reading_still_starts(reading: str) -> None:
+    agent = _agent(FakeJson(_reply(action="start_task", say="On it.", request=reading)))
+    decision = await agent.decide("t1", _ctx("do it"))
+    assert decision.action == "start_task"
+    assert decision.request == reading
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("utterance", [
+    "Yeah, do it.", "Okay, go ahead.", "yes please", "just do it", "sure, go ahead", "Do it!"])
+async def test_vague_referential_phrasings_ask(utterance: str) -> None:
+    agent = _agent(FakeJson(_reply(action="start_task", say="On it.",
+                                   request="Do what we discussed.")))
+    decision = await agent.decide("t1", _ctx(utterance))
+    assert decision.action == "clarify"
+    assert decision.say == "Which change should I make?"
+
+
+@pytest.mark.asyncio
+async def test_a_real_request_is_never_guarded() -> None:
+    agent = _agent(FakeJson(_reply(action="start_task", say="On it.", request="Do it now.")))
+    decision = await agent.decide("t1", _ctx("do the login page now"))
+    assert decision.action == "start_task"
+
+
+@pytest.mark.asyncio
 async def test_a_resolved_referential_request_starts() -> None:
     raw = {**_reply(action="start_task", say="On it.",
                     request="Add a contact form to the About page"),
