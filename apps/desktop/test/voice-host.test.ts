@@ -9,15 +9,23 @@ const mocks = vi.hoisted(() => ({
   detect: vi.fn(async (_pcm: ArrayBuffer, _signal: AbortSignal): Promise<number[]> => [0.91, 0.12]),
   speak: vi.fn<(text: string, audio: (pcm: ArrayBuffer, sampleRate: number) => void, signal: AbortSignal) => Promise<void>>(),
   recognizer: vi.fn<(path: string, model: string, failure: (error: Error) => void, prompt?: string) => void>(),
+  synthesizer: vi.fn(),
+  pocketInstalled: vi.fn(async (): Promise<boolean> => false),
 }));
 
-vi.mock("../src/voice/assets.js", () => ({
+vi.mock("../src/voice/assets.js", async importOriginal => ({
+  ...(await importOriginal<typeof import("../src/voice/assets.js")>()),
   VoiceAssets: class {
+    constructor(_directory: string, _fetch: unknown,
+      private readonly pack: import("../src/voice/assets.js").PocketPack | null = null) {}
     async installed() { return ["whisper-small"]; }
-    async pocketInstalled() { return false; }
+    pocketInstalled = mocks.pocketInstalled;
     async verifiedPath() { return "/verified/model.bin"; }
+    async verifiedPocketPath() { return "/verified/pocket"; }
     verifiedVadPath = mocks.vadPath;
     async cancelAndWait() {}
+    get pocketEngine() { return this.pack?.engine ?? null; }
+    pocketDownloadBytes() { return this.pack?.files.reduce((total, file) => total + file.bytes, 0) ?? 0; }
   },
 }));
 vi.mock("../src/voice/workers.js", async importOriginal => ({
@@ -34,6 +42,7 @@ vi.mock("../src/voice/workers.js", async importOriginal => ({
     close() {}
   },
   Synthesizer: class {
+    constructor() { mocks.synthesizer(); }
     async wait() {}
     speak = mocks.speak;
     close() {}
@@ -47,15 +56,35 @@ afterEach(async () => {
   await Promise.all(sessions.splice(0).map(session => session.dispose()));
   mocks.speak.mockReset();
   mocks.recognizer.mockReset();
+  mocks.synthesizer.mockReset();
+  mocks.pocketInstalled.mockReset();
+  mocks.pocketInstalled.mockResolvedValue(false);
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
-async function fixture(first: VoiceSnapshot, options: {
-  voiceModel?: string | null; vocabulary?: VoiceThread["vocabulary"];
-} = {}) {
+/** A helper folder: `crucible-whisper` answers the CPU check with `cpu`; others are plain files. */
+async function helpers(names: string[], cpu = "cpu ok"): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), "crucible-voice-host-"));
   directories.push(path);
-  await Promise.all(["crucible-whisper", "crucible-tts"].map(file => writeFile(join(path, file), "", { mode: 0o700 })));
+  await Promise.all(names.map(file => writeFile(join(path, file),
+    file.startsWith("crucible-whisper") ? `#!/bin/sh\necho '${cpu}'\n[ '${cpu}' = 'cpu ok' ] || exit 3\n` : "", { mode: 0o700 })));
+  return path;
+}
+
+function statusHost(path: string, platform: string, architecture: string, pocketWorker?: string) {
+  const host = new VoiceHost({
+    profile: path, helpers: path, platform, architecture,
+    thread: async () => { throw new Error("no thread"); }, publish: () => {},
+    ...(pocketWorker ? { pocketWorker: { script: pocketWorker, open: () => { throw new Error("not opened"); } } } : {}),
+  });
+  sessions.push(host);
+  return host;
+}
+
+async function fixture(first: VoiceSnapshot, options: {
+  voiceModel?: string | null; vocabulary?: VoiceThread["vocabulary"]; tts?: "system" | "none";
+} = {}) {
+  const path = await helpers(["crucible-whisper", "crucible-tts"]);
   let snapshot = first;
   const sendIdle = vi.fn<VoiceThread["sendIdle"]>().mockResolvedValue(undefined);
   const submit = vi.fn<VoiceThread["submit"]>().mockImplementation(async request => ({
@@ -81,12 +110,66 @@ async function fixture(first: VoiceSnapshot, options: {
   });
   sessions.push(host);
   const started = await host.request({ type: "start", threadId: "thread",
-    stt: "whisper-small", tts: "system", ...(options.voiceModel !== undefined ? { voiceModel: options.voiceModel } : {}) },
+    stt: "whisper-small", tts: options.tts ?? "system", ...(options.voiceModel !== undefined ? { voiceModel: options.voiceModel } : {}) },
   ) as { sessionId: string; vad?: boolean };
   const { sessionId } = started;
   return { host, sessionId, started, thread, submit, sendIdle, decide, commit, narrate, events, traces,
     setSnapshot: (value: VoiceSnapshot) => { snapshot = value; } };
 }
+
+describe("voice capabilities on every platform", () => {
+  it("a CPU without AVX2 makes voice unavailable with the reason", async () => {
+    const path = await helpers(["crucible-whisper"], "cpu unsupported");
+    expect(await statusHost(path, "linux", "x64").status()).toMatchObject({
+      available: false, reason: "Local voice needs a processor with AVX2 (most made since 2013).",
+    });
+  });
+
+  it("a build without the speech helper says so", async () => {
+    const path = await helpers([]);
+    expect(await statusHost(path, "linux", "x64").status()).toMatchObject({
+      available: false, reason: "Local voice is not included in this build.",
+    });
+  });
+
+  it("linux status offers Pocket from the worker, not system", async () => {
+    const path = await helpers(["crucible-whisper", "crucible-tts"]);
+    const worker = join(path, "voice-pocket-worker.cjs");
+    await writeFile(worker, "");
+    mocks.pocketInstalled.mockResolvedValue(true);
+    expect(await statusHost(path, "linux", "x64", worker).status()).toEqual({
+      available: true, installed: ["whisper-small"], tts: ["pocket"], pocketAvailable: true,
+      pocketDownloadBytes: 199_269_026, pocketEngine: "onnx",
+    });
+  });
+
+  it("status on win32 finds .exe helpers without an execute bit", async () => {
+    const path = await helpers([]);
+    await writeFile(join(path, "crucible-whisper.exe"), "", { mode: 0o600 });
+    // The CPU check cannot run a Windows program here; a helper that will not start is reported, not thrown.
+    const status = await statusHost(path, "win32", "x64").status();
+    expect(status.reason).not.toBe("Local voice is not included in this build.");
+  });
+
+  it("Apple Silicon still offers the system voice and CoreML Pocket", async () => {
+    const path = await helpers(["crucible-whisper", "crucible-tts", "crucible-pocket-tts"]);
+    expect(await statusHost(path, "darwin", "arm64").status()).toMatchObject({
+      available: true, tts: ["system"], pocketAvailable: true, pocketEngine: "coreml",
+    });
+  });
+
+  it("a text-only session never starts a synthesizer", async () => {
+    mocks.speak.mockResolvedValue(undefined);
+    const { host, sessionId, events } = await fixture(idle, { tts: "none" });
+    expect(mocks.synthesizer).not.toHaveBeenCalled();
+    await host.request({ type: "snapshot", sessionId, utteranceId: "u1" });
+    await host.request({ type: "decide", sessionId, utteranceId: "u1", text: "hi there", silenceMs: 700, finalCall: false });
+    await host.request({ type: "commit", sessionId, utteranceId: "u1", decisionId: "d1" });
+    await vi.waitFor(() => expect(events.some(event => event.type === "reply")).toBe(true));
+    expect(events.some(event => event.type === "speaking" || event.type === "audio")).toBe(false);
+    expect(mocks.speak).not.toHaveBeenCalled();
+  });
+});
 
 describe("project words for speech recognition", () => {
   it("start primes the recognizer with the project's names", async () => {

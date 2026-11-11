@@ -22,6 +22,7 @@ import { homedir } from "node:os";
 import { APP_ORIGIN, CHANNEL, parseEnvelope, type BridgeContext } from "./contract.js";
 import { VoiceDiagnostics } from "./voice/diagnostics.js";
 import { VoiceHost } from "./voice/host.js";
+import { UtilityChannel } from "./voice/utility-channel.js";
 import { VOICE_EVENT, VOICE_REQUEST, voiceRequest } from "./voice/protocol.js";
 import { assertSender, externalURL, containedPath } from "./security.js";
 import { guardContents, secureSession, WINDOW_SECURITY } from "./native-security.js";
@@ -584,6 +585,12 @@ else {
       diagnostics: new VoiceDiagnostics(voiceDiagnostics),
       profile: app.getPath("userData"),
       helpers: join(__dirname, "voice-native"),
+      pocketWorker: {
+        script: join(__dirname, "voice-pocket-worker.cjs"),
+        open: (args, onLine, onFailure) => new UtilityChannel(
+          (script, forkArgs) => utilityProcess.fork(script, forkArgs, { serviceName: "Crucible spoken replies", stdio: "ignore" }),
+          join(__dirname, "voice-pocket-worker.cjs"), args, onLine, onFailure),
+      },
       platform: process.platform,
       architecture: process.arch,
       thread: async id => {

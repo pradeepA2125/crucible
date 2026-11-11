@@ -198,6 +198,11 @@ export class VoiceAssets {
     await writeFile(join(partial, ".complete"), pack.id, { mode: 0o600, flag: "wx" });
   }
 
+  /** Which Pocket engine this computer's pack is for, or null when it has none. */
+  get pocketEngine(): "coreml" | "onnx" | null {
+    return this.pack?.engine ?? null;
+  }
+
   /** Bytes a Pocket install downloads (0 when this computer has no Pocket pack). */
   pocketDownloadBytes(): number {
     return this.pack?.files.reduce((total, file) => total + file.bytes, 0) ?? 0;

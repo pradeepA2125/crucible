@@ -1,13 +1,15 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type {
   ConversationIntent, ConversationReceipt, ConversationRequest, VoiceCommitResult, VoiceDecideRequest, VoiceDecision,
 } from "@crucible/editor-client";
-import { VoiceAssets, type VoiceModel } from "./assets.js";
+import { pocketPackFor, VoiceAssets, type VoiceModel } from "./assets.js";
 import type { VoiceRequest } from "./protocol.js";
 import { firstSentences, speakable } from "./speakable.js";
-import { Detector, helperPath, helperUsable, LineWorker, Recognizer, Synthesizer } from "./workers.js";
+import { Detector, helperEnvironment, helperPath, helperUsable, LineWorker, Recognizer, Synthesizer,
+  type WorkerChannel } from "./workers.js";
 import type { DiagnosticSource, DiagnosticValue } from "./diagnostics.js";
 
 export interface VoiceSnapshot {
@@ -62,11 +64,12 @@ type Session = {
   thread: VoiceThread;
   signal: AbortController;
   model: VoiceModel;
-  tts: "system" | "pocket";
+  tts: VoiceTts;
   /** The voice model the user picked; undefined lets the backend choose per provider. */
   voiceModel: string | undefined;
   recognizer: Recognizer;
-  synthesizer: Synthesizer;
+  /** Undefined for a text-only session (no speech output engine). */
+  synthesizer: Synthesizer | undefined;
   /** Silero VAD; undefined when its model is missing or it failed to start (loudness instead). */
   detector: Detector | undefined;
   utterances: Map<string, Utterance>;
@@ -77,7 +80,17 @@ type Session = {
   task: Reply | undefined;
 };
 
+type VoiceTts = "system" | "pocket" | "none";
+export type VoiceStatus = { available: boolean; reason?: string; installed: VoiceModel[];
+  tts: ("system" | "pocket")[]; pocketAvailable: boolean; pocketDownloadBytes: number;
+  pocketEngine: "coreml" | "onnx" | null };
+
 type Options = {
+  /** Pocket TTS off Apple Silicon: the sherpa-onnx worker script, opened as a utility process. */
+  pocketWorker?: {
+    script: string;
+    open(args: string[], onLine: (line: string) => void, onFailure: (error: Error) => void): WorkerChannel;
+  };
   profile: string;
   helpers: string;
   platform: string;
@@ -87,7 +100,9 @@ type Options = {
   diagnostics?: { write(source: DiagnosticSource, event: string, data: Record<string, DiagnosticValue>): void };
 };
 
-const unavailable = "Local voice is available on Apple Silicon builds with the speech helpers included.";
+const notIncluded = "Local voice is not included in this build.";
+const oldCpu = "Local voice needs a processor with AVX2 (most made since 2013).";
+const helperFailed = "Local voice could not start its speech helper.";
 const changedTurn = "The coding turn changed before this message could be sent. Review the transcript and try again.";
 const limitSpeech = 3500;
 
@@ -97,29 +112,56 @@ export class VoiceHost {
   private session: Session | undefined;
   private stopping: Promise<void> | undefined;
 
+  private cpuCheck: Promise<"ok" | "unsupported" | "failed"> | undefined;
+
   constructor(private readonly options: Options) {
-    this.assets = new VoiceAssets(join(options.profile, "voice", "models"));
+    this.assets = new VoiceAssets(join(options.profile, "voice", "models"), fetch,
+      pocketPackFor(options.platform, options.architecture) ?? null);
+  }
+
+  /** Runs `crucible-whisper --check-cpu` once: x64 builds need AVX2, FMA and F16C. */
+  private checkCpu(): Promise<"ok" | "unsupported" | "failed"> {
+    this.cpuCheck ??= new Promise(resolve => {
+      execFile(this.helper("crucible-whisper"), ["--check-cpu"], {
+        env: helperEnvironment(this.options.platform, process.env, this.options.helpers), timeout: 5_000, shell: false,
+      }, (_error, stdout) => {
+        // Exit 3 with "cpu unsupported" is the answer, not a failure; anything else could not run.
+        const answer = String(stdout).trim();
+        resolve(answer === "cpu ok" ? "ok" : answer === "cpu unsupported" ? "unsupported" : "failed");
+      });
+    });
+    return this.cpuCheck;
+  }
+
+  /** Pocket can run here: the CoreML helper on Apple Silicon, the sherpa-onnx worker elsewhere. */
+  private async pocketRuns(): Promise<boolean> {
+    if (this.assets.pocketEngine === "coreml") return this.helperExists("crucible-pocket-tts");
+    if (this.assets.pocketEngine === "onnx" && this.options.pocketWorker) {
+      // A script, run by Electron's utility process: it only has to exist (no execute bit).
+      return helperUsable(this.options.pocketWorker.script, "win32");
+    }
+    return false;
   }
 
   get canUseMicrophone(): boolean {
     return !!this.session?.thread.current() && !this.session.signal.signal.aborted;
   }
 
-  async status(): Promise<{ available: boolean; reason?: string; installed: VoiceModel[];
-    tts: ("system" | "pocket")[]; pocketAvailable: boolean }> {
-    const installed = await this.assets.installed();
-    if (this.options.platform !== "darwin" || this.options.architecture !== "arm64") {
-      return { available: false, reason: unavailable, installed, tts: [], pocketAvailable: false };
-    }
-    const [whisper, system, pocket] = await Promise.all([
-      this.helperExists("crucible-whisper"), this.helperExists("crucible-tts"),
-      this.helperExists("crucible-pocket-tts"),
+  async status(): Promise<VoiceStatus> {
+    const [installed, whisper, system, pocket, pocketInstalled] = await Promise.all([
+      this.assets.installed(), this.helperExists("crucible-whisper"),
+      this.options.platform === "darwin" ? this.helperExists("crucible-tts") : Promise.resolve(false),
+      this.pocketRuns(), this.assets.pocketInstalled(),
     ]);
     const tts: ("system" | "pocket")[] = [];
     if (system) tts.push("system");
-    if (pocket && await this.assets.pocketInstalled()) tts.push("pocket");
-    const available = whisper && (system || pocket);
-    return { available, ...(available ? {} : { reason: unavailable }), installed, tts, pocketAvailable: pocket };
+    if (pocket && pocketInstalled) tts.push("pocket");
+    const base = { installed, tts, pocketAvailable: pocket, pocketDownloadBytes: this.assets.pocketDownloadBytes(),
+      pocketEngine: this.assets.pocketEngine };
+    if (!whisper) return { available: false, reason: notIncluded, ...base };
+    const cpu = await this.checkCpu();
+    if (cpu !== "ok") return { available: false, reason: cpu === "unsupported" ? oldCpu : helperFailed, ...base };
+    return { available: true, ...base };
   }
 
   async request(request: VoiceRequest): Promise<unknown> {
@@ -128,7 +170,8 @@ export class VoiceHost {
       case "cancelInstall": this.assets.cancel(); return {};
       case "install": {
         const status = await this.status();
-        if (!status.available || (request.model === "pocket" && !status.pocketAvailable)) throw new Error(unavailable);
+        if (!status.available) throw new Error(status.reason ?? notIncluded);
+        if (request.model === "pocket" && !status.pocketAvailable) throw new Error("Spoken replies are not available on this computer.");
         await this.assets.install(request.model);
         return this.status();
       }
@@ -164,7 +207,7 @@ export class VoiceHost {
     this.session = undefined;
     this.interrupt(session);
     session.signal.abort();
-    const stopped = Promise.all([session.recognizer.close(), session.synthesizer.close(),
+    const stopped = Promise.all([session.recognizer.close(), session.synthesizer?.close(),
       session.detector?.close()]).then(() => {});
     this.stopping = stopped;
     this.options.publish({ type: "ended", sessionId: session.id, ...(reason ? { reason } : {}) });
@@ -184,7 +227,7 @@ export class VoiceHost {
     return helperUsable(this.helper(name), this.options.platform);
   }
 
-  private async start(threadId: string, model: VoiceModel, tts: "system" | "pocket", voiceModel: string | undefined) {
+  private async start(threadId: string, model: VoiceModel, tts: VoiceTts, voiceModel: string | undefined) {
     if (this.startup || this.session) throw new Error("A voice session is already open.");
     const abort = new AbortController();
     this.startup = abort;
@@ -193,7 +236,8 @@ export class VoiceHost {
     try {
       await this.stopping;
       const availability = await this.status();
-      if (!availability.available || !availability.tts.includes(tts)) throw new Error(unavailable);
+      if (!availability.available) throw new Error(availability.reason ?? notIncluded);
+      if (tts !== "none" && !availability.tts.includes(tts)) throw new Error("That voice is not installed.");
       const [thread, modelPath, pocketPath] = await Promise.all([
         this.options.thread(threadId), this.assets.verifiedPath(model, abort.signal),
         tts === "pocket" ? this.assets.verifiedPocketPath(abort.signal) : undefined,
@@ -212,13 +256,11 @@ export class VoiceHost {
       abort.signal.throwIfAborted();
       recognizer = new Recognizer(this.helper("crucible-whisper"), modelPath, failed,
         words.length ? words.join(", ") : undefined);
-      const synthPath = this.helper(tts === "system" ? "crucible-tts" : "crucible-pocket-tts");
-      const synthArgs = tts === "system" ? ["--engine", "system"] : ["--models", pocketPath!];
-      synthesizer = new Synthesizer((onLine, onFailure) => new LineWorker(synthPath, synthArgs, onLine, onFailure), failed);
+      synthesizer = tts === "none" ? undefined : this.openSynthesizer(tts, pocketPath, failed);
       const synth = synthesizer;
       await Promise.all([
         recognizer.wait(abort.signal),
-        synth.wait(abort.signal).then(async () => {
+        synth?.wait(abort.signal).then(async () => {
           if (tts === "pocket") await synth.speak("Voice ready.", () => {}, abort.signal);
         }),
       ]);
@@ -233,6 +275,16 @@ export class VoiceHost {
       await Promise.all([recognizer?.close(), synthesizer?.close()]);
       throw error;
     } finally { this.startup = undefined; }
+  }
+
+  private openSynthesizer(tts: "system" | "pocket", pocketPath: string | undefined, failed: (error: Error) => void): Synthesizer {
+    const worker = this.options.pocketWorker;
+    if (tts === "pocket" && this.assets.pocketEngine === "onnx" && worker) {
+      return new Synthesizer((onLine, onFailure) => worker.open(["--models", pocketPath!], onLine, onFailure), failed);
+    }
+    const path = this.helper(tts === "system" ? "crucible-tts" : "crucible-pocket-tts");
+    const args = tts === "system" ? ["--engine", "system"] : ["--models", pocketPath!];
+    return new Synthesizer((onLine, onFailure) => new LineWorker(path, args, onLine, onFailure), failed);
   }
 
   /** Best-effort: without a verified model or a working worker, speech detection uses loudness. */
@@ -514,6 +566,8 @@ export class VoiceHost {
   }
 
   private speak(session: Session, reply: Reply, segment: string): void {
+    const synthesizer = session.synthesizer;
+    if (!synthesizer) return; // text-only session: the reply is shown, not spoken
     const text = speakable(segment).slice(0, limitSpeech - reply.spoken);
     if (!text) return;
     reply.spoken += text.length;
@@ -524,7 +578,7 @@ export class VoiceHost {
       // back (narration, "On it.") is recognised as echo instead of stopping the reply.
       this.options.publish({ type: "speaking", sessionId: session.id, utteranceId: reply.utteranceId, text });
       const started = performance.now();
-      await session.synthesizer.speak(text, (pcm, sampleRate) => {
+      await synthesizer.speak(text, (pcm, sampleRate) => {
         if (this.currentReply(session, reply)) this.options.publish({ type: "audio", sessionId: session.id,
           utteranceId: reply.utteranceId, replyId: reply.id, pcm, sampleRate });
       }, AbortSignal.any([reply.cancel.signal, speech]));

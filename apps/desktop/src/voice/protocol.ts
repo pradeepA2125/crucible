@@ -18,7 +18,7 @@ export const voiceRequest = z.discriminatedUnion("type", [
   z.object({ type: z.literal("install"), model: asset }).strict(),
   z.object({ type: z.literal("cancelInstall") }).strict(),
   z.object({ type: z.literal("remove"), model: asset }).strict(),
-  z.object({ type: z.literal("start"), threadId: id, stt: model, tts: z.enum(["system", "pocket"]),
+  z.object({ type: z.literal("start"), threadId: id, stt: model, tts: z.enum(["system", "pocket", "none"]),
     voiceModel: voiceModel.optional() }).strict(),
   z.object({ type: z.literal("voiceModel"), ...session, model: voiceModel }).strict(),
   z.object({ type: z.literal("stop"), ...session }).strict(),
