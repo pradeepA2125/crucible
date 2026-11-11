@@ -1,4 +1,5 @@
 import { CardShell } from "./shared/CardShell";
+import { sealedRunningEvents } from "../transcript/sealedRunning";
 import type { RegisterReviewDraft } from "../drafts/reviewDraft";
 import type { DraftPort } from "../drafts/types";
 import { AgentRosterCard } from "./agents/AgentRosterCard";
@@ -15,7 +16,7 @@ import { SettingsDrawer } from "./SettingsDrawer";
 import { ChatSettingsOverlay } from "./ChatSettingsOverlay";
 import { inputAvailability } from "../inputAvailability";
 import type { SectionId } from "../settings/sections/meta";
-import type { AppState, RewindPreviewView, ToolEventView } from "../types";
+import type { AppState, RewindPreviewView } from "../types";
 import { TransientActivity } from "./activity/TransientActivity";
 import { RewindDialog } from "./RewindDialog";
 import { AgentsContext, type AgentsUi } from "./agents/AgentsContext";
@@ -225,14 +226,7 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
   const turnRunning = state.turnActive || (!state.inputEnabled && !state.chatAdmission);
   // A breadcrumb (e.g. "Command approved") seals the bubble while its command still runs: the
   // unfinished pill then lives in a sealed message of this turn, and the line must still name it.
-  const sealedRunning = useMemo(() => {
-    const running: ToolEventView[] = [];
-    for (let i = state.messages.length - 1; i >= 0 && state.messages[i].role !== "user"; i--) {
-      const events = (state.messages[i].metadata?.tool_events as ToolEventView[] | undefined) ?? [];
-      running.unshift(...events.filter((e) => !e.done));
-    }
-    return running;
-  }, [state.messages]);
+  const sealedRunning = useMemo(() => sealedRunningEvents(state.messages), [state.messages]);
   const transientBubble = useMemo(
     () => (sealedRunning.length ? { ...liveBubble, toolEvents: [...sealedRunning, ...liveBubble.toolEvents] } : liveBubble),
     [sealedRunning, liveBubble],

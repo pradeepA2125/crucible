@@ -318,6 +318,14 @@ function reducer(state: AppState, action: Action, historyIdentity?: unknown): Ap
     case "finalizeAgentMessage":
       return sealStreaming(state, at);
 
+    case "appendVoiceMessage": {
+      // Spoken small talk during a turn is not part of the answer being streamed: it goes
+      // above it without sealing it. Added once by id (a reload or a replay carries it too).
+      const m = msg.message;
+      if (m.id && state.messages.some((existing) => existing.id === m.id)) return state;
+      return { ...state, messages: [...state.messages, m] };
+    }
+
     case "appendMessage": {
       // Any persisted message arriving mid-stream implicitly terminates the open bubble — protocol guarantee: the extension finalizes or appends in order, so sealing here is safe for ALL card types.
       const next = sealStreaming(state, at);

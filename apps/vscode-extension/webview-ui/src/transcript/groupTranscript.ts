@@ -1,4 +1,5 @@
 import type { ChatMsg, DiffEntry, ToolEventView } from "../types";
+import { isVoiceMessage } from "../voiceMessage";
 
 export type ActivityStep =
   | { type: "tools"; events: ToolEventView[] }
@@ -121,6 +122,12 @@ export function groupTranscript(messages: ChatMsg[], recordEditSources = false):
   };
 
   messages.forEach((msg, index) => {
+    // Spoken small talk mid-turn: shown, but it neither ends the turn nor splits its activity.
+    if (isVoiceMessage(msg)) {
+      if (group) deferred.push({ kind: "message", msg, index });
+      else items.push({ kind: "message", msg, index });
+      return;
+    }
     if (msg.role === "user") {
       closeTurn();
       turnKey = msg.id ?? String(index);

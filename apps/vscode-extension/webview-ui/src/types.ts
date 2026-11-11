@@ -429,6 +429,8 @@ export type ContextUsage = ContextUsageBase & (
 export type ExtensionMessage =
   | { type: "chatAdmission"; admission: { threadId: string; state: "pending" | "unknown"; checking: boolean } | null }
   | { type: "appendMessage"; message: ChatMsg }
+  // A saved voice exchange or narration, pushed live during a turn.
+  | { type: "appendVoiceMessage"; message: ChatMsg }
   | { type: "appendChunk"; chunk: string }
   | { type: "appendThinkingEntry"; text: string }
   | { type: "appendThinkingChunk"; chunk: string }

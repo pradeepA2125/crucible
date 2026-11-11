@@ -695,3 +695,26 @@ it("clearThread retires all actionable projections, and late history status cann
   act(() => fireMessage({ type: "historyState", history: { threadId: "b", phase: "loading", cached: false } }));
   expect(result.current.state.historyState?.phase).toBe("loading");
 });
+
+describe("voice messages during a streaming answer", () => {
+  const voice = (id: string, content: string) => ({
+    id, role: "user" as const, content, type: "text" as const, timestamp: "2026-11-11T00:00:00Z",
+    metadata: { voice: "exchange", voice_decision: "d1" },
+  });
+
+  it("are added above the streaming answer without sealing it", () => {
+    const { result } = renderHook(() => useAppState());
+    act(() => { fireMessage({ type: "appendChunk", chunk: "Working on" }); });
+    act(() => { fireMessage({ type: "appendVoiceMessage", message: voice("v1", "how is it going") }); });
+    act(() => { fireMessage({ type: "appendChunk", chunk: " it" }); });
+    expect(result.current.state.streaming?.text).toBe("Working on it");
+    expect(result.current.state.messages.map(m => m.content)).toEqual(["how is it going"]);
+  });
+
+  it("are added once, whatever delivers them again", () => {
+    const { result } = renderHook(() => useAppState());
+    act(() => { fireMessage({ type: "appendVoiceMessage", message: voice("v1", "how is it going") }); });
+    act(() => { fireMessage({ type: "appendVoiceMessage", message: voice("v1", "how is it going") }); });
+    expect(result.current.state.messages).toHaveLength(1);
+  });
+});

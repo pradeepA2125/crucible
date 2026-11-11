@@ -1,4 +1,5 @@
 import type { ChatMsg, DiffEntry } from "../types";
+import { isVoiceMessage } from "../voiceMessage";
 import type { RecordedEditSource } from "../transcript/groupTranscript";
 import { hash32 } from "../utils/hash";
 
@@ -44,6 +45,7 @@ export function conversationChanges(messages: ChatMsg[]): ConversationChanges {
   const signatures = new Map<string, string[]>();
   let turn = 0, card = 0;
   messages.forEach(msg => {
+    if (isVoiceMessage(msg)) return; // spoken small talk mid-turn never renumbers its edits
     if (msg.role === "user") { turn++; card = 0; return; }
     if (msg.type !== "diff_card" || msg.metadata?.resolved !== "applied") return;
     // Transport ids appear only after persistence. Turn/card ordinals survive that

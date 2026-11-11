@@ -104,3 +104,19 @@ describe("groupTranscript", () => {
     expect(first!.kind === "message" && first!.msg).toBe(second!.kind === "message" && second!.msg);
   });
 });
+
+describe("groupTranscript: voice exchanges inside a turn", () => {
+  const spoken = (role: "user" | "agent", content: string): ChatMsg =>
+    ({ role, content, type: "text", timestamp: t, metadata: { voice: "exchange", voice_decision: "d1" } });
+
+  it("a status question asked mid-turn neither ends the turn nor splits its activity", () => {
+    const items = groupTranscript([
+      user("fix the tests"), pills("read_file"), spoken("user", "how is it going"),
+      spoken("agent", "Step two of three."), pills("run_command"), diff("a.py", 2, 1), answer("Fixed."),
+    ]);
+    expect(items.filter((i) => i.kind === "changes")).toHaveLength(1);
+    expect(items.filter((i) => i.kind === "activity")).toHaveLength(1);
+    const texts = items.flatMap((i) => (i.kind === "message" ? [i.msg.content] : []));
+    expect(texts).toEqual(["fix the tests", "how is it going", "Step two of three.", "Fixed."]);
+  });
+});
