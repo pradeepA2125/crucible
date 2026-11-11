@@ -539,3 +539,22 @@ async def test_narrate_uses_the_override() -> None:
     transport = FakeJson(text="Done.")
     await _agent(transport).narrate("t1", "fix it", "Done.", model_override="picked-model")
     assert transport.calls[-1]["model"] == "picked-model"
+
+
+@pytest.mark.asyncio
+async def test_decide_allows_twelve_seconds_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Live 2026-11-11: gpt-6-luna on the ChatGPT plan took 5.1-7.7 s, and three turns failed
+    # at an 8 s limit that a little more patience would have answered.
+    monkeypatch.delenv("CRUCIBLE_VOICE_DECIDE_TIMEOUT_SEC", raising=False)
+    import agentd.chat.voice_agent as voice_agent
+
+    seen: list[float] = []
+    real_wait_for = asyncio.wait_for
+
+    async def recording_wait_for(awaitable, timeout):  # type: ignore[no-untyped-def]
+        seen.append(timeout)
+        return await real_wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(voice_agent.asyncio, "wait_for", recording_wait_for)
+    await _agent(FakeJson(_reply())).decide("t1", _ctx())
+    assert seen == [12.0]

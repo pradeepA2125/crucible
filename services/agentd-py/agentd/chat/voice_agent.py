@@ -40,6 +40,10 @@ VOICE_IDLE_STEER_TEXT = "That work has already finished. Should I start a new ta
 _TURNS = ("complete", "cut_off", "thinking")
 _ACTIONS = ("listen", "reply", "clarify", "start_task", "steer")
 _SAY_MAX_CHARS = 400
+# Haiku answers in ~1.4 s; gpt-6-luna on the ChatGPT plan took 5.1-7.7 s live (2026-11-11),
+# where an 8 s limit failed turns that would have been answered. The desktop host gives up
+# at 15 s, so this stays under it.
+VOICE_DECIDE_TIMEOUT_SEC = 12.0
 _BASIS_MAX_CHARS = 2000
 VOICE_WHICH_CHANGE_TEXT = "Which change should I make?"
 # Words that only point at something said earlier ("do it", "yeah, go ahead", "yes please").
@@ -346,7 +350,7 @@ class VoiceAgent:
             EFFORT_OVERRIDE.reset(effort)
 
     async def decide(self, thread_id: str, ctx: VoiceContext) -> VoiceDecision:
-        timeout = _timeout("CRUCIBLE_VOICE_DECIDE_TIMEOUT_SEC", 8.0)
+        timeout = _timeout("CRUCIBLE_VOICE_DECIDE_TIMEOUT_SEC", VOICE_DECIDE_TIMEOUT_SEC)
         started = time.monotonic()
         try:
             decision, model = await asyncio.wait_for(self._decide(thread_id, ctx), timeout)
