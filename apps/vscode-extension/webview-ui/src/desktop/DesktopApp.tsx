@@ -30,9 +30,10 @@ import { ChangesRoute } from "../components/activity/changesRoute";
 import { useDesktopLayout } from "./useDesktopLayout";
 import type { LayoutPort } from "./layoutClient";
 import { ResizeHandle } from "./ResizeHandle";
+import { VoiceContext } from "../components/voice/VoiceContext";
+import { useVoiceSession } from "./voice/useVoiceSession";
 import { LAYOUT_BOUNDS, DEFAULT_LAYOUT } from "../../../../desktop/src/layout";
 import { layoutGeometry } from "./layoutGeometry";
-import { VoicePanel } from "./voice/VoicePanel";
 import "./desktop.css";
 
 export function desktopThreadStatus(thread: ThreadSummary, active: boolean, turnActive: boolean, gates: number): ThreadSummary["status"] {
@@ -63,13 +64,12 @@ export default function DesktopApp({ draftStore, layoutStore, fileStore, changes
   const { sidebarWidth, sidebarMax, workspaceWidth, workspaceMax, compact, isExpanded } = layoutGeometry(viewport, layout, workspaceOpen, expanded);
   const [query, setQuery] = useState(""), [project, setProject] = useState("Project");
   const [projectId, setProjectId] = useState("");
-  const [voiceScope, setVoiceScope] = useState("");
-  const voiceBridge = window.crucibleVoice;
   const voiceThread = state.activeThreadId ?? "";
   const voiceIdentity = JSON.stringify([projectId, voiceThread, state.attachmentGeneration ?? 0]);
-  const voiceOpen = !!voiceThread && voiceScope === voiceIdentity;
-  useEffect(() => setVoiceScope(""), [voiceIdentity]);
   const [readyThread, setReadyThread] = useState("");
+  // Voice lives in the composer and the transcript; the session belongs to this conversation.
+  const voice = useVoiceSession({ bridge: window.crucibleVoice, threadId: voiceThread, identity: voiceIdentity,
+    ready: readyThread === voiceThread, messages: state.messages });
   const [openingDelayed, setOpeningDelayed] = useState(false);
   const [retry, setRetry] = useState(0);
   const [now, setNow] = useState(() => new Date());
@@ -218,21 +218,17 @@ export default function DesktopApp({ draftStore, layoutStore, fileStore, changes
         <h1>{threadNames[state.activeThreadId]?.name ?? selected?.title ?? "New conversation"}</h1>
         {isExpanded && state.liveGates.length > 0 && <button type="button" className="desktop-approval" onClick={() => { setExpanded(false); setWorkspaceOpen(false); }}>Approval needed · Show conversation</button>}
         {state.agentsRunning > 0 && <button type="button" className="desktop-stop" onClick={() => vscode.postMessage({ type: "stopAllAgents" })}><Icon name="stop" size={12} />Stop all agents</button>}
-        {voiceBridge && voiceThread && <button type="button" className={`desktop-icon crucible-voice-toggle${voiceOpen ? " is-active" : ""}`}
-          aria-label={voiceOpen ? "Close local voice" : "Open local voice"} aria-expanded={voiceOpen} aria-controls={voiceOpen ? "desktop-local-voice" : undefined}
-          disabled={!voiceOpen && readyThread !== voiceThread} onClick={() => setVoiceScope(voiceOpen ? "" : voiceIdentity)}>Voice</button>}
         <button type="button" className="desktop-icon" aria-label={summaryOpen ? "Hide pinned summary" : "Show pinned summary"} aria-expanded={summaryOpen} onClick={() => setSummaryOpen(value => !value)}><Icon name="list" size={16} /></button>
         <button type="button" className="desktop-icon" aria-label="Search conversations, files and actions" onClick={() => setPaletteOpen(true)}><Icon name="search" size={16} /></button>
         <button type="button" className={`desktop-icon${workspaceOpen ? " is-active" : ""}`} aria-label={workspaceOpen ? "Close workspace" : "Open workspace"} aria-expanded={workspaceOpen} onClick={() => { if (!workspaceOpen && workspaceTabsState.tabs.find(tab => tab.id === workspaceTabsState.active)?.kind === "new") requestLauncherFocus(); setWorkspaceOpen(value => !value); }} title="Toggle workspace"><Icon name="panel-right" size={17} /></button>
       </header>
-      {voiceBridge && voiceOpen && <VoicePanel key={voiceIdentity} id="desktop-local-voice" bridge={voiceBridge} threadId={voiceThread} messages={state.messages} />}
       <FindBar open={findOpen} close={closeFind} target={`${state.activeThreadId}:${workspaceOpen}:${isExpanded}:${workspaceTabsState.active}:${changesScope}`} />
       {summaryOpen && <PinnedSummary state={state} changes={changes} review={() => { setChangesScope("conversation"); dispatchWorkspaceTab({type:"tool",kind:"changes"}); setWorkspaceOpen(true); }} />}
       {navigationError && <div role="alert" className="desktop-layout-error">{navigationError}</div>}
       {layoutError && <div role="status" className="desktop-layout-error">{layoutError} <button type="button" onClick={retryLayout}>Retry saving layout</button></div>}
       <section className="desktop-conversation" aria-label="Conversation">
-        {state.activeThreadId && (readyThread === state.activeThreadId || state.historyState?.threadId === state.activeThreadId) ? <ChangesRoute.Provider value={showChanges}><ReviewDraft.Provider value={reviewSink}><ThreadView key={state.activeThreadId} state={state} chrome="embedded" workspace={workspace} draftStore={draftStore} registerReviewDraft={registerReviewDraft}
-          onBack={() => {}} dismissedErrorTaskId={dismissedErrorTaskId} onDismissError={setDismissedErrorTaskId} /></ReviewDraft.Provider></ChangesRoute.Provider>
+        {state.activeThreadId && (readyThread === state.activeThreadId || state.historyState?.threadId === state.activeThreadId) ? <ChangesRoute.Provider value={showChanges}><ReviewDraft.Provider value={reviewSink}><VoiceContext.Provider value={voice}><ThreadView key={state.activeThreadId} state={state} chrome="embedded" workspace={workspace} draftStore={draftStore} registerReviewDraft={registerReviewDraft}
+          onBack={() => {}} dismissedErrorTaskId={dismissedErrorTaskId} onDismissError={setDismissedErrorTaskId} /></VoiceContext.Provider></ReviewDraft.Provider></ChangesRoute.Provider>
           : <div className="desktop-opening" role={state.chatAdmission ? undefined : "status"}><div>
             <ChatAdmissionStatus admission={state.chatAdmission} />
             {openingDelayed ? <div><p>{state.chatAdmission ? "Conversation status is unavailable. Check receipt before continuing." : "Conversation status is unavailable. Retry or choose another conversation."}</p><button type="button" className="desktop-new" disabled={!!state.chatAdmission} onClick={() => { setRetry(value => value + 1); vscode.postMessage(state.activeThreadId ? { type: "switchThread", threadId: state.activeThreadId } : { type: "newChat" }); }}>Retry</button></div> : "Opening your conversation…"}

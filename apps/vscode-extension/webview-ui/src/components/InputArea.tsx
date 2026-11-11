@@ -1,7 +1,7 @@
 import { useRetainedDraft } from "../drafts/useRetainedDraft";
 import { REVIEW_APPEND_BYTES, type RegisterReviewDraft, type ReviewDraftSink } from "../drafts/reviewDraft";
 import type { DraftPort } from "../drafts/types";
-import { useRef, useEffect, useState, useCallback, useId } from "react";
+import { useRef, useEffect, useState, useCallback, useContext, useId } from "react";
 import { Icon } from "./Icon";
 import { ModelMenu } from "./ModelMenu";
 import { ApprovalMenu, ApprovalNotice } from "./ApprovalMenu";
@@ -11,6 +11,8 @@ import { vscode } from "../vscodeApi";
 import { parseSlashCommand, resolveSkillCommand, buildSlashDropdownItems } from "../slash";
 import { detectTrigger } from "../composerTrigger";
 import { TriggerDropdown } from "./TriggerDropdown";
+import { VoiceContext } from "./voice/VoiceContext";
+import { VoiceControl } from "./voice/VoiceControl";
 import type { InputAvailability } from "../inputAvailability";
 import type { ApprovalModeView, ContextUsage, ThreadUsageView } from "../types";
 
@@ -46,6 +48,9 @@ const MAX_TEXTAREA_HEIGHT = 96;
  */
 export function InputArea({ availability, draft, threadId = "", onDraftChange, approval, planMode = false, stepReview = true, threadUsage, teamNames, contextUsage = null, contextUsageStale = false, draftStore, registerReviewDraft }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Desktop only (undefined in VS Code): the voice session this composer talks to.
+  const voice = useContext(VoiceContext);
+  const voiceActive = !!voice?.active;
   const [submitting, setSubmitting] = useState(false);
   const sendingRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -170,6 +175,20 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
   const trackedMentionsRef = useRef<string[]>([]);
   const retention = useRetainedDraft({ port: draftStore, threadId, text: draft, images: imageAttachments,
     mentions: trackedMentionsRef, isReading: () => readers.current.size > 0, setText: onDraftChange, setImages: setImageAttachments });
+  // A transcript the voice session could not send becomes an editable draft (after a blank
+  // line when something is already typed); sending it goes the same way as any typed text.
+  const reviewHeld = voice?.reviews[0];
+  useEffect(() => {
+    if (!voice || !reviewHeld || retention.choosing) return;
+    retention.edited();
+    recoveryId.current = null;
+    const base = currentDraft.current.replace(/\s+$/u, "");
+    const next = base ? `${base}\n\n${reviewHeld.transcript}` : reviewHeld.transcript;
+    currentDraft.current = next;
+    onDraftChange(next);
+    voice.discardReview(reviewHeld.id);
+    requestAnimationFrame(() => { autoGrow(); textareaRef.current?.focus(); });
+  }, [voice, reviewHeld, onDraftChange, retention.choosing]);
   const reviewReady = !!threadId && retention.loaded && !retention.returned && !retention.choosing && !promptPending && pendingImages === 0;
   const reviewReason = !threadId ? "Open a conversation first." : !retention.loaded ? retention.notice || "Wait for the unsent draft to load." : retention.returned || retention.choosing ? "Resolve the other unsent draft first." : promptPending ? "Wait for the prompt expansion." : pendingImages ? "Wait for the images to finish loading." : undefined;
   const reviewState = useRef({ ready: reviewReady, reason: reviewReason, threadId, change: onDraftChange, edited: retention.edited });
@@ -373,9 +392,27 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
     return false;
   }
 
+  /** Plain text during a voice session goes to the session (a mid-turn correction gets a
+   *  spoken answer); images, commands and mentions take the normal path. */
+  function voiceTakes(text: string): boolean {
+    return voiceActive && imageAttachments.length === 0 && !parseSlashCommand(text)
+      && !trackedMentionsRef.current.some(path => text.includes(`@${path}`));
+  }
+
   function doSend() {
-    if ((availability.sendDisabled ?? availability.disabled) || readers.current.size || sendingRef.current || retention.returned || retention.choosing) return;
     const trimmed = draft.trim();
+    if (voice && voiceTakes(trimmed)) {
+      if (!trimmed || readers.current.size || retention.returned || retention.choosing) return;
+      retention.edited();
+      recoveryId.current = null;
+      trackedMentionsRef.current = [];
+      void voice.submitText(trimmed).catch(() => { /* the session reports it in the transcript */ });
+      onDraftChange("");
+      const el = textareaRef.current;
+      if (el) el.style.height = "auto";
+      return;
+    }
+    if ((availability.sendDisabled ?? availability.disabled) || readers.current.size || sendingRef.current || retention.returned || retention.choosing) return;
     if (!trimmed && imageAttachments.length === 0) return;
     const slash = parseSlashCommand(trimmed);
     if (slash) {
@@ -440,7 +477,10 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
     tier: "older", snapshot: null, mode: stepReview ? "ask" : "accept_edits",
     confirmed: true, pending: false, warningDismissed: false, trusted: true, error: null, notice: null,
   };
-  const canSend = !retention.choosing && !retention.returned && !submitting && !(availability.sendDisabled ?? availability.disabled) && pendingImages === 0 && (draft.trim().length > 0 || imageAttachments.length > 0);
+  const voiceSend = !!voice && voiceTakes(draft.trim());
+  const canSend = voiceSend
+    ? !retention.choosing && !retention.returned && pendingImages === 0 && draft.trim().length > 0
+    : !retention.choosing && !retention.returned && !submitting && !(availability.sendDisabled ?? availability.disabled) && pendingImages === 0 && (draft.trim().length > 0 || imageAttachments.length > 0);
 
   return (
     <div
@@ -497,8 +537,8 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
         onChange={handleInput}
         onPaste={handlePaste}
         onKeyDown={handleKeyDown}
-        disabled={availability.disabled || retention.choosing}
-        placeholder={!availability.disabled && planMode ? "Describe a plan…" : availability.placeholder}
+        disabled={(availability.disabled && !voiceActive) || retention.choosing}
+        placeholder={availability.disabled && voiceActive ? "Type a message or correction for the voice agent" : !availability.disabled && planMode ? "Describe a plan…" : availability.placeholder}
         aria-label="Chat input" name="message" autoComplete="off"
         className={[
           "w-full bg-transparent outline-none resize-none",
@@ -535,6 +575,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
         <span className="flex-1" />
         <ModelMenu />
         <ContextMeter usage={contextUsage} stale={contextUsageStale} threadUsage={threadUsage} teamNames={teamNames} />
+        {voice && <VoiceControl voice={voice} />}
         {availability.taskStop ? <div ref={abortRoot} className="relative flex shrink-0 items-center gap-0.5">
           <button type="button" onClick={() => handleAbort(false)} disabled={aborting} aria-label="Stop and keep changes" title="Stop the task; keep applied changes"
             className="flex h-8 w-8 items-center justify-center rounded-full border border-border-strong bg-surface-2 text-text disabled:opacity-50"><Icon name="stop" size={13} /></button>
@@ -546,8 +587,11 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
           </div>}
         </div> : availability.showStop ? <button type="button" onClick={handleStop} disabled={stopping} aria-label="Stop" title="Stop"
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border-strong bg-surface-2 text-text disabled:opacity-50"><Icon name="stop" size={13} /></button>
-        : <button type="button" onClick={doSend} disabled={!canSend} aria-label="Send" aria-describedby={retention.returned ? otherDraftId : undefined} title={retention.returned ? "Swap in or discard the other draft first" : "Send (Enter)"}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent-fill)] text-[var(--on-accent)] hover:bg-[var(--accent-fill-hover)] disabled:opacity-40 disabled:cursor-default"><Icon name="send" size={14} /></button>}
+        : null}
+        {/* During a voice session Send stays beside Stop: a typed correction reaches the running turn. */}
+        {(!availability.taskStop && !availability.showStop) || voiceActive ? <button type="button" onClick={doSend} disabled={!canSend} aria-label="Send" aria-describedby={retention.returned ? otherDraftId : undefined}
+          title={retention.returned ? "Swap in or discard the other draft first" : voiceSend ? "Send to the voice agent (Enter)" : "Send (Enter)"}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent-fill)] text-[var(--on-accent)] hover:bg-[var(--accent-fill-hover)] disabled:opacity-40 disabled:cursor-default"><Icon name="send" size={14} /></button> : null}
         <ApprovalNotice approval={effectiveApproval} />
       </div>
     </div>

@@ -3,7 +3,7 @@ import { sealedRunningEvents } from "../transcript/sealedRunning";
 import type { RegisterReviewDraft } from "../drafts/reviewDraft";
 import type { DraftPort } from "../drafts/types";
 import { AgentRosterCard } from "./agents/AgentRosterCard";
-import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
+import { useContext, useState, useRef, useEffect, useMemo, type ReactNode } from "react";
 import { TranscriptItems } from "./shared/TranscriptItems";
 import { Icon } from "./Icon";
 import { vscode } from "../vscodeApi";
@@ -12,6 +12,8 @@ import { AgentRow } from "./messages/AgentRow";
 import { LiveSlot } from "./LiveSlot";
 import { WorkBar } from "./WorkBar";
 import { InputArea } from "./InputArea";
+import { VoiceContext } from "./voice/VoiceContext";
+import { VoiceLiveLines } from "./voice/VoiceLiveLines";
 import { SettingsDrawer } from "./SettingsDrawer";
 import { ChatSettingsOverlay } from "./ChatSettingsOverlay";
 import { inputAvailability } from "../inputAvailability";
@@ -82,6 +84,8 @@ interface Props {
 export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError, chrome = "panel", workspace, draftStore, registerReviewDraft }: Props) {
   const historyCurrent = !state.historyState || state.historyState.phase === "current";
   const [draft, setDraft] = useState("");
+  // Desktop only: the voice session's live lines end the transcript (undefined in VS Code).
+  const voice = useContext(VoiceContext);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   // Chat rewind is local UI state, not app state: the draft lives here too, and the
@@ -256,11 +260,14 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
   );
   const threadTitle = activeThread?.title ?? "Chat";
 
+  // A voice session's live lines (words heard, an error) are content too.
+  const voiceLive = !!voice && (voice.turns.length > 0 || !!voice.state.partial || !!voice.error);
   const isEmpty =
     state.messages.length === 0 &&
     !state.streaming &&
     !state.thinkingStatus &&
-    !state.retryStatus;
+    !state.retryStatus &&
+    !voiceLive;
 
   return (
     <AgentsContext.Provider value={agentsUi}>
@@ -497,9 +504,12 @@ export function ThreadView({ state, onBack, dismissedErrorTaskId, onDismissError
                   )}
                 </>
               ) : undefined}
-              renderTail={() => !state.retryStatus && state.streaming?.text && (
-                <AgentRow content={state.streaming.text} streaming hideThinkingBlock />
-              )} />
+              renderTail={() => <>
+                {!state.retryStatus && state.streaming?.text && (
+                  <AgentRow content={state.streaming.text} streaming hideThinkingBlock />
+                )}
+                {voice && <VoiceLiveLines voice={voice} />}
+              </>} />
           </>
         )}
 
