@@ -22,6 +22,7 @@ export function UserMessage({
   images = [],
   onRewind,
   queued = false,
+  spoken = false,
 }: {
   content: string;
   mentionedFiles?: string[];
@@ -30,6 +31,8 @@ export function UserMessage({
   queued?: boolean;
   /** Absent when the message predates rewind (no id) or a turn is running. */
   onRewind?: () => void;
+  /** Heard by the voice assistant (speech recognition), not typed. */
+  spoken?: boolean;
 }) {
   const codeParts = content.split(/(`[^`]+`)/);
   const [open, setOpen] = useState<{ src: string; name: string } | null>(null);
@@ -93,6 +96,7 @@ export function UserMessage({
           ))}
         </div>
       )}
+      {spoken && <span className="text-caption text-text-3">Spoken</span>}
       {(content.trim() || queued) && (
         <div
           data-testid="user-bubble"

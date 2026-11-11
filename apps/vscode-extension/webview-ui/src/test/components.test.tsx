@@ -195,3 +195,30 @@ describe("MessageRow — agent_dispatch", () => {
     expect(container.textContent).toBe("");
   });
 });
+
+describe("MessageRow — voice", () => {
+  const voiceMsg = (role: "user" | "agent", content: string, metadata: Record<string, unknown>) =>
+    ({ id: `${role}-1`, role, content, type: "text" as const, timestamp: "2026-11-11T00:00:00Z", metadata });
+
+  it("shows a heard exchange as a spoken user message without a rewind point", () => {
+    render(<MessageRow msg={voiceMsg("user", "how is it going", { voice: "exchange", voice_decision: "d1" })}
+      onRewindRequest={() => {}} />);
+    expect(screen.getByText("how is it going")).toBeTruthy();
+    expect(screen.getByText("Spoken")).toBeTruthy();
+    expect(screen.queryByLabelText("Rewind to here")).toBeNull();
+  });
+
+  it("shows a spoken reply as a secondary line, not a written answer", () => {
+    render(<MessageRow msg={voiceMsg("agent", "Step two of three.", { voice: "exchange", voice_decision: "d1" })} />);
+    const line = screen.getByTestId("spoken-line");
+    expect(line.textContent).toContain("Spoken reply");
+    expect(line.textContent).toContain("Step two of three.");
+  });
+
+  it("shows a narration as a spoken summary line", () => {
+    render(<MessageRow msg={voiceMsg("agent", "Fixed, and the tests pass.", { voice: "narration", answer_id: "a1" })} />);
+    const line = screen.getByTestId("spoken-line");
+    expect(line.textContent).toContain("Spoken summary");
+    expect(line.textContent).toContain("Fixed, and the tests pass.");
+  });
+});

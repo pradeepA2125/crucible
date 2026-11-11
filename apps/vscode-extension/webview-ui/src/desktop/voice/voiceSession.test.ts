@@ -138,7 +138,8 @@ describe("desktop voice session", () => {
     }));
     expect(voice.sent("decide")).toEqual([{ type: "decide", sessionId: "session", utteranceId: snapshot.utteranceId,
       text: "Use SQLite", silenceMs: expect.any(Number), finalCall: false }]);
-    expect(voice.callbacks.utterance).toHaveBeenCalledExactlyOnceWith(snapshot.utteranceId, "Use SQLite");
+    // The decision id lets the panel fold this live turn into its saved copy.
+    expect(voice.callbacks.utterance).toHaveBeenCalledExactlyOnceWith(snapshot.utteranceId, "Use SQLite", "d1");
 
     voice.session.mute();
     feed(8, 0.03);
@@ -219,7 +220,7 @@ describe("desktop voice session", () => {
     await vi.waitFor(() => expect(voice.trace.mock.calls.some(([, event]) => event === "words_resumed")).toBe(true));
     frames(125, 0);
     await vi.waitFor(() => expect(voice.callbacks.utterance)
-      .toHaveBeenCalledExactlyOnceWith(expect.any(String), "Use SQLite instead."));
+      .toHaveBeenCalledExactlyOnceWith(expect.any(String), "Use SQLite instead.", expect.any(String)));
     expect(voice.request.mock.calls.filter(([command]) => command.type === "snapshot")).toHaveLength(1);
     voice.session.close();
   });
@@ -244,7 +245,7 @@ describe("desktop voice session", () => {
     frames(12, 0.03);
     frames(125, 0);
     await vi.waitFor(() => expect(voice.callbacks.utterance)
-      .toHaveBeenCalledExactlyOnceWith(expect.any(String), "Use SQLite"));
+      .toHaveBeenCalledExactlyOnceWith(expect.any(String), "Use SQLite", expect.any(String)));
     voice.session.close();
   });
 
@@ -299,7 +300,7 @@ describe("desktop voice session", () => {
         frames(28, 0.03);
       }
       frames(submitted ? 125 : 28, 0);
-      if (submitted) await vi.waitFor(() => expect(voice.callbacks.utterance).toHaveBeenCalledWith(expect.any(String), transcript));
+      if (submitted) await vi.waitFor(() => expect(voice.callbacks.utterance).toHaveBeenCalledWith(expect.any(String), transcript, expect.any(String)));
       else if (held) {
         await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenCalledWith({ partial: transcript }));
         await vi.waitFor(() => expect(voice.callbacks.state).toHaveBeenLastCalledWith({ checking: false }));

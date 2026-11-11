@@ -225,7 +225,7 @@ export default function DesktopApp({ draftStore, layoutStore, fileStore, changes
         <button type="button" className="desktop-icon" aria-label="Search conversations, files and actions" onClick={() => setPaletteOpen(true)}><Icon name="search" size={16} /></button>
         <button type="button" className={`desktop-icon${workspaceOpen ? " is-active" : ""}`} aria-label={workspaceOpen ? "Close workspace" : "Open workspace"} aria-expanded={workspaceOpen} onClick={() => { if (!workspaceOpen && workspaceTabsState.tabs.find(tab => tab.id === workspaceTabsState.active)?.kind === "new") requestLauncherFocus(); setWorkspaceOpen(value => !value); }} title="Toggle workspace"><Icon name="panel-right" size={17} /></button>
       </header>
-      {voiceBridge && voiceOpen && <VoicePanel key={voiceIdentity} id="desktop-local-voice" bridge={voiceBridge} threadId={voiceThread} />}
+      {voiceBridge && voiceOpen && <VoicePanel key={voiceIdentity} id="desktop-local-voice" bridge={voiceBridge} threadId={voiceThread} messages={state.messages} />}
       <FindBar open={findOpen} close={closeFind} target={`${state.activeThreadId}:${workspaceOpen}:${isExpanded}:${workspaceTabsState.active}:${changesScope}`} />
       {summaryOpen && <PinnedSummary state={state} changes={changes} review={() => { setChangesScope("conversation"); dispatchWorkspaceTab({type:"tool",kind:"changes"}); setWorkspaceOpen(true); }} />}
       {navigationError && <div role="alert" className="desktop-layout-error">{navigationError}</div>}

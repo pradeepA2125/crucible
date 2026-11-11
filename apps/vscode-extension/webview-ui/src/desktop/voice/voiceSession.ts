@@ -44,7 +44,8 @@ interface VoiceReview {
 
 interface VoiceSessionCallbacks {
   state(patch: Partial<VoiceSessionState>): void;
-  utterance(id: string, text: string): void;
+  /** decisionId: set for a decided spoken turn (its saved exchange carries it). */
+  utterance(id: string, text: string, decisionId?: string): void;
   reply(id: string, text: string, final: boolean): void;
   receipt(receipt: VoiceReceipt): void;
   error(message: string): void;
@@ -839,7 +840,7 @@ export class VoiceSession {
   }
 
   private async commitWith(sessionId: string, turn: SpokenTurn, text: string, decision: VoiceDecision, retried: boolean) {
-    this.events.utterance(turn.id, text);
+    this.events.utterance(turn.id, text, decision.decisionId);
     this.prepareOutput(turn.id);
     const result = await voiceRequest(this.bridge, {
       type: "commit", sessionId, utteranceId: turn.id, decisionId: decision.decisionId,

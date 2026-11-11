@@ -162,3 +162,50 @@ it("project detach cancels only local history attachment, never backend work, an
  expect(f.backend.stopChatTurn).not.toHaveBeenCalled();expect(f.ui.replaceChatMessages).not.toHaveBeenCalled();
  f.setRead(async()=>rows("fresh A"));await f.controller.switchChatThread("a");await flush();expect(f.ui.replaceChatMessages).toHaveBeenLastCalledWith(rows("fresh A"));
 });
+
+describe("voice exchanges in the transcript", () => {
+  const voice = (id: string, role: "user" | "agent", content: string): ChatMessage =>
+    ({ id, role, content, type: "text", metadata: { voice: "exchange", voice_decision: "d1" }, timestamp: "x" });
+
+  it("a voice message saved between turns appears on the next live poll", async () => {
+    vi.useFakeTimers(); const f = fixture(); f.state.turnActive = false;
+    await f.controller.switchChatThread("a"); await flush();
+    const saved = [...rows("a"), voice("v1", "user", "how is it going"), voice("v2", "agent", "Nothing is running.")];
+    f.setRead(async () => saved); f.state.messageCount = 3;
+    await vi.advanceTimersByTimeAsync(2100);
+    await f.controller.pollThreadLiveState(); await flush();
+    expect(f.ui.replaceChatMessages).toHaveBeenLastCalledWith(saved);
+    const reads = vi.mocked(f.backend.getChatThread).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(500);
+    await f.controller.pollThreadLiveState(); await flush();
+    expect(vi.mocked(f.backend.getChatThread).mock.calls.length).toBe(reads);
+  });
+
+  it("a voice message saved mid-turn is appended without replacing the streaming answer", async () => {
+    const f = fixture(); f.state.turnActive = false;
+    await f.controller.switchChatThread("a"); await flush();
+    let release!: () => void;
+    const blocked = new Promise<void>(r => { release = r; });
+    f.backend.sendChatMessage = vi.fn(async (_tid, _text, _signal, options) => {
+      options?.onAdmitted?.();
+      return { kind: "stream", events: (async function* () { await blocked; yield { type: "chat_done" as const, payload: {} }; })() };
+    });
+    const send = f.controller.sendChatMessage("fix it"); await flush();
+    const replaced = vi.mocked(f.ui.replaceChatMessages).mock.calls.length;
+    f.setRead(async () => [...rows("a"), voice("v1", "user", "how is it going"), voice("v2", "agent", "Step two of three.")]);
+    f.state.turnActive = true; f.state.messageCount = 4;
+    await f.controller.pollThreadLiveState(); await flush();
+    expect(f.ui.appendChatMessage).toHaveBeenCalledWith(expect.objectContaining({ id: "v1", content: "how is it going" }));
+    expect(f.ui.appendChatMessage).toHaveBeenCalledWith(expect.objectContaining({ id: "v2", content: "Step two of three." }));
+    expect(vi.mocked(f.ui.replaceChatMessages).mock.calls.length).toBe(replaced);
+    // The same messages are never appended twice; a non-voice message waits for the turn's end.
+    f.state.messageCount = 5;
+    f.setRead(async () => [...rows("a"), voice("v1", "user", "how is it going"),
+      voice("v2", "agent", "Step two of three."), { ...rows("streamed answer")[0]!, id: "x1" }]);
+    await f.controller.pollThreadLiveState(); await flush();
+    const appended = vi.mocked(f.ui.appendChatMessage).mock.calls.map(([m]) => m.id);
+    expect(appended.filter(id => id === "v1")).toHaveLength(1);
+    expect(appended).not.toContain("x1");
+    release(); await send;
+  });
+});

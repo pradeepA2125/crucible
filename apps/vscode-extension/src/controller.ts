@@ -63,6 +63,7 @@ import type { MemoryDataSource } from "./memory-data.js";
 import { listPromptNames, loadPromptBody, substitutePrompt } from "./prompt-files.js";
 import { randomUUID } from "crypto";
 import { readMentionedFiles } from "./mentioned-files.js";
+import { isVoiceMessage } from "./voice-messages.js";
 import { buildReviewFileEntries } from "./review-files.js";
 import { SessionStore } from "./session-store.js";
 import { shouldStopPolling, TaskPoller } from "./task-poller.js";
@@ -270,6 +271,11 @@ export class CrucibleController {
   // Set only from a getChatThread result (spec §6): the transcript length the webview has.
   private lastReconciledCount = 0;
   private reconcilePending = false;
+  // Ids of saved messages on screen. During this client's own streaming turn the full
+  // reload waits for the turn's end; voice exchanges are appended by id meanwhile.
+  private shownMessageIds = new Set<string>();
+  private voiceFollowCount = -1;
+  private voiceFollowing = false;
   // (threadId -> pendingGates) last notified, so a waiting gate does not re-notify.
   private readonly attentionNotified = new Map<string, number>();
   private readonly attentionListeners: Array<(threadId: string, pendingGates: number) => void> = [];
@@ -390,7 +396,7 @@ export class CrucibleController {
     this.ui.clearChatThread(threadId);
     const cached = this.historyCache.get(this.historyKey(threadId));
     this.historySaved = cached !== undefined;
-    if (cached) this.ui.replaceChatMessages(cached);
+    if (cached) this.showSavedMessages(cached);
     this.publishHistory();
     if (!this.historyTimer) this.historyTimer = setInterval(() => {
       if (this.disposed || !this.activeThreadId) return;
@@ -1271,6 +1277,35 @@ await this.runProjectWork(threadId, "team_plan", gateId, async (verifyWork, isCu
   /** Reconcile by replacement (spec §6): messages written while nothing streamed this
    * thread — a notice marker, a breadcrumb — reach the webview without a reload. Swaps
    * the messages only; agents, views, live cards and subscriptions are untouched. */
+  private showSavedMessages(messages: ChatMessage[]): void {
+    this.shownMessageIds = new Set(messages.flatMap(m => m.id ? [m.id] : []));
+    this.ui.replaceChatMessages(messages);
+  }
+
+  /** A status question answered by voice while this client streams a turn: show the
+   *  exchange now, without replacing the answer being streamed. Everything else waits for
+   *  the full reload at the turn's end. */
+  private async followVoiceMidTurn(threadId: string, expected: number): Promise<void> {
+    if (expected === this.voiceFollowCount || this.voiceFollowing) return;
+    this.voiceFollowing = true;
+    const turn = this.turnAbort, epoch = this.contextView();
+    try {
+      const thread = await this.clientForChat().getChatThread(threadId, turn?.signal);
+      if (this.disposed || this.activeThreadId !== threadId || this.turnAbort !== turn
+        || !this.contextState.current(epoch, this.settings.getBackendBaseUrl())) return;
+      this.voiceFollowCount = expected;
+      for (const message of thread.messages) {
+        if (!message.id || !isVoiceMessage(message) || this.shownMessageIds.has(message.id)) continue;
+        this.shownMessageIds.add(message.id);
+        this.ui.appendChatMessage(message);
+      }
+    } catch {
+      // Best effort: the reload at the turn's end shows them anyway.
+    } finally {
+      this.voiceFollowing = false;
+    }
+  }
+
   private readSavedHistory(threadId: string, client = this.clientForChat(), key = this.historyKey(threadId)): Promise<ChatMessage[]> {
     return this.historyReader.read(key, async signal => {
       const thread = await client.getChatThread(threadId, signal);
@@ -1282,7 +1317,9 @@ await this.runProjectWork(threadId, "team_plan", gateId, async (verifyWork, isCu
   private async reconcileTranscript(threadId: string, expected: number, force = false): Promise<void> {
     const epoch = this.contextView();
     if (this.activeThreadId !== threadId || this.disposed || this.turnAbort || this.pendingAdmissions.size) {
-      this.reconcilePending = true; return;
+      this.reconcilePending = true;
+      if (this.turnAbort && this.activeThreadId === threadId && !this.disposed) void this.followVoiceMidTurn(threadId, expected);
+      return;
     }
     if (Date.now() < this.historyNextAt && (this.historyFailures > 0 || !force && expected === this.lastReconciledCount)) return;
     const key = this.historyKey(threadId), mutation = this.historyMutation;
@@ -1304,7 +1341,7 @@ await this.runProjectWork(threadId, "team_plan", gateId, async (verifyWork, isCu
       this.historyLoaded = true; this.historySaved = true; this.historyFailed = false; this.historyFailures = 0;
       this.historyNotice = this.historyCache.put(key, messages) ? undefined : "This conversation is too large to keep an extra saved copy.";
       this.lastReconciledCount = messages.length; this.reconcilePending = false;
-      this.ui.replaceChatMessages(messages); this.publishHistory();
+      this.showSavedMessages(messages); this.publishHistory();
     } catch {
       if (!current()) return;
       this.historyFailed = true;

@@ -5,7 +5,8 @@ import { readVoiceStatus, voiceRequest, type VoiceBridge, type VoiceIntent, type
 import { INITIAL_VOICE_STATE, VoiceSession } from "./voiceSession";
 import { heardLabel, voicePhase } from "./voiceStatus";
 import { readVoiceModel, voiceModelChoices, writeVoiceModel } from "./voiceModelPreference";
-import type { ModelOption } from "../../types";
+import { mergeVoiceTurns, voiceTurns, type VoiceTurn } from "./voiceTurns";
+import type { ChatMsg, ModelOption } from "../../types";
 import { vscode } from "../../vscodeApi";
 import "./voice.css";
 
@@ -24,14 +25,6 @@ const RECEIPT_LABELS: Record<VoiceReceipt["status"], string> = {
   expired: "Correction expired",
 };
 
-interface VoiceTurn {
-  id: string;
-  text: string;
-  reply?: string;
-  final?: boolean;
-  receipt?: VoiceReceipt;
-}
-
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : "The voice request failed. Try again.";
 }
@@ -44,9 +37,11 @@ interface Props {
   bridge: VoiceBridge;
   threadId: string;
   id: string;
+  /** The thread's saved messages: the voice conversation is read from them. */
+  messages: ChatMsg[];
 }
 
-export function VoicePanel({ bridge, threadId, id }: Props) {
+export function VoicePanel({ bridge, threadId, id, messages }: Props) {
   const alive = useRef(false);
   const session = useRef<VoiceSession>();
   const activeInstall = useRef(false);
@@ -59,7 +54,9 @@ export function VoicePanel({ bridge, threadId, id }: Props) {
   const [stt, setStt] = useState<VoiceRecognizer>("whisper-small");
   const [tts, setTts] = useState<VoiceSynthesizer>("system");
   const [pushToTalk, setPushToTalk] = useState(false);
-  const [turns, setTurns] = useState<VoiceTurn[]>([]);
+  // This session's turns before they are saved (live reply text, correction receipts).
+  const [liveTurns, setLiveTurns] = useState<VoiceTurn[]>([]);
+  const turns = mergeVoiceTurns(voiceTurns(messages), liveTurns);
   const [text, setText] = useState("");
   const [intent, setIntent] = useState<VoiceIntent>("auto");
   const [sending, setSending] = useState(false);
@@ -138,17 +135,17 @@ export function VoicePanel({ bridge, threadId, id }: Props) {
     setError("");
     setState(INITIAL_VOICE_STATE);
     setSending(false);
-    setTurns([]);
+    setLiveTurns([]);
     let next: VoiceSession | undefined;
     try {
       next = new VoiceSession(bridge, {
         state: patch => setState(previous => ({ ...previous, ...patch })),
-        utterance: (utteranceId, message) => setTurns(previous => [
-          ...previous, { id: utteranceId, text: message },
+        utterance: (utteranceId, message, decisionId) => setLiveTurns(previous => [
+          ...previous, { id: utteranceId, text: message, ...(decisionId ? { decisionId } : {}) },
         ].slice(-30)),
-        reply: (utteranceId, reply, final) => setTurns(previous => previous.map(turn =>
+        reply: (utteranceId, reply, final) => setLiveTurns(previous => previous.map(turn =>
           turn.id === utteranceId ? { ...turn, reply, final } : turn)),
-        receipt: receipt => setTurns(previous => previous.map(turn =>
+        receipt: receipt => setLiveTurns(previous => previous.map(turn =>
           turn.id === receipt.message_id ? { ...turn, receipt } : turn)),
         error: setError,
         ended: reason => {

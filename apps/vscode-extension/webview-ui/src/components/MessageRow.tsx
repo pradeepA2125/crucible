@@ -5,6 +5,7 @@ import { DiffCard } from "./messages/DiffCard";
 import { AgentRow } from "./messages/AgentRow";
 import { QAMessage } from "./messages/QAMessage";
 import { UserMessage } from "./messages/UserMessage";
+import { SpokenLine } from "./messages/SpokenLine";
 import { CardShell } from "./shared/CardShell";
 import { Icon } from "./Icon";
 import { AgentRosterCard } from "./agents/AgentRosterCard";
@@ -182,6 +183,14 @@ function MessageRowImpl({ msg, planVersion, readOnly = false, turnActive, onRewi
     case "diff_summary":
     case "text":
     default: {
+      const voice = msg.metadata?.voice;
+      if (msg.role === "user" && voice === "exchange") {
+        // Small talk with the voice assistant: no turn, so no rewind point.
+        return <UserMessage content={msg.content} spoken />;
+      }
+      if (msg.role === "agent" && (voice === "exchange" || voice === "narration")) {
+        return <SpokenLine label={voice === "narration" ? "Spoken summary" : "Spoken reply"} content={msg.content} />;
+      }
       if (msg.role === "user") {
         const messageId = msg.id;
         return (
