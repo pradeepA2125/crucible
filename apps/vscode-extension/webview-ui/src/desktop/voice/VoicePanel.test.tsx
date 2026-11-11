@@ -98,4 +98,17 @@ describe("VoicePanel", () => {
     expect(await screen.findByText("Install Pocket TTS")).toBeTruthy();
     expect(screen.queryByText(/Install spoken replies/)).toBeNull();
   });
+
+  it("keeps Start available while spoken replies download", async () => {
+    const bridge: VoiceBridge = {
+      request: vi.fn(async (command: VoiceCommand) => command.type === "install" ? new Promise(() => {})
+        : { available: true, installed: ["whisper-small"], tts: [], pocketAvailable: true,
+            pocketDownloadBytes: 199_269_026, pocketEngine: "onnx" }),
+      subscribe: () => () => {},
+    };
+    render(<VoicePanel id="voice" bridge={bridge} threadId="thread" messages={[]} />);
+    fireEvent.click(await screen.findByText("Install spoken replies (about 200 MB)"));
+    expect(await screen.findByText("Installing spoken replies…")).toBeTruthy();
+    expect((screen.getByText("Start voice session") as HTMLButtonElement).disabled).toBe(false);
+  });
 });

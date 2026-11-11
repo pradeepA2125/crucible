@@ -349,6 +349,10 @@ export function VoicePanel({ bridge, threadId, id, messages }: Props) {
                 <span role="status">{operation.model !== "pocket" ? "Installing speech model…"
                   : status.pocketEngine === "onnx" ? "Installing spoken replies…" : "Installing Pocket TTS…"}</span>
                 <BtnGhost onClick={cancelInstallation}>Cancel download</BtnGhost>
+                {/* Text-only voice works while spoken replies download. */}
+                {operation.model === "pocket" && tts === "none" && modelReady && <BtnPrimary onClick={() => void start()} disabled={starting}>
+                  {starting ? "Starting voice…" : "Start voice session"}
+                </BtnPrimary>}
               </> : !modelReady ? <BtnPrimary onClick={() => void changeInstallation("install", stt)} disabled={!!operation}>
                 Install speech model
               </BtnPrimary> : tts === "pocket" && !synthReady && status.pocketAvailable ? <BtnPrimary
