@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import pocket from "../../voice-native/pocket-assets.json" with { type: "json" };
+import pocketOnnx from "../../voice-native/pocket-onnx-assets.json" with { type: "json" };
 
 const revision = "5359861c739e955e79d9a303bcbc70fb988958b1";
 const whisperSource = `https://huggingface.co/ggerganov/whisper.cpp/resolve/${revision}`;
@@ -37,6 +38,31 @@ function checkedPath(path: string): string {
   return path;
 }
 
+/** A Pocket TTS model pack: the CoreML pack on Apple Silicon, the sherpa-onnx pack elsewhere. */
+export type PocketPack = {
+  id: string;
+  engine: "coreml" | "onnx";
+  /** Folder inside the pack that holds `files` ("" for the pack's own root). */
+  root: string;
+  files: { path: string; url: string; bytes: number; sha256: string }[];
+  /** CC-BY credit written into the installed pack as ATTRIBUTION. */
+  attribution?: string;
+};
+
+/** The Pocket pack this machine can run, if any. */
+export function pocketPackFor(platform: string, arch: string): PocketPack | undefined {
+  if (platform === "darwin" && arch === "arm64") {
+    return {
+      id: pocket.revision, engine: "coreml", root: pocket.relativeRoot,
+      files: pocket.files.map(file => ({ ...file, url: `${pocket.source}/resolve/${pocket.revision}/${file.path}` })),
+    };
+  }
+  if ((platform === "win32" || platform === "linux") && arch === "x64") {
+    return { id: pocketOnnx.id, engine: "onnx", root: "", files: pocketOnnx.files, attribution: pocketOnnx.attribution };
+  }
+  return undefined;
+}
+
 async function matchSize(path: string, info: VerifiedAsset): Promise<boolean> {
   const stat = await lstat(path).catch(() => undefined);
   return stat?.isFile() === true && stat.size === info.bytes;
@@ -53,8 +79,9 @@ export class VoiceAssets {
   private pending: { controller: AbortController; settled: Promise<void> } | undefined;
   private readonly pocketPath: string;
 
-  constructor(private readonly directory: string, private readonly fetchModel = fetch) {
-    this.pocketPath = join(directory, `pocket-${checkedPath(pocket.revision)}`);
+  constructor(private readonly directory: string, private readonly fetchModel = fetch,
+    private readonly pack: PocketPack | null = pocketPackFor(process.platform, process.arch) ?? null) {
+    this.pocketPath = join(directory, `pocket-${checkedPath(pack?.id ?? "none")}`);
   }
 
   async installed(): Promise<VoiceModel[]> {
@@ -67,7 +94,7 @@ export class VoiceAssets {
 
   async pocketInstalled(): Promise<boolean> {
     const marker = await readFile(join(this.pocketPath, ".complete"), "utf8").catch(() => "");
-    return marker === pocket.revision;
+    return this.pack !== null && marker === this.pack.id;
   }
 
   async verifiedPath(model: VoiceModel, signal: AbortSignal): Promise<string> {
@@ -85,8 +112,8 @@ export class VoiceAssets {
 
   async verifiedPocketPath(signal: AbortSignal): Promise<string> {
     if (!(await this.pocketInstalled())) throw new Error("Download the Pocket TTS voice first.");
-    for (const file of pocket.files) {
-      await verifyFile(join(this.pocketPath, checkedPath(pocket.relativeRoot), checkedPath(file.path)), file, signal);
+    for (const file of this.pack!.files) {
+      await verifyFile(this.packFile(this.pocketPath, file.path), file, signal);
     }
     return this.pocketPath;
   }
@@ -149,15 +176,16 @@ export class VoiceAssets {
   }
 
   private async installPocket(partial: string, signal: AbortSignal, controller: AbortController): Promise<void> {
-    const files = pocket.files.values();
+    const pack = this.pack;
+    if (!pack) throw new Error("Pocket TTS is not available on this computer.");
+    const files = pack.files.values();
     const downloadNext = async () => {
       for (let item = files.next(); !item.done; item = files.next()) {
         signal.throwIfAborted();
         const file = item.value;
-        const relative = checkedPath(file.path);
-        const target = join(partial, checkedPath(pocket.relativeRoot), relative);
+        const target = this.packFile(partial, file.path);
         await mkdir(dirname(target), { recursive: true, mode: 0o700 });
-        await this.download(`${pocket.source}/resolve/${pocket.revision}/${relative}`, target, file, signal);
+        await this.download(file.url, target, file, signal);
       }
     };
     const results = await Promise.allSettled(Array.from({ length: 3 }, () => downloadNext().catch(error => {
@@ -166,7 +194,18 @@ export class VoiceAssets {
     })));
     const failure = results.find(result => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
-    await writeFile(join(partial, ".complete"), pocket.revision, { mode: 0o600, flag: "wx" });
+    if (pack.attribution) await writeFile(join(partial, "ATTRIBUTION"), `${pack.attribution}\n`, { mode: 0o600 });
+    await writeFile(join(partial, ".complete"), pack.id, { mode: 0o600, flag: "wx" });
+  }
+
+  /** Bytes a Pocket install downloads (0 when this computer has no Pocket pack). */
+  pocketDownloadBytes(): number {
+    return this.pack?.files.reduce((total, file) => total + file.bytes, 0) ?? 0;
+  }
+
+  private packFile(base: string, path: string): string {
+    const root = this.pack?.root ?? "";
+    return root ? join(base, checkedPath(root), checkedPath(path)) : join(base, checkedPath(path));
   }
 
   private async download(url: string, path: string, info: VerifiedAsset, signal: AbortSignal): Promise<void> {

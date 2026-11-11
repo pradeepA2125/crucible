@@ -1,8 +1,10 @@
-import { mkdtemp, open, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { VAD_MODEL, VoiceAssets } from "../src/voice/assets.js";
+import { pocketPackFor, VAD_MODEL, VoiceAssets, type PocketPack } from "../src/voice/assets.js";
+import onnxPack from "../voice-native/pocket-onnx-assets.json" with { type: "json" };
 
 const directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
@@ -53,5 +55,76 @@ describe("voice assets: the Silero VAD model", () => {
   it("refuses a missing VAD model", async () => {
     const assets = new VoiceAssets(await directory());
     await expect(assets.verifiedVadPath(AbortSignal.timeout(5_000))).rejects.toThrow();
+  });
+});
+
+describe("voice assets: the Pocket pack per platform", () => {
+  const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+  const testPack: PocketPack = {
+    id: "onnx-test", engine: "onnx", root: "", attribution: "Pocket TTS by Kyutai, CC BY 4.0.",
+    files: [
+      { path: "model.onnx", url: "https://example.test/model.onnx", bytes: 5, sha256: sha("model") },
+      { path: "voice.wav", url: "https://example.test/voice.wav", bytes: 5, sha256: sha("voice") },
+    ],
+  };
+  async function withFetch<T>(run: (fetchModel: typeof fetch) => Promise<T>): Promise<T> {
+    const bodies: Record<string, string> = { "https://example.test/model.onnx": "model", "https://example.test/voice.wav": "voice" };
+    const fetchModel = vi.fn(async (url: string) => new Response(bodies[url] ?? "", { status: bodies[url] ? 200 : 404 }));
+    Object.defineProperty(Response.prototype, "url", { configurable: true, get: () => "https://example.test/x" });
+    try { return await run(fetchModel as unknown as typeof fetch); } finally { delete (Response.prototype as { url?: string }).url; }
+  }
+
+  it("pocketPackFor picks CoreML on Apple Silicon, ONNX on Windows and Linux, nothing elsewhere", () => {
+    expect(pocketPackFor("darwin", "arm64")?.engine).toBe("coreml");
+    expect(pocketPackFor("win32", "x64")?.engine).toBe("onnx");
+    expect(pocketPackFor("linux", "x64")?.engine).toBe("onnx");
+    expect(pocketPackFor("darwin", "x64")).toBeUndefined();
+    expect(pocketPackFor("linux", "arm64")).toBeUndefined();
+    const coreml = pocketPackFor("darwin", "arm64")!;
+    expect(coreml.files[0]?.url).toMatch(/^https:\/\/huggingface\.co\/FluidInference\/pocket-tts-coreml\/resolve\/c2e998e2/);
+  });
+
+  it("the shipped onnx pack matches the pinned table", async () => {
+    expect(onnxPack.files).toHaveLength(9);
+    expect(onnxPack.files.every(file => file.url.startsWith("https://huggingface.co/"))).toBe(true);
+    expect(onnxPack.files.find(file => file.path === "voice.wav")?.sha256)
+      .toBe("46264e83cb99115c3d210260e029117566d9c64f20266d10daa78107759ede3e");
+    const assets = new VoiceAssets(await directory(), fetch, pocketPackFor("linux", "x64") ?? null);
+    expect(assets.pocketDownloadBytes()).toBe(199_269_026);
+    expect(new VoiceAssets(await directory(), fetch, null).pocketDownloadBytes()).toBe(0);
+  });
+
+  it("the onnx pack installs, verifies and writes its attribution", async () => {
+    const root = await directory();
+    await withFetch(async fetchModel => {
+      const assets = new VoiceAssets(root, fetchModel, testPack);
+      expect(await assets.pocketInstalled()).toBe(false);
+      await assets.install("pocket");
+      expect(await assets.pocketInstalled()).toBe(true);
+      const path = await assets.verifiedPocketPath(AbortSignal.timeout(5_000));
+      expect(await readFile(join(path, "voice.wav"), "utf8")).toBe("voice");
+      expect(await readFile(join(path, "ATTRIBUTION"), "utf8")).toContain("CC BY 4.0");
+    });
+  });
+
+  it("a pack without its completion marker is not installed", async () => {
+    const root = await directory();
+    await withFetch(async fetchModel => {
+      const assets = new VoiceAssets(root, fetchModel, testPack);
+      await assets.install("pocket");
+      await rm(join(root, "pocket-onnx-test", ".complete"));
+      expect(await assets.pocketInstalled()).toBe(false);
+      await expect(assets.verifiedPocketPath(AbortSignal.timeout(5_000))).rejects.toThrow();
+    });
+  });
+
+  it("a damaged pack file fails verification", async () => {
+    const root = await directory();
+    await withFetch(async fetchModel => {
+      const assets = new VoiceAssets(root, fetchModel, testPack);
+      await assets.install("pocket");
+      await writeFile(join(root, "pocket-onnx-test", "model.onnx"), "modex");
+      await expect(assets.verifiedPocketPath(AbortSignal.timeout(5_000))).rejects.toThrow("A voice model is damaged");
+    });
   });
 });
