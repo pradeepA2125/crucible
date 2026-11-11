@@ -69,6 +69,23 @@ function frames(count: number, rms: number) {
 }
 
 describe("desktop voice session", () => {
+  it("sends the chosen voice model at start and when it changes", async () => {
+    const voice = fixture();
+    await voice.session.start("thread", "whisper-small", "system", "gpt-6-luna");
+    expect(voice.sent("start")[0]).toMatchObject({ voiceModel: "gpt-6-luna" });
+    voice.session.setVoiceModel(null);
+    await settle();
+    expect(voice.sent("voiceModel")).toEqual([{ type: "voiceModel", sessionId: "session", model: null }]);
+    voice.session.close();
+  });
+
+  it("starts without a voice model when Automatic", async () => {
+    const voice = fixture();
+    await voice.session.start("thread", "whisper-small", "system");
+    expect(voice.sent("start")[0]).not.toHaveProperty("voiceModel");
+    voice.session.close();
+  });
+
   it("uses one snapshot per typed message and rejects PCM from a superseded utterance", async () => {
     vi.clearAllMocks();
     const voice = fixture();

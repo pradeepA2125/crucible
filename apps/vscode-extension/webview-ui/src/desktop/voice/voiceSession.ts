@@ -196,10 +196,12 @@ export class VoiceSession {
     });
   }
 
-  async start(threadId: string, stt: VoiceRecognizer, tts: VoiceSynthesizer) {
+  /** voiceModel null is Automatic: the backend picks the provider's voice model. */
+  async start(threadId: string, stt: VoiceRecognizer, tts: VoiceSynthesizer, voiceModel: string | null = null) {
     void this.audio.resume().catch(() => {});
     this.unsubscribe = this.bridge.subscribe(event => this.receive(event));
-    const started = await voiceRequest(this.bridge, { type: "start", threadId, stt, tts });
+    const started = await voiceRequest(this.bridge, { type: "start", threadId, stt, tts,
+      ...(voiceModel ? { voiceModel } : {}) });
     if (typeof started.sessionId !== "string" || !started.sessionId) {
       throw new Error("Crucible could not start a voice session.");
     }
@@ -268,6 +270,14 @@ export class VoiceSession {
     this.clearCapture();
     this.audio.closeMicrophone();
     this.events.state({ microphone: "off" });
+  }
+
+  /** Takes effect on the next decision; null goes back to Automatic. */
+  setVoiceModel(model: string | null) {
+    if (!this.sessionId) return;
+    this.trace("voice_model", { model });
+    void voiceRequest(this.bridge, { type: "voiceModel", sessionId: this.sessionId, model })
+      .catch(error => this.events.error(error instanceof Error ? error.message : String(error)));
   }
 
   setPushToTalk(enabled: boolean) {

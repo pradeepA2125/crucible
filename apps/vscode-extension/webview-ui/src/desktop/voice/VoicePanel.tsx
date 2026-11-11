@@ -4,6 +4,9 @@ import { CardShell } from "../../components/shared/CardShell";
 import { readVoiceStatus, voiceRequest, type VoiceBridge, type VoiceIntent, type VoiceModelAsset, type VoiceReceipt, type VoiceRecognizer, type VoiceStatus, type VoiceSynthesizer } from "./voiceBridge";
 import { INITIAL_VOICE_STATE, VoiceSession } from "./voiceSession";
 import { heardLabel, voicePhase } from "./voiceStatus";
+import { readVoiceModel, voiceModelChoices, writeVoiceModel } from "./voiceModelPreference";
+import type { ModelOption } from "../../types";
+import { vscode } from "../../vscodeApi";
 import "./voice.css";
 
 const RECOGNIZERS: ReadonlyArray<{ id: VoiceRecognizer; label: string }> = [
@@ -60,6 +63,9 @@ export function VoicePanel({ bridge, threadId, id }: Props) {
   const [text, setText] = useState("");
   const [intent, setIntent] = useState<VoiceIntent>("auto");
   const [sending, setSending] = useState(false);
+  // The provider's model catalog, from the same list the composer's model menu reads.
+  const [catalog, setCatalog] = useState<{ backend: string; options: ModelOption[] }>({ backend: "", options: [] });
+  const [voiceModel, setVoiceModel] = useState<string | null>(null);
   const transcript = useRef<HTMLDivElement>(null);
 
   function updateStatus(initial = false) {
@@ -88,6 +94,33 @@ export function VoicePanel({ bridge, threadId, id }: Props) {
       if (activeInstall.current) void voiceRequest(bridge, { type: "cancelInstall" }).catch(() => {});
     };
   }, [bridge]);
+
+  useEffect(() => {
+    vscode.postMessage({ type: "listModels" });
+    const onMessage = (event: MessageEvent) => {
+      const message = event.data;
+      if (message?.type !== "modelList" || typeof message.current?.backend !== "string") return;
+      setCatalog({ backend: message.current.backend, options: Array.isArray(message.options) ? message.options : [] });
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  // The choice is per provider: a provider switch (even mid-session) brings back that
+  // provider's own choice, never the previous provider's model.
+  useEffect(() => {
+    const saved = catalog.backend ? readVoiceModel(catalog.backend) : null;
+    setVoiceModel(saved);
+    session.current?.setVoiceModel(saved);
+  }, [catalog.backend]);
+
+  const chooseVoiceModel = (value: string) => {
+    const model = value || null;
+    setVoiceModel(model);
+    if (catalog.backend) writeVoiceModel(catalog.backend, model);
+    session.current?.setVoiceModel(model);
+  };
+  const modelChoices = voiceModelChoices(catalog.backend, catalog.options, voiceModel);
 
   useEffect(() => {
     const node = transcript.current;
@@ -129,7 +162,7 @@ export function VoicePanel({ bridge, threadId, id }: Props) {
       });
       session.current = next;
       next.setPushToTalk(pushToTalk);
-      await next.start(threadId, stt, tts);
+      await next.start(threadId, stt, tts, voiceModel);
     } catch (failure) {
       next?.close();
       if (alive.current && session.current === next) {
@@ -215,6 +248,11 @@ export function VoicePanel({ bridge, threadId, id }: Props) {
                 <option value="hold">Push to talk</option>
               </select>
             </label>
+            <label><span className="sr-only">Voice model</span>
+              <select value={voiceModel ?? ""} disabled={!catalog.backend} onChange={event => chooseVoiceModel(event.target.value)}>
+                {modelChoices.map(choice => <option key={choice.value} value={choice.value}>Voice model: {choice.label}</option>)}
+              </select>
+            </label>
             <BtnGhost onClick={toggleMic}>{state.microphone === "off" ? "Turn microphone on" : "Mute microphone"}</BtnGhost>
             {state.speaking && <BtnGhost onClick={() => session.current?.stopSpeaking()}>Stop speaking</BtnGhost>}
             <BtnDanger onClick={end}>End session</BtnDanger>
@@ -276,6 +314,11 @@ export function VoicePanel({ bridge, threadId, id }: Props) {
         </> : <>
           {!status && statusLoading && <p role="status">Checking local voice…</p>}
           {status?.available && <div className="crucible-voice-setup">
+            <label>Voice model
+              <select value={voiceModel ?? ""} disabled={!catalog.backend || starting} onChange={event => chooseVoiceModel(event.target.value)}>
+                {modelChoices.map(choice => <option key={choice.value} value={choice.value}>{choice.label}</option>)}
+              </select>
+            </label>
             <label>Speech recognition
               <select value={stt} disabled={!!operation || starting} onChange={event => setStt(event.target.value as VoiceRecognizer)}>
                 {RECOGNIZERS.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
