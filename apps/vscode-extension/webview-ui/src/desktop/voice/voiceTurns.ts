@@ -50,17 +50,14 @@ export function voiceTurns(messages: ChatMsg[]): VoiceTurn[] {
   return turns.slice(-MAX_TURNS);
 }
 
-/** Saved turns first; a live turn already saved (same decision, or the same words for a
- *  spoken request that started work) folds into its saved copy, keeping its receipt. */
-export function mergeVoiceTurns(saved: VoiceTurn[], live: VoiceTurn[]): VoiceTurn[] {
-  const merged = saved.map(turn => ({ ...turn }));
-  const rest: VoiceTurn[] = [];
-  for (const turn of live) {
-    const match = merged.find(candidate => (turn.decisionId !== undefined && candidate.decisionId === turn.decisionId)
+/** The live turns the chat cannot show yet: still in flight (not saved), or a correction
+ *  whose receipt is still queued or expired. A turn is saved when a saved turn has its
+ *  decision, or the same words for a spoken request that started work. */
+export function unsettledVoiceTurns(saved: VoiceTurn[], live: VoiceTurn[]): VoiceTurn[] {
+  return live.filter(turn => {
+    const status = turn.receipt?.status;
+    if (status === "queued" || status === "expired") return true;
+    return !saved.some(candidate => (turn.decisionId !== undefined && candidate.decisionId === turn.decisionId)
       || (!candidate.decisionId && words(candidate.text) === words(turn.text)));
-    if (!match) { rest.push(turn); continue; }
-    if (match.reply === undefined && turn.reply !== undefined) match.reply = turn.reply;
-    if (turn.receipt) match.receipt = turn.receipt;
-  }
-  return [...merged, ...rest].slice(-MAX_TURNS);
+  });
 }

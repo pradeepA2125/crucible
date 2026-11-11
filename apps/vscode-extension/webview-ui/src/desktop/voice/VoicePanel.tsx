@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { BtnDanger, BtnGhost, BtnPrimary } from "../../components/shared/buttons";
 import { CardShell } from "../../components/shared/CardShell";
 import { readVoiceStatus, voiceRequest, type VoiceBridge, type VoiceIntent, type VoiceModelAsset, type VoiceReceipt, type VoiceRecognizer, type VoiceStatus, type VoiceSynthesizer } from "./voiceBridge";
 import { INITIAL_VOICE_STATE, VoiceSession } from "./voiceSession";
 import { heardLabel, voicePhase } from "./voiceStatus";
 import { readVoiceModel, voiceModelChoices, writeVoiceModel } from "./voiceModelPreference";
-import { mergeVoiceTurns, voiceTurns, type VoiceTurn } from "./voiceTurns";
+import { unsettledVoiceTurns, voiceTurns, type VoiceTurn } from "./voiceTurns";
 import type { ChatMsg, ModelOption } from "../../types";
 import { vscode } from "../../vscodeApi";
 import "./voice.css";
@@ -56,7 +56,10 @@ export function VoicePanel({ bridge, threadId, id, messages }: Props) {
   const [pushToTalk, setPushToTalk] = useState(false);
   // This session's turns before they are saved (live reply text, correction receipts).
   const [liveTurns, setLiveTurns] = useState<VoiceTurn[]>([]);
-  const turns = mergeVoiceTurns(voiceTurns(messages), liveTurns);
+  // The chat is the record of the voice conversation; the panel shows only what it cannot
+  // show yet: the turn in flight and corrections still waiting.
+  const saved = useMemo(() => voiceTurns(messages), [messages]);
+  const turns = useMemo(() => unsettledVoiceTurns(saved, liveTurns), [saved, liveTurns]);
   const [text, setText] = useState("");
   const [intent, setIntent] = useState<VoiceIntent>("auto");
   const [sending, setSending] = useState(false);
