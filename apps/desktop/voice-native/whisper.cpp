@@ -10,6 +10,13 @@
 #include "pcm-protocol.hpp"
 #include "whisper.h"
 
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_AMD64))
+#include <immintrin.h>
+#include <intrin.h>
+#elif defined(__x86_64__)
+#include <cpuid.h>
+#endif
+
 namespace {
 
 static_assert(voice::sample_rate == WHISPER_SAMPLE_RATE);
@@ -102,9 +109,40 @@ int run_vad(const char *model) {
     return 0;
 }
 
+// The x64 build assumes AVX2, FMA and F16C (CMakeLists.txt). Checked before any ggml code
+// runs, so an older processor gets a clear answer instead of an illegal-instruction crash.
+bool cpu_supported() {
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_AMD64))
+    int info[4];
+    __cpuid(info, 1);
+    const unsigned ecx = static_cast<unsigned>(info[2]);
+    const bool features = (ecx & (1u << 12)) && (ecx & (1u << 27)) && (ecx & (1u << 28)) && (ecx & (1u << 29));
+    if (!features || (_xgetbv(0) & 0x6) != 0x6) return false;
+    __cpuidex(info, 7, 0);
+    return (static_cast<unsigned>(info[1]) & (1u << 5)) != 0;
+#elif defined(__x86_64__)
+    unsigned eax = 0, ebx = 0, ecx = 0, edx = 0;
+    if (!__get_cpuid(1, &eax, &ebx, &ecx, &edx)) return false;
+    // FMA (12), OSXSAVE (27), AVX (28), F16C (29)
+    if (!((ecx & (1u << 12)) && (ecx & (1u << 27)) && (ecx & (1u << 28)) && (ecx & (1u << 29)))) return false;
+    unsigned xcr0_low = 0, xcr0_high = 0;
+    __asm__ volatile("xgetbv" : "=a"(xcr0_low), "=d"(xcr0_high) : "c"(0));
+    if ((xcr0_low & 0x6) != 0x6) return false;  // the OS saves SSE and AVX state
+    if (!__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) return false;
+    return (ebx & (1u << 5)) != 0;  // AVX2
+#else
+    return true;  // arm64 builds have no x86 baseline
+#endif
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--check-cpu") {
+        const bool ok = cpu_supported();
+        std::cout << (ok ? "cpu ok" : "cpu unsupported") << std::endl;
+        return ok ? 0 : 3;
+    }
     if (argc == 3 && std::string_view(argv[1]) == "--vad" && argv[2][0] == '/') {
         std::ios::sync_with_stdio(false);
         return run_vad(argv[2]);
