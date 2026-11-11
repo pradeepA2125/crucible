@@ -737,7 +737,7 @@ class ChatController:
             self._voice_pending.popitem(last=False)
 
     async def voice_decide(self, thread_id: str, utterance: str, silence_ms: int,
-                           final_call: bool) -> dict[str, object]:
+                           final_call: bool, voice_model: str = "") -> dict[str, object]:
         """Side-effect free: the decision is only held until `voice_commit`."""
         thread = self._store.get_thread(thread_id)
         if thread is None:
@@ -747,7 +747,7 @@ class ChatController:
             utterance=utterance, silence_ms=silence_ms, final_call=final_call,
             history=voice_history(thread.messages, self._voice.log(thread_id)),
             progress=self._conversation.active_snapshot(thread_id),
-            project=Path(self._workspace_path).name)
+            project=Path(self._workspace_path).name, model_override=voice_model)
         decision = await self._voice.decide(thread_id, ctx)
         decision_id = uuid4().hex
         self._voice_pending[decision_id] = _VoiceDecisionEntry(
@@ -788,10 +788,11 @@ class ChatController:
         self._voice.record(thread_id, entry.utterance, entry.say)
         return {"action": entry.action}
 
-    async def voice_narrate(self, thread_id: str, heard: str, answer: str) -> str:
+    async def voice_narrate(self, thread_id: str, heard: str, answer: str,
+                            voice_model: str = "") -> str:
         if self._store.get_thread(thread_id) is None:
             raise ConversationError(404, "Thread not found")
-        spoken = await self._voice.narrate(thread_id, heard, answer)
+        spoken = await self._voice.narrate(thread_id, heard, answer, model_override=voice_model)
         self._voice.record(thread_id, heard, spoken)
         return spoken
 

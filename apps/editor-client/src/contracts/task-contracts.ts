@@ -839,12 +839,15 @@ export interface VoiceDecideRequest {
   silenceMs: number;
   finalCall: boolean;
   expectedProcessId: string;
+  /** The user's voice model for the current provider; absent = automatic. */
+  voiceModel?: string;
 }
 
 export interface VoiceNarrateRequest {
   heard: string;
   answer: string;
   expectedProcessId: string;
+  voiceModel?: string;
 }
 
 export interface ConversationRequest {

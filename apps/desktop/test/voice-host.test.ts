@@ -46,7 +46,7 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
-async function fixture(first: VoiceSnapshot) {
+async function fixture(first: VoiceSnapshot, options: { voiceModel?: string | null } = {}) {
   const path = await mkdtemp(join(tmpdir(), "crucible-voice-host-"));
   directories.push(path);
   await Promise.all(["crucible-whisper", "crucible-tts"].map(file => writeFile(join(path, file), "", { mode: 0o700 })));
@@ -74,7 +74,8 @@ async function fixture(first: VoiceSnapshot) {
   });
   sessions.push(host);
   const started = await host.request({ type: "start", threadId: "thread",
-    stt: "whisper-small", tts: "system" }) as { sessionId: string; vad?: boolean };
+    stt: "whisper-small", tts: "system", ...(options.voiceModel !== undefined ? { voiceModel: options.voiceModel } : {}) },
+  ) as { sessionId: string; vad?: boolean };
   const { sessionId } = started;
   return { host, sessionId, started, thread, submit, sendIdle, decide, commit, narrate, events, traces,
     setSnapshot: (value: VoiceSnapshot) => { snapshot = value; } };
@@ -195,6 +196,25 @@ describe("desktop voice front-man", () => {
       refused: "voice_agent_unavailable", reason: "timed out", finalCall: true } });
   });
 
+  it("the voice model chosen at start, then changed, rides each decide", async () => {
+    const { host, decide } = await fixture(idle, { voiceModel: "gpt-6-luna" });
+    const sessionId = (host as unknown as { session: { id: string } }).session.id;
+    await host.request({ type: "snapshot", sessionId, utteranceId: "u1" });
+    await host.request({ type: "decide", sessionId, utteranceId: "u1", text: "hi", silenceMs: 700, finalCall: false });
+    expect(decide.mock.calls[0]?.[0]).toMatchObject({ voiceModel: "gpt-6-luna" });
+    await host.request({ type: "voiceModel", sessionId, model: null });
+    await host.request({ type: "decide", sessionId, utteranceId: "u1", text: "hi", silenceMs: 700, finalCall: false });
+    expect(decide.mock.calls[1]?.[0]).not.toHaveProperty("voiceModel");
+  });
+
+  it("narration uses the session's voice model", async () => {
+    const { hooks, narrate } = await startedTask(undefined, "gpt-6.1-terra");
+    hooks.chunk("Done.");
+    hooks.finish();
+    await vi.waitFor(() => expect(narrate).toHaveBeenCalledWith("fix it", "Done.", "process-1",
+      expect.any(AbortSignal), "gpt-6.1-terra"));
+  });
+
   it("start says whether the speech detector is running", async () => {
     expect((await fixture(idle)).started).toMatchObject({ vad: true });
     mocks.vadPath.mockRejectedValueOnce(new Error("missing"));
@@ -302,9 +322,9 @@ describe("desktop voice front-man", () => {
       receipt: { ...queued, status: "expired", text: "That correction expired.", message_id: "u1" } }), { timeout: 3_000 });
   });
 
-  async function startedTask(narrate?: (heard: string) => Promise<string>) {
+  async function startedTask(narrate?: (heard: string) => Promise<string>, voiceModel?: string) {
     mocks.speak.mockResolvedValue(undefined);
-    const harness = await fixture(idle);
+    const harness = await fixture(idle, voiceModel ? { voiceModel } : {});
     if (narrate) harness.narrate.mockImplementation(heard => narrate(heard));
     harness.decide.mockResolvedValueOnce({ decisionId: "d1", turn: "complete", action: "start_task", say: "On it.",
       request: "Fix it", turnId: null });
@@ -330,7 +350,7 @@ describe("desktop voice front-man", () => {
     hooks.finish();
     await vi.waitFor(() => expect(mocks.speak).toHaveBeenCalledOnce());
     expect(narrate).toHaveBeenCalledExactlyOnceWith("fix it", "## Fixed\n- Edited `host.ts`.\n- Tests pass.",
-      "process-1", expect.any(AbortSignal));
+      "process-1", expect.any(AbortSignal), undefined);
     expect(mocks.speak).toHaveBeenCalledWith("Done. The tests pass.", expect.any(Function), expect.any(AbortSignal));
   });
 

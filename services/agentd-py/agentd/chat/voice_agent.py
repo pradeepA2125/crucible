@@ -23,7 +23,7 @@ from typing import Any
 
 from agentd.chat.conversation import TransportSource
 from agentd.chat.models import ChatMessage
-from agentd.providers.plan_access import ProviderAccessStopped
+from agentd.providers.plan_access import PlanUnsupportedCapability, ProviderAccessStopped
 from agentd.providers.reasoning_effort import EFFORT_OVERRIDE
 from agentd.providers.side_calls import low_effort, record_usage, small_plan_model
 from agentd.providers.usage import USAGE_OWNER
@@ -31,6 +31,9 @@ from agentd.reasoning.react_common import accepts_kwarg
 
 logger = logging.getLogger(__name__)
 
+# Voice on the ChatGPT plan: the catalog's quickest model in a 2026-11-11 measurement
+# (median 2.8 s vs 3.9 s for gpt-6.1-sol, all decisions correct). Voice only.
+CHATGPT_VOICE_MODEL = "gpt-6-luna"
 VOICE_CHECKIN_TEXT = "I'm still listening. Do you want to add anything, or should I go ahead?"
 VOICE_IDLE_STEER_TEXT = "That work has already finished. Should I start a new task for it?"
 
@@ -126,6 +129,7 @@ class VoiceContext:
     history: list[dict[str, str]]
     progress: dict[str, object] | None  # None when no coding turn is running
     project: str = ""  # the open project's folder name
+    model_override: str = ""  # the user's voice model choice for this provider, "" = automatic
 
 
 @dataclass
@@ -196,6 +200,16 @@ def _clip(text: str) -> str:
     return text if len(text) <= _LOG_TEXT_CHARS else text[:_LOG_TEXT_CHARS - 1] + "…"
 
 
+def _plan_voice_model(transport: Any) -> str | None:
+    """The ChatGPT plan's voice model; None elsewhere (the agent's own model is used)."""
+    from agentd.providers.openai_transport import OpenAIJsonTransport
+
+    inner = getattr(transport, "wrapped", transport)
+    if isinstance(inner, OpenAIJsonTransport) and getattr(inner, "_plan_route", False):
+        return CHATGPT_VOICE_MODEL
+    return None
+
+
 def _abort_retry(*_args: object) -> None:
     # A transient error ends the call: the renderer decides again at the next pause, which
     # is sooner than a backoff, and a retry would spend the whole decide budget.
@@ -205,6 +219,8 @@ def _abort_retry(*_args: object) -> None:
 def _is_model_rejection(exc: BaseException) -> bool:
     """A 4xx other than a rate limit or an account stop: this model will fail the same
     way every time."""
+    if isinstance(exc, PlanUnsupportedCapability):
+        return True  # the plan does not offer this model: use the agent's own
     if isinstance(exc, ProviderAccessStopped):
         return False
     status = getattr(exc, "status", None) or getattr(exc, "status_code", None)
@@ -234,14 +250,16 @@ class VoiceAgent:
         transport, agent_model = source
         return transport, agent_model
 
-    def _model_for(self, transport: Any, agent_model: str) -> str:
+    def _model_for(self, transport: Any, agent_model: str, requested: str = "") -> str:
         override = os.environ.get("CRUCIBLE_VOICE_MODEL", "").strip()
         if override:
             return override
-        preferred = small_plan_model(transport) or agent_model
+        preferred = requested or small_plan_model(transport) or _plan_voice_model(transport) \
+            or agent_model
         return agent_model if (id(transport), preferred) in self._rejected else preferred
 
-    async def _call(self, thread_id: str, method: str, **kwargs: object) -> tuple[object, str]:
+    async def _call(self, thread_id: str, method: str, model_override: str = "",
+                    **kwargs: object) -> tuple[object, str]:
         """One provider call on the voice model, falling back once to the agent's model
         when the provider refuses the voice model. Returns the reply and the model used."""
         transport, agent_model = self._transport()
@@ -256,7 +274,7 @@ class VoiceAgent:
             extra["on_retry"] = _abort_retry
         if accepts_kwarg(target, "on_usage"):
             extra["on_usage"] = record_usage
-        model = self._model_for(transport, agent_model)
+        model = self._model_for(transport, agent_model, model_override)
         # Billed to the thread, like its turns and the conversation side calls.
         token = USAGE_OWNER.set(f"thread:{thread_id}")
         try:
@@ -317,7 +335,7 @@ class VoiceAgent:
             payload["instruction"] = _FINAL_CALL_INSTRUCTION
         for attempt in range(2):
             raw, model = await self._call(
-                thread_id, "generate_json", schema_name="voice_decision",
+                thread_id, "generate_json", ctx.model_override, schema_name="voice_decision",
                 schema=VOICE_DECISION_SCHEMA, system_instructions=_DECIDE_SYSTEM,
                 user_payload=payload)
             try:
@@ -331,12 +349,13 @@ class VoiceAgent:
                 payload = {**payload, "correction": _DECIDE_CORRECTION}
         raise AssertionError("unreachable")
 
-    async def narrate(self, thread_id: str, heard: str, answer: str) -> str:
+    async def narrate(self, thread_id: str, heard: str, answer: str,
+                      model_override: str = "") -> str:
         timeout = _timeout("CRUCIBLE_VOICE_NARRATE_TIMEOUT_SEC", 15.0)
         started = time.monotonic()
         try:
             raw, _ = await asyncio.wait_for(self._call(
-                thread_id, "generate_text", system_instructions=_NARRATE_SYSTEM,
+                thread_id, "generate_text", model_override, system_instructions=_NARRATE_SYSTEM,
                 user_payload={"heard": heard, "answer": answer[:_NARRATE_INPUT_CHARS]}),
                 timeout)
         except TimeoutError as exc:

@@ -6,6 +6,8 @@ const id = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/);
 const model = z.enum(["whisper-base", "whisper-small"]);
 const asset = z.enum(["whisper-base", "whisper-small", "pocket"]);
 const session = { sessionId: id };
+// A provider model id ("gpt-6-luna", "claude-haiku-5-5"); null means the automatic choice.
+const voiceModel = z.string().regex(/^[A-Za-z0-9._:/-]{1,128}$/).nullable();
 const utterance = { ...session, utteranceId: id };
 const pcm = z.custom<ArrayBuffer>(value => value instanceof ArrayBuffer && value.byteLength > 0 &&
   value.byteLength <= 960_000 && value.byteLength % 2 === 0, "Expected at most 30 seconds of 16 kHz PCM audio.");
@@ -16,7 +18,9 @@ export const voiceRequest = z.discriminatedUnion("type", [
   z.object({ type: z.literal("install"), model: asset }).strict(),
   z.object({ type: z.literal("cancelInstall") }).strict(),
   z.object({ type: z.literal("remove"), model: asset }).strict(),
-  z.object({ type: z.literal("start"), threadId: id, stt: model, tts: z.enum(["system", "pocket"]) }).strict(),
+  z.object({ type: z.literal("start"), threadId: id, stt: model, tts: z.enum(["system", "pocket"]),
+    voiceModel: voiceModel.optional() }).strict(),
+  z.object({ type: z.literal("voiceModel"), ...session, model: voiceModel }).strict(),
   z.object({ type: z.literal("stop"), ...session }).strict(),
   z.object({ type: z.literal("interrupt"), ...session }).strict(),
   z.object({ type: z.literal("snapshot"), ...utterance }).strict(),

@@ -432,3 +432,67 @@ async def test_final_call_payload_asks_for_a_specific_question() -> None:
     assert "question about what you heard" in str(payload["instruction"])
     await _agent(transport).decide("t1", _ctx("use sqlite"))
     assert "instruction" not in transport.calls[-1]["user_payload"]  # type: ignore[operator]
+
+
+# --- plan 2, task 4: the ChatGPT voice model and a per-session override ---
+
+from agentd.chat.voice_agent import CHATGPT_VOICE_MODEL  # noqa: E402
+from agentd.providers.openai_transport import OpenAIJsonTransport  # noqa: E402
+from agentd.providers.plan_access import PlanUnsupportedCapability  # noqa: E402
+
+
+class ScriptedChatGPT(OpenAIJsonTransport, Scripted):
+    def __init__(self, *replies: object) -> None:
+        Scripted.__init__(self, *replies)
+        self._plan_route = True
+
+    async def generate_json(self, **kwargs: object) -> dict[str, object]:  # type: ignore[override]
+        return await Scripted.generate_json(self, **kwargs)
+
+    async def reasoning_effort_support(self, model: str) -> EffortSupport:  # type: ignore[override]
+        return await Scripted.reasoning_effort_support(self, model)
+
+
+def _ctx_with(override: str) -> VoiceContext:
+    return VoiceContext(utterance="use sqlite", silence_ms=700, final_call=False, history=[],
+                        progress=None, model_override=override)
+
+
+@pytest.mark.asyncio
+async def test_chatgpt_plan_decides_on_luna() -> None:
+    transport = ScriptedChatGPT(_reply())
+    await _on(transport).decide("t1", _ctx())
+    assert CHATGPT_VOICE_MODEL == "gpt-6-luna"
+    assert transport.seen[0][0] == "gpt-6-luna"
+
+
+@pytest.mark.asyncio
+async def test_voice_model_override_wins_over_the_default() -> None:
+    transport = ScriptedChatGPT(_reply())
+    await _on(transport).decide("t1", _ctx_with("gpt-6.1-terra"))
+    assert transport.seen[0][0] == "gpt-6.1-terra"
+
+
+@pytest.mark.asyncio
+async def test_env_wins_over_the_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CRUCIBLE_VOICE_MODEL", "env-model")
+    transport = ScriptedChatGPT(_reply())
+    await _on(transport).decide("t1", _ctx_with("gpt-6.1-terra"))
+    assert transport.seen[0][0] == "env-model"
+
+
+@pytest.mark.asyncio
+async def test_plan_refusing_the_voice_model_falls_back() -> None:
+    refused = PlanUnsupportedCapability("The 'gpt-6-luna' model is not supported.", status=400)
+    transport = ScriptedChatGPT(refused, _reply(), _reply())
+    agent = _on(transport)
+    await agent.decide("t1", _ctx())
+    await agent.decide("t1", _ctx())
+    assert [model for model, _ in transport.seen] == ["gpt-6-luna", "main-model", "main-model"]
+
+
+@pytest.mark.asyncio
+async def test_narrate_uses_the_override() -> None:
+    transport = FakeJson(text="Done.")
+    await _agent(transport).narrate("t1", "fix it", "Done.", model_override="picked-model")
+    assert transport.calls[-1]["model"] == "picked-model"

@@ -1774,6 +1774,7 @@ export class HttpBackendClient implements BackendTaskClient {
     const raw = await this.voicePost(threadId, "decide", {
       utterance: request.utterance, silence_ms: request.silenceMs, final_call: request.finalCall,
       expected_process_id: request.expectedProcessId,
+      ...(request.voiceModel ? { voice_model: request.voiceModel } : {}),
     }, signal);
     return VoiceDecisionSchema.parse({
       decisionId: raw["decision_id"], turn: raw["turn"], action: raw["action"], say: raw["say"],
@@ -1791,6 +1792,7 @@ export class HttpBackendClient implements BackendTaskClient {
   async voiceNarrate(threadId: string, request: VoiceNarrateRequest, signal?: AbortSignal): Promise<string> {
     const raw = await this.voicePost(threadId, "narrate", {
       heard: request.heard, answer: request.answer, expected_process_id: request.expectedProcessId,
+      ...(request.voiceModel ? { voice_model: request.voiceModel } : {}),
     }, signal);
     return z.string().min(1).parse(raw["say"]);
   }

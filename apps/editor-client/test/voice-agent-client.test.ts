@@ -41,6 +41,19 @@ describe("voice agent client", () => {
     await expect(refused).rejects.toMatchObject({ status: 409, detail: { code: "turn_active" } });
   });
 
+  it("sends voice_model only when a model is chosen", async () => {
+    const seen: Seen[] = [];
+    const decision = { decision_id: "d1", turn: "complete", action: "reply", say: "Hi.", request: "", turn_id: null };
+    await client(decision, 200, seen).voiceDecide("t", {
+      utterance: "hi", silenceMs: 700, finalCall: false, expectedProcessId: "p", voiceModel: "gpt-6-luna" });
+    await client(decision, 200, seen).voiceDecide("t", { utterance: "hi", silenceMs: 700, finalCall: false, expectedProcessId: "p" });
+    await client({ say: "Done." }, 200, seen).voiceNarrate("t", {
+      heard: "fix it", answer: "Fixed.", expectedProcessId: "p", voiceModel: "gpt-6-luna" });
+    expect(seen[0].body.voice_model).toBe("gpt-6-luna");
+    expect("voice_model" in seen[1].body).toBe(false);
+    expect(seen[2].body.voice_model).toBe("gpt-6-luna");
+  });
+
   it("narrates", async () => {
     const seen: Seen[] = [];
     expect(await client({ say: "Done." }, 200, seen).voiceNarrate("t", { heard: "fix it", answer: "Fixed.", expectedProcessId: "p" }))

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -1821,15 +1822,26 @@ def build_router(
                     status_code=422, detail="silence_ms must be a nonnegative integer")
             if not isinstance(final_call, bool):
                 raise HTTPException(status_code=422, detail="final_call must be a boolean")
+            voice_model = _voice_model(request)
             _voice_guard(thread_id, request)
             try:
                 return await _chat_agent.voice_decide(  # type: ignore[attr-defined, no-any-return]
-                    thread_id, utterance, silence_ms, final_call)
+                    thread_id, utterance, silence_ms, final_call, voice_model=voice_model)
             except VoiceAgentUnavailable as exc:
                 raise HTTPException(status_code=503, detail={
                     "code": "voice_agent_unavailable", "message": str(exc)}) from exc
             except ConversationError as exc:
                 raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+        def _voice_model(request: dict[str, object]) -> str:
+            """The user's voice model choice for this provider; absent or null = automatic."""
+            value = request.get("voice_model")
+            if value is None:
+                return ""
+            if (not isinstance(value, str) or not 0 < len(value) <= 128
+                    or not re.fullmatch(r"[A-Za-z0-9._:/-]+", value)):
+                raise HTTPException(status_code=422, detail="voice_model is not a model name")
+            return value
 
         @router.post("/chat/threads/{thread_id}/voice/commit")
         async def post_voice_commit(
@@ -1854,10 +1866,11 @@ def build_router(
 
             heard = _voice_text(request, "heard", MAX_TEXT_CHARS)
             answer = _voice_text(request, "answer", 16000)
+            voice_model = _voice_model(request)
             _voice_guard(thread_id, request)
             try:
                 say = await _chat_agent.voice_narrate(  # type: ignore[attr-defined]
-                    thread_id, heard, answer)
+                    thread_id, heard, answer, voice_model=voice_model)
             except VoiceAgentUnavailable as exc:
                 raise HTTPException(status_code=503, detail={
                     "code": "voice_agent_unavailable", "message": str(exc)}) from exc

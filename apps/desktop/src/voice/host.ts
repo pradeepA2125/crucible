@@ -26,7 +26,8 @@ export interface VoiceThread {
   sendIdle(text: string, voiceRequest: string | undefined, hooks: IdleHooks): Promise<void>;
   decide(request: VoiceDecideRequest, signal: AbortSignal): Promise<VoiceDecision>;
   commit(decisionId: string, expectedProcessId: string, signal: AbortSignal): Promise<VoiceCommitResult>;
-  narrate(heard: string, answer: string, expectedProcessId: string, signal: AbortSignal): Promise<string>;
+  narrate(heard: string, answer: string, expectedProcessId: string, signal: AbortSignal,
+    voiceModel?: string): Promise<string>;
 }
 
 type IdleHooks = { chunk(text: string): void; finish(): void; recover(): void };
@@ -59,6 +60,8 @@ type Session = {
   signal: AbortController;
   model: VoiceModel;
   tts: "system" | "pocket";
+  /** The voice model the user picked; undefined lets the backend choose per provider. */
+  voiceModel: string | undefined;
   recognizer: Recognizer;
   synthesizer: Synthesizer;
   /** Silero VAD; undefined when its model is missing or it failed to start (loudness instead). */
@@ -131,7 +134,7 @@ export class VoiceHost {
         await this.assets.remove(request.model);
         return this.status();
       }
-      case "start": return this.start(request.threadId, request.stt, request.tts);
+      case "start": return this.start(request.threadId, request.stt, request.tts, request.voiceModel ?? undefined);
       case "stop": {
         if (this.session?.id === request.sessionId) await this.end();
         return {};
@@ -140,6 +143,7 @@ export class VoiceHost {
     const session = this.requireSession(request.sessionId);
     switch (request.type) {
       case "interrupt": this.interrupt(session); return {};
+      case "voiceModel": session.voiceModel = request.model ?? undefined; return {};
       case "snapshot": this.snapshot(session, request.utteranceId); return {};
       case "decode": return this.decode(session, request, request.pcm, request.final);
       case "submit": return this.submit(session, request.utteranceId, request.text, request.intent);
@@ -178,7 +182,7 @@ export class VoiceHost {
     } catch { return false; }
   }
 
-  private async start(threadId: string, model: VoiceModel, tts: "system" | "pocket") {
+  private async start(threadId: string, model: VoiceModel, tts: "system" | "pocket", voiceModel: string | undefined) {
     if (this.startup || this.session) throw new Error("A voice session is already open.");
     const abort = new AbortController();
     this.startup = abort;
@@ -212,7 +216,7 @@ export class VoiceHost {
       if (!thread.current()) throw new Error("The conversation changed. Open voice again in the intended conversation.");
       const detector = await this.startDetector(abort.signal);
       const sessionId = randomUUID();
-      this.session = { id: sessionId, thread, signal: abort, model, tts, recognizer, synthesizer, detector,
+      this.session = { id: sessionId, thread, signal: abort, model, tts, voiceModel, recognizer, synthesizer, detector,
         utterances: new Map(), receipts: 0, reply: undefined, task: undefined };
       return { sessionId, vad: detector !== undefined };
     } catch (error) {
@@ -329,7 +333,8 @@ export class VoiceHost {
     const started = performance.now();
     const asked = { utteranceId: id, text, silenceMs, finalCall };
     try {
-      decision = await session.thread.decide({ utterance: text, silenceMs, finalCall, expectedProcessId: snapshot.processId },
+      decision = await session.thread.decide({ utterance: text, silenceMs, finalCall, expectedProcessId: snapshot.processId,
+        ...(session.voiceModel ? { voiceModel: session.voiceModel } : {}) },
         AbortSignal.any([session.signal.signal, AbortSignal.timeout(15_000)]));
     } catch (error) {
       const refused = refusalOf(error);
@@ -430,7 +435,7 @@ export class VoiceHost {
     }
     this.options.publish({ type: "narrating", sessionId: session.id, utteranceId: reply.utteranceId });
     void session.thread.narrate(reply.heard, answer, reply.processId,
-      AbortSignal.any([reply.cancel.signal, AbortSignal.timeout(20_000)]))
+      AbortSignal.any([reply.cancel.signal, AbortSignal.timeout(20_000)]), session.voiceModel)
       .catch(error => {
         this.trace("host", "narrate", { fallback: true, reason: error instanceof Error ? error.message : null });
         return `${firstSentences(speakable(answer), 2)} The rest is on screen.`;

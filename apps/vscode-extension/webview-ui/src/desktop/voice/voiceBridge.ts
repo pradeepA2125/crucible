@@ -24,8 +24,9 @@ type UtteranceCommand = SessionCommand & { utteranceId: string };
 export type VoiceCommand =
   | { type: "status" | "cancelInstall" }
   | { type: "install" | "remove"; model: VoiceModelAsset }
-  | { type: "start"; threadId: string; stt: VoiceRecognizer; tts: VoiceSynthesizer }
+  | { type: "start"; threadId: string; stt: VoiceRecognizer; tts: VoiceSynthesizer; voiceModel?: string | null }
   | ({ type: "stop" | "interrupt" } & SessionCommand)
+  | ({ type: "voiceModel"; model: string | null } & SessionCommand)
   | ({ type: "snapshot" } & UtteranceCommand)
   | ({ type: "decode"; pcm: ArrayBuffer; final: boolean } & UtteranceCommand)
   | ({ type: "submit"; text: string; intent: VoiceIntent } & UtteranceCommand)

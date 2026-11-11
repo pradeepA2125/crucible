@@ -222,7 +222,9 @@ async def test_voice_routes_validate_and_guard(
                            base_url="http://test") as client:
         for broken in ({"utterance": ""}, {"utterance": "x" * 4001}, {"silence_ms": -1},
                        {"silence_ms": "700"}, {"final_call": "no"},
-                       {"expected_process_id": ""}, {"expected_process_id": None}):
+                       {"expected_process_id": ""}, {"expected_process_id": None},
+                       {"voice_model": "bad model!"}, {"voice_model": "m" * 129},
+                       {"voice_model": 7}):
             assert (await client.post(f"{base}/decide", json={**body, **broken})
                     ).status_code == 422, broken
         refused = await client.post(f"{base}/decide", json=body)
@@ -294,3 +296,37 @@ async def test_message_route_passes_voice_request(
         assert response.status_code == 200
         await response.aread()
     assert seen["voice_request"] == "Add a README"
+
+
+@pytest.mark.asyncio
+async def test_decide_and_narrate_use_the_requested_voice_model(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctrl, _store, tid = _setup(tmp_path, monkeypatch, [], {})
+    fake = _voice(ctrl, _decision("reply", say="Hi."), text="Done.")
+    await ctrl.voice_decide(tid, "hello", 800, False, voice_model="gpt-6.1-terra")
+    assert fake.calls[-1]["model"] == "gpt-6.1-terra"
+    await ctrl.voice_narrate(tid, "fix it", "Done.", voice_model="gpt-6-luna")
+    assert fake.calls[-1]["model"] == "gpt-6-luna"
+    await ctrl.voice_decide(tid, "hello", 800, False)
+    assert fake.calls[-1]["model"] == "m"
+
+
+@pytest.mark.asyncio
+async def test_voice_model_rides_the_routes(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctrl, _store, tid = _setup(tmp_path, monkeypatch, [], {})
+    fake = _voice(ctrl, _decision("reply", say="Hi."), text="Done.")
+    base = f"/v1/chat/threads/{tid}/voice"
+    async with AsyncClient(transport=ASGITransport(app=_app(ctrl)),
+                           base_url="http://test") as client:
+        process = _own_approval(ctrl)
+        ok = await client.post(f"{base}/decide", json={
+            "utterance": "hello", "silence_ms": 700, "final_call": False,
+            "expected_process_id": process, "voice_model": "gpt-6.1-terra"})
+        assert ok.status_code == 200
+        assert fake.calls[-1]["model"] == "gpt-6.1-terra"
+        spoken = await client.post(f"{base}/narrate", json={
+            "heard": "fix it", "answer": "Done.", "expected_process_id": process,
+            "voice_model": "gpt-6-luna"})
+        assert spoken.status_code == 200
+        assert fake.calls[-1]["model"] == "gpt-6-luna"
