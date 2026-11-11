@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 // @ts-expect-error -- plain ESM module shared with package.mjs
-import { thirdPartyNotices, voicePayload } from "../voice-payload.mjs";
+import { thirdPartyNotices, voiceLicenses, voicePayload } from "../voice-payload.mjs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 describe("voice in each desktop package", () => {
   it("Windows bundles the whisper helper, the Pocket worker and sherpa-onnx for win-x64", () => {
@@ -27,5 +29,18 @@ describe("voice in each desktop package", () => {
     for (const credit of ["whisper.cpp", "MIT", "sherpa-onnx", "Apache-2.0", "ONNX Runtime", "Pocket TTS by Kyutai, CC BY 4.0."]) {
       expect(text).toContain(credit);
     }
+  });
+
+  it("Windows and Linux packages carry the full licence texts, not links", () => {
+    const files = voiceLicenses("linux-x64");
+    expect(files).toEqual(["LICENSE.sherpa-onnx", "LICENSE.onnxruntime", "ThirdPartyNotices.onnxruntime.txt"]);
+    expect(voiceLicenses("win32-x64")).toEqual(files);
+    expect(voiceLicenses("darwin-arm64")).toEqual([]);
+    const root = join(import.meta.dirname, "../voice-native/licenses");
+    expect(readFileSync(join(root, "LICENSE.sherpa-onnx"), "utf8")).toContain("Apache License");
+    expect(readFileSync(join(root, "LICENSE.onnxruntime"), "utf8")).toContain("Microsoft Corporation");
+    expect(existsSync(join(root, "ThirdPartyNotices.onnxruntime.txt"))).toBe(true);
+    const notices = thirdPartyNotices("Pocket TTS by Kyutai, CC BY 4.0.");
+    for (const file of files) expect(notices).toContain(file);
   });
 });

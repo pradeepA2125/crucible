@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { createHash, createPublicKey } from "node:crypto";
 import { sealCommunityApp } from "./adhoc-sign.mjs";
 import { bundleLinks, fileManifest, packageArguments, validateReleaseManifest } from "./package-utils.mjs";
-import { thirdPartyNotices, voicePayload } from "./voice-payload.mjs";
+import { thirdPartyNotices, voiceLicenses, voicePayload } from "./voice-payload.mjs";
 const exec=promisify(execFile),root=import.meta.dirname,opts=packageArguments(process.argv.slice(2));
 const platform=`${process.platform}-${process.arch}`;if(!["darwin-arm64","darwin-x64","linux-x64","win32-x64"].includes(platform))throw new Error(`Unsupported native package target: ${platform}`);
 if(!isAbsolute(opts.out))throw new Error("Output path must be absolute.");const output=resolve(opts.out);
@@ -45,6 +45,7 @@ try{
   for(const path of voicePayload(platform))await cp(join(dist,path),join(target,path),{recursive:true,dereference:true});
   const pocketPack=JSON.parse(await readFile(join(root,"voice-native/pocket-onnx-assets.json"),"utf8"));
   await writeFile(join(target,"voice-native/THIRD_PARTY_NOTICES"),thirdPartyNotices(pocketPack.attribution));
+  for(const file of voiceLicenses(platform))await cp(join(root,"voice-native/licenses",file),join(target,"voice-native",file));
  }
  const pty=join(target,"node_modules/node-pty");await mkdir(pty,{recursive:true});for(const f of ["lib","package.json","LICENSE",`prebuilds/${platform}`])await cp(join(dist,"node_modules/node-pty",f),join(pty,f),{recursive:true});
  if(process.platform!=="win32")await chmod(join(pty,`prebuilds/${platform}/spawn-helper`),0o755);

@@ -16,6 +16,13 @@ export function voicePayload(platform) {
   ];
 }
 
+/** Full licence texts (voice-native/licenses/, pinned to sherpa-onnx v2.0.1 and the ONNX Runtime
+ *  1.28.2 it bundles) copied beside the voice helpers on Windows and Linux. */
+export function voiceLicenses(platform) {
+  if (platform !== "win32-x64" && platform !== "linux-x64") return [];
+  return ["LICENSE.sherpa-onnx", "LICENSE.onnxruntime", "ThirdPartyNotices.onnxruntime.txt"];
+}
+
 /** Credits for the voice components on Windows and Linux, written beside the voice helpers. */
 export function thirdPartyNotices(pocketAttribution) {
   return [
@@ -24,10 +31,11 @@ export function thirdPartyNotices(pocketAttribution) {
     "whisper.cpp (speech recognition and Silero VAD), MIT License. See LICENSE.whisper.cpp.",
     "https://github.com/ggml-org/whisper.cpp",
     "",
-    "sherpa-onnx and sherpa-onnx-node (spoken replies), Apache-2.0.",
+    "sherpa-onnx and sherpa-onnx-node 2.0.1 (spoken replies), Apache-2.0. See LICENSE.sherpa-onnx.",
     "https://github.com/k2-fsa/sherpa-onnx",
     "",
-    "ONNX Runtime (bundled with sherpa-onnx), MIT License.",
+    "ONNX Runtime 1.28.2 (bundled with sherpa-onnx), MIT License. See LICENSE.onnxruntime and",
+    "ThirdPartyNotices.onnxruntime.txt.",
     "https://github.com/microsoft/onnxruntime",
     "",
     "Downloaded on request, not bundled:",
