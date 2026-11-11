@@ -118,14 +118,16 @@ async function fixture(first: VoiceSnapshot, options: {
 }
 
 describe("voice capabilities on every platform", () => {
-  it("a CPU without AVX2 makes voice unavailable with the reason", async () => {
+  // POSIX shell-script stand-ins for the helper.
+  it.skipIf(process.platform === "win32")("a CPU without AVX2 makes voice unavailable with the reason", async () => {
     const path = await helpers(["crucible-whisper"], "cpu unsupported");
     expect(await statusHost(path, "linux", "x64").status()).toMatchObject({
       available: false, reason: "Local voice needs a processor with AVX2 (most made since 2013).",
     });
   });
 
-  it("a CPU check that could not run is tried again", async () => {
+  // POSIX shell-script stand-ins for the helper.
+  it.skipIf(process.platform === "win32")("a CPU check that could not run is tried again", async () => {
     const path = await helpers([]);
     // Fails the first time (a busy machine, a first-run security scan), answers the second.
     await writeFile(join(path, "crucible-whisper"),
@@ -148,7 +150,8 @@ describe("voice capabilities on every platform", () => {
     });
   });
 
-  it("linux status offers Pocket from the worker, not system", async () => {
+  // POSIX shell-script stand-ins for the helper.
+  it.skipIf(process.platform === "win32")("linux status offers Pocket from the worker, not system", async () => {
     const path = await helpers(["crucible-whisper", "crucible-tts"]);
     const worker = join(path, "voice-pocket-worker.cjs");
     await writeFile(worker, "");

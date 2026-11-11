@@ -24,6 +24,19 @@ const helper = join(resolve(args.helpers), process.platform === "win32" ? "cruci
 const models = resolve(args.models);
 const SENTENCE = "Open the controller loop file.";
 
+/** The minimal environment the app gives its helpers (mirrors helperEnvironment in
+ *  apps/desktop/src/voice/workers.ts), so the smoke proves they start the way users start them. */
+function helperEnvironment(helpers) {
+  if (process.platform === "win32") {
+    const systemRoot = process.env.SystemRoot ?? process.env.windir ?? "C:\\Windows";
+    const temp = process.env.TEMP ?? process.env.TMP;
+    return { SystemRoot: systemRoot, windir: systemRoot, ...(temp ? { TEMP: temp, TMP: temp } : {}),
+      PATH: `${helpers};${systemRoot}\\System32` };
+  }
+  return { PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8", ...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}) };
+}
+const helperEnv = helperEnvironment(resolve(args.helpers));
+
 async function step(name, run) {
   const started = Date.now();
   try {
@@ -70,10 +83,11 @@ async function fetchVerified(file, directory) {
 /** Starts a helper, waits for `ready`, sends one line and resolves with the first reply line. */
 function ask(command, helperArgs, line) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, helperArgs, { stdio: ["pipe", "pipe", "ignore"] });
+    const child = spawn(command, helperArgs, { stdio: ["pipe", "pipe", "ignore"], env: helperEnv, shell: false });
     let buffer = "", ready = false;
     const timer = setTimeout(() => { child.kill(); reject(new Error("helper timed out")); }, 120_000);
     child.on("error", reject);
+    child.on("exit", code => { clearTimeout(timer); reject(new Error(`helper exited (${code}) before answering`)); });
     child.stdout.on("data", chunk => {
       buffer += chunk;
       for (let at = buffer.indexOf("\n"); at >= 0; at = buffer.indexOf("\n")) {
@@ -97,7 +111,8 @@ function resampleTo16k(pcm24k) {
 }
 
 await step("cpu check", () => {
-  const result = spawnSync(helper, ["--check-cpu"], { encoding: "utf8" });
+  const result = spawnSync(helper, ["--check-cpu"], { encoding: "utf8", env: helperEnv, shell: false });
+  if (result.error) throw new Error(`${helper} could not start: ${result.error.message}`);
   if (result.stdout.trim() !== "cpu ok") throw new Error(`answered ${JSON.stringify(result.stdout.trim())}, exit ${result.status}`);
   return "cpu ok";
 });

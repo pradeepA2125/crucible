@@ -33,13 +33,20 @@ describe("voice helpers on every platform", () => {
     expect(helperEnvironment("win32", { SystemRoot: "C:\\Windows" }, helpers).PATH?.startsWith(`${helpers};`)).toBe(true);
   });
 
-  it("a Windows helper needs no execute bit; a POSIX one does", async () => {
+  it("a Windows helper needs no execute bit", async () => {
     const dir = await scratch();
     const file = join(dir, "crucible-whisper.exe");
     await writeFile(file, "", { mode: 0o600 });
     expect(await helperUsable(file, "win32")).toBe(true);
-    expect(await helperUsable(file, "linux")).toBe(false);
     expect(await helperUsable(join(dir, "missing"), "win32")).toBe(false);
+  });
+
+  // Windows has no execute bit to withhold, so this half only holds on POSIX file systems.
+  it.skipIf(process.platform === "win32")("a POSIX helper needs its execute bit", async () => {
+    const dir = await scratch();
+    const file = join(dir, "crucible-whisper");
+    await writeFile(file, "", { mode: 0o600 });
+    expect(await helperUsable(file, "linux")).toBe(false);
   });
 
   it.skipIf(process.platform === "win32")("windows line endings parse as lines", async () => {
