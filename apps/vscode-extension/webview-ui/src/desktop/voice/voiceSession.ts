@@ -115,6 +115,8 @@ const round = (value: number) => Math.round(value * 10_000) / 10_000;
 interface CapturedFrame {
   frame: CaptureFrame;
   rms: number;
+  /** The reply's output level when this frame was captured: the detector answers later. */
+  outputRms: number;
   playing: boolean;
   clean: boolean;
   masked: boolean;
@@ -162,7 +164,7 @@ export class VoiceSession {
   private playbackStartedAt = 0;
   private lastRms = 0;
   private lastPartialTraced = "";
-  private meter = { frames: 0, peak: 0, sum: 0, loud: 0, probPeak: 0, probSum: 0, speech: 0 };
+  private meter = { frames: 0, peak: 0, sum: 0, loud: 0, probPeak: 0, probSum: 0, speech: 0, outputPeak: 0 };
   private framesSinceWords = 0;
   /** Silero VAD: on when the host started a detector, off for good after any failure. */
   private vad: "on" | "off" = "off";
@@ -231,7 +233,8 @@ export class VoiceSession {
           const playing = this.audio.playing;
           const masked = performance.now() < this.cueMaskUntil;
           const captured: CapturedFrame = {
-            frame: masked ? { ...frame, rms: 0 } : frame, rms: frame.rms, playing, masked, generation,
+            frame: masked ? { ...frame, rms: 0 } : frame, rms: frame.rms, outputRms: this.audio.outputLevel(),
+            playing, masked, generation,
             clean: !playing && performance.now() - this.lastPlaybackAt > playbackTailMs,
           };
           // Push to talk needs no detector: the speaker decides when the turn ends.
@@ -358,8 +361,9 @@ export class VoiceSession {
     if (!this.isCaptureCurrent(captured.generation) || this.closed) return;
     // Over a reply, only the user's voice counts: the reply's own echo is masked out.
     if (speechProb !== undefined && captured.playing
-      && !this.echoGate.observe(captured.rms, this.audio.outputLevel(), speechProb)) speechProb = 0;
+      && !this.echoGate.observe(captured.rms, captured.outputRms, speechProb)) speechProb = 0;
     this.lastRms = captured.rms;
+    this.meter.outputPeak = Math.max(this.meter.outputPeak, captured.outputRms);
     this.measure(captured.rms, captured.masked, captured.playing, speechProb);
     this.segments.accept(captured.frame, captured.playing,
       !this.partialInFlight && (this.pending === 0 || captured.playing), this.pushToTalk, captured.clean, speechProb);
@@ -451,9 +455,9 @@ export class VoiceSession {
       noise: round(levels.noise), continueAt: round(levels.continueAt), onsetAt: round(levels.onsetAt),
       silenceMs: this.segments.silenceMs, inTurn: levels.inTurn, paused: levels.paused, playing, masked,
       vad: speechProb !== undefined, speechPeak: round(meter.probPeak), speechMean: round(meter.probSum / meter.frames),
-      speechFrames: meter.speech,
+      speechFrames: meter.speech, outputPeak: round(meter.outputPeak), coupling: round(this.echoGate.coupling()),
     });
-    this.meter = { frames: 0, peak: 0, sum: 0, loud: 0, probPeak: 0, probSum: 0, speech: 0 };
+    this.meter = { frames: 0, peak: 0, sum: 0, loud: 0, probPeak: 0, probSum: 0, speech: 0, outputPeak: 0 };
   }
 
   private beginSpeech(onsetAt: number) {
