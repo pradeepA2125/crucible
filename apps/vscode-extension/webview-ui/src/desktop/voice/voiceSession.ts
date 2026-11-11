@@ -44,8 +44,9 @@ interface VoiceReview {
 
 interface VoiceSessionCallbacks {
   state(patch: Partial<VoiceSessionState>): void;
-  /** decisionId: set for a decided spoken turn (its saved exchange carries it). */
-  utterance(id: string, text: string, decisionId?: string): void;
+  /** decisionId: set for a decided spoken turn (its saved exchange carries it).
+   *  typed: the words were typed into the composer, not heard. */
+  utterance(id: string, text: string, decisionId?: string, typed?: boolean): void;
   reply(id: string, text: string, final: boolean): void;
   receipt(receipt: VoiceReceipt): void;
   error(message: string): void;
@@ -902,7 +903,7 @@ export class VoiceSession {
     void this.enqueue(async () => {
       await turn.snapshot;
       if (this.closed) return;
-      await this.submit(sessionId, id, transcript, "auto");
+      await this.submit(sessionId, id, transcript, "auto", false);
       this.discardReview(id);
     }).catch(error => {
       if (this.closed) return;
@@ -964,7 +965,7 @@ export class VoiceSession {
     return this.enqueue(async () => {
       if (this.closed) return;
       await snapshot;
-      if (!this.closed) await this.submit(sessionId, id, text, intent);
+      if (!this.closed) await this.submit(sessionId, id, text, intent, true);
     });
   }
 
@@ -1010,8 +1011,9 @@ export class VoiceSession {
     this.echoGate.reset();
   }
 
-  private async submit(sessionId: string, utteranceId: string, text: string, intent: VoiceIntent) {
-    this.events.utterance(utteranceId, text);
+  private async submit(sessionId: string, utteranceId: string, text: string, intent: VoiceIntent, typed: boolean) {
+    if (typed) this.events.utterance(utteranceId, text, undefined, true);
+    else this.events.utterance(utteranceId, text);
     this.prepareOutput(utteranceId);
     try {
       await voiceRequest(this.bridge, { type: "submit", sessionId, utteranceId, text, intent });

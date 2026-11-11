@@ -86,6 +86,15 @@ describe("desktop voice session", () => {
     voice.session.close();
   });
 
+  it("reports a typed message as typed, so the transcript shows no Spoken tag for it", async () => {
+    vi.clearAllMocks();
+    const voice = fixture();
+    await voice.session.start("thread", "whisper-small", "system");
+    await voice.session.submitText("Status?", "auto");
+    expect(voice.callbacks.utterance).toHaveBeenCalledExactlyOnceWith(expect.any(String), "Status?", undefined, true);
+    voice.session.close();
+  });
+
   it("uses one snapshot per typed message and rejects PCM from a superseded utterance", async () => {
     vi.clearAllMocks();
     const voice = fixture();
