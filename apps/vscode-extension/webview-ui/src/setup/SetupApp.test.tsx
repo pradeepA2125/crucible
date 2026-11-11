@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { beforeEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import SetupApp from "./SetupApp";
 import { vscode } from "./vscodeApi";
 
@@ -72,6 +72,47 @@ describe("SetupApp", () => {
     deliver({ type: "setup/installDone", ok: false });
     expect(screen.getByText("pip exploded")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Retry/ })).toBeTruthy();
+  });
+});
+
+describe("SetupApp — local voice", () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => { delete (window as { crucibleVoice?: unknown }).crucibleVoice; });
+
+  it("downloads speech recognition and then spoken replies, with Cancel covering both", async () => {
+    const installs: { model: string; resolve(): void; reject(): void }[] = [];
+    const request = vi.fn(async (command: { type: string; model?: string }) => {
+      if (command.type === "status") return { available: true, pocketAvailable: true };
+      if (command.type === "install") return new Promise<void>((resolve, reject) => installs.push({ model: command.model!, resolve, reject }));
+      return {};
+    });
+    (window as { crucibleVoice?: unknown }).crucibleVoice = { request, subscribe: () => () => {} };
+    render(<SetupApp />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(await screen.findByLabelText("Enable local voice"));
+    fireEvent.click(screen.getByRole("button", { name: /Install runtime/ }));
+    expect(screen.getByText("Downloading speech recognition (Whisper Small, 1 of 2)…")).toBeTruthy();
+    expect(installs.map(install => install.model)).toEqual(["whisper-small"]);
+    await act(async () => { installs[0].resolve(); });
+    expect(await screen.findByText("Downloading spoken replies (Pocket TTS, 2 of 2)…")).toBeTruthy();
+    expect(installs.map(install => install.model)).toEqual(["whisper-small", "pocket"]);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel voice download" }));
+    expect(request).toHaveBeenCalledWith({ type: "cancelInstall" });
+    expect(screen.getByText(/Voice download cancelled/)).toBeTruthy();
+    await act(async () => { installs[1].reject(); });
+    expect(screen.getByText(/Voice download cancelled/)).toBeTruthy();
+  });
+
+  it("finishes after speech recognition alone where spoken replies cannot run", async () => {
+    const request = vi.fn(async (command: { type: string }) =>
+      command.type === "status" ? { available: true, pocketAvailable: false } : {});
+    (window as { crucibleVoice?: unknown }).crucibleVoice = { request, subscribe: () => () => {} };
+    render(<SetupApp />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    fireEvent.click(await screen.findByLabelText("Enable local voice"));
+    fireEvent.click(screen.getByRole("button", { name: /Install runtime/ }));
+    expect(await screen.findByText("Local voice is ready.")).toBeTruthy();
+    expect(request.mock.calls.filter(([command]) => command.type === "install")).toHaveLength(1);
   });
 });
 

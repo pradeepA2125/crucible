@@ -71,7 +71,7 @@ const NO_PROVIDER_STATE: SettingsState = {
   envFlags: {}, restartRequired: false,
 };
 
-type SetupVoicePort = { request(command: { type: "status" | "install" | "cancelInstall"; model?: "whisper-small" }): Promise<unknown> };
+type SetupVoicePort = { request(command: { type: "status" | "install" | "cancelInstall"; model?: "whisper-small" | "pocket" }): Promise<unknown> };
 function setupVoice(): SetupVoicePort | undefined {
   return (window as unknown as { crucibleVoice?: SetupVoicePort }).crucibleVoice;
 }
@@ -80,8 +80,11 @@ export default function SetupApp() {
   const [step, setStep] = useState<Step>("welcome");
   const [localModels, setLocalModels] = useState(true);
   const [voiceAvailable, setVoiceAvailable] = useState(false);
+  // Spoken replies (Pocket TTS) download right after speech recognition where this computer runs them.
+  const [pocketAvailable, setPocketAvailable] = useState(false);
   const [localVoice, setLocalVoice] = useState(false);
   const [voiceInstall, setVoiceInstall] = useState<"idle" | "working" | "ready" | "failed" | "cancelled">("idle");
+  const [voiceStage, setVoiceStage] = useState<"whisper-small" | "pocket">("whisper-small");
   const voiceDownload = useRef(0);
 
   useEffect(() => {
@@ -89,6 +92,7 @@ export default function SetupApp() {
     void setupVoice()?.request({ type: "status" }).then(status => {
       if (current && typeof status === "object" && status && "available" in status) {
         setVoiceAvailable(status.available === true);
+        setPocketAvailable("pocketAvailable" in status && status.pocketAvailable === true);
       }
     }, () => {});
     return () => { current = false; voiceDownload.current++; };
@@ -197,10 +201,15 @@ export default function SetupApp() {
       if (!port) return;
       const id = ++voiceDownload.current;
       setVoiceInstall("working");
-      void port.request({ type: "install", model: "whisper-small" }).then(
-        () => { if (id === voiceDownload.current) setVoiceInstall("ready"); },
-        () => { if (id === voiceDownload.current) setVoiceInstall("failed"); },
-      );
+      setVoiceStage("whisper-small");
+      void port.request({ type: "install", model: "whisper-small" }).then(async () => {
+        if (id !== voiceDownload.current) return;
+        if (pocketAvailable) {
+          setVoiceStage("pocket");
+          await port.request({ type: "install", model: "pocket" });
+        }
+        if (id === voiceDownload.current) setVoiceInstall("ready");
+      }).catch(() => { if (id === voiceDownload.current) setVoiceInstall("failed"); });
     }
 
   };
@@ -296,7 +305,8 @@ export default function SetupApp() {
               Enable local voice
             </label>
             <p className="px-3 pb-3 text-xs text-text-3">
-              Optional 465 MiB speech recognition download. Microphone access is requested when you start a voice session.
+              {pocketAvailable ? "Optional download: speech recognition (465 MiB) and spoken replies with Pocket TTS."
+                : "Optional 465 MiB speech recognition download."} Microphone access is requested when you press Voice in a conversation.
             </p>
           </CardShell>}
           <BtnPrimary className="self-start" icon="bolt" onClick={startInstall}>
@@ -330,10 +340,12 @@ export default function SetupApp() {
 
       {voiceInstall !== "idle" && (step === "install" || step === "provider") &&
         <div className="flex items-center gap-3 rounded-control border border-border px-3 py-2 text-meta text-text-2" role="status">
-          <span>{voiceInstall === "working" ? "Downloading the optional voice model…"
+          <span>{voiceInstall === "working"
+            ? voiceStage === "pocket" ? "Downloading spoken replies (Pocket TTS, 2 of 2)…"
+              : pocketAvailable ? "Downloading speech recognition (Whisper Small, 1 of 2)…" : "Downloading speech recognition (Whisper Small)…"
             : voiceInstall === "ready" ? "Local voice is ready."
-              : voiceInstall === "cancelled" ? "Voice download cancelled. You can enable it later."
-                : "Voice download failed. You can retry from the voice controls."}</span>
+              : voiceInstall === "cancelled" ? "Voice download cancelled. You can download the models later in Settings › Voice."
+                : "Voice download failed. You can retry from Settings › Voice, or press Voice in a conversation."}</span>
           {voiceInstall === "working" && <BtnGhost onClick={() => {
             voiceDownload.current++;
             setVoiceInstall("cancelled");
