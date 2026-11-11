@@ -20,7 +20,8 @@ vi.mock("../src/voice/assets.js", () => ({
     async cancelAndWait() {}
   },
 }));
-vi.mock("../src/voice/workers.js", () => ({
+vi.mock("../src/voice/workers.js", async importOriginal => ({
+  ...(await importOriginal<typeof import("../src/voice/workers.js")>()),
   Recognizer: class {
     constructor(...args: [string, string, (error: Error) => void, string?]) { mocks.recognizer(...args); }
     async wait() {}

@@ -1,10 +1,42 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { access, lstat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { z } from "zod";
 
 const maxLineBytes = 1_400_000;
 const workerError = "The local voice engine stopped. Start voice again to reconnect.";
+
+/** A helper's file name on this platform (Windows executables end in `.exe`). */
+export function helperPath(helpers: string, name: string, platform: string): string {
+  return join(helpers, platform === "win32" ? `${name}.exe` : name);
+}
+
+/** The minimal environment a speech helper runs with: nothing from the user's shell, but what
+ *  each system needs to load a program (Windows looks up DLLs through SystemRoot and PATH). */
+export function helperEnvironment(platform: string, env: NodeJS.ProcessEnv, helpers: string): Record<string, string> {
+  if (platform === "win32") {
+    const systemRoot = env.SystemRoot ?? env.windir ?? "C:\\Windows";
+    const temp = env.TEMP ?? env.TMP;
+    return {
+      SystemRoot: systemRoot, windir: systemRoot,
+      ...(temp ? { TEMP: temp, TMP: temp } : {}),
+      PATH: `${helpers};${systemRoot}\\System32`,
+    };
+  }
+  return { PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8", ...(env.TMPDIR ? { TMPDIR: env.TMPDIR } : {}) };
+}
+
+/** Whether a helper can be started: a regular file, executable on POSIX (Windows has no execute bit). */
+export async function helperUsable(path: string, platform: string): Promise<boolean> {
+  try {
+    if (!(await lstat(path)).isFile()) return false;
+    if (platform !== "win32") await access(path, constants.X_OK);
+    return true;
+  } catch { return false; }
+}
 
 interface Job<T> {
   id: string;
@@ -12,7 +44,7 @@ interface Job<T> {
   reject(reason: Error): void;
 }
 
-class LineWorker {
+export class LineWorker {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly completion: Promise<void>;
   private readonly decoder = new StringDecoder();
@@ -21,7 +53,7 @@ class LineWorker {
 
   constructor(path: string, args: string[], onLine: (line: string) => void, onFailure: (error: Error) => void) {
     this.child = spawn(path, args, {
-      env: { PATH: "/usr/bin:/bin", LANG: "en_US.UTF-8", TMPDIR: process.env.TMPDIR },
+      env: helperEnvironment(process.platform, process.env, dirname(path)),
       stdio: ["pipe", "pipe", "pipe"],
       shell: false,
     });

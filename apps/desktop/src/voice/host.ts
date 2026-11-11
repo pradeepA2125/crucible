@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { access, lstat } from "node:fs/promises";
-import { constants } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type {
@@ -9,7 +7,7 @@ import type {
 import { VoiceAssets, type VoiceModel } from "./assets.js";
 import type { VoiceRequest } from "./protocol.js";
 import { firstSentences, speakable } from "./speakable.js";
-import { Detector, Recognizer, Synthesizer } from "./workers.js";
+import { Detector, helperPath, helperUsable, Recognizer, Synthesizer } from "./workers.js";
 import type { DiagnosticSource, DiagnosticValue } from "./diagnostics.js";
 
 export interface VoiceSnapshot {
@@ -178,13 +176,12 @@ export class VoiceHost {
     await Promise.all([this.end(), this.assets.cancelAndWait()]);
   }
 
-  private async helperExists(name: string): Promise<boolean> {
-    try {
-      const path = join(this.options.helpers, name);
-      if (!(await lstat(path)).isFile()) return false;
-      await access(path, constants.X_OK);
-      return true;
-    } catch { return false; }
+  private helper(name: string): string {
+    return helperPath(this.options.helpers, name, this.options.platform);
+  }
+
+  private helperExists(name: string): Promise<boolean> {
+    return helperUsable(this.helper(name), this.options.platform);
   }
 
   private async start(threadId: string, model: VoiceModel, tts: "system" | "pocket", voiceModel: string | undefined) {
@@ -213,9 +210,9 @@ export class VoiceHost {
           return [] as string[];
         });
       abort.signal.throwIfAborted();
-      recognizer = new Recognizer(join(this.options.helpers, "crucible-whisper"), modelPath, failed,
+      recognizer = new Recognizer(this.helper("crucible-whisper"), modelPath, failed,
         words.length ? words.join(", ") : undefined);
-      synthesizer = new Synthesizer(join(this.options.helpers, tts === "system" ? "crucible-tts" : "crucible-pocket-tts"),
+      synthesizer = new Synthesizer(this.helper(tts === "system" ? "crucible-tts" : "crucible-pocket-tts"),
         tts === "system" ? ["--engine", "system"] : ["--models", pocketPath!], failed);
       const synth = synthesizer;
       await Promise.all([
@@ -242,7 +239,7 @@ export class VoiceHost {
     let detector: Detector | undefined;
     try {
       const path = await this.assets.verifiedVadPath(signal);
-      detector = new Detector(join(this.options.helpers, "crucible-whisper"), path, error =>
+      detector = new Detector(this.helper("crucible-whisper"), path, error =>
         this.trace("host", "vad", { available: false, reason: error.message }));
       await detector.wait(signal);
       this.trace("host", "vad", { available: true });
