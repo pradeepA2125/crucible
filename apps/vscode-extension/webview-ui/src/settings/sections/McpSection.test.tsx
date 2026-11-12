@@ -91,5 +91,40 @@ describe("McpSection", () => {
     expect(post).toHaveBeenCalledWith({ type: "settings/projectTrust" });
     post.mockRestore();
   });
-});
 
+  it("lists each variable a server uses with where its value comes from, never the value", () => {
+    const state = makeState();
+    state.mcp.servers[1]!.secrets = [{ name: "GITHUB_PAT", source: null }, { name: "OTHER", source: "saved" }];
+    state.mcp.servers[0]!.secrets = [{ name: "OLLAMA_API_KEY", source: "environment" }];
+    render(<McpSection state={state} busy={false} send={vi.fn()} />);
+    expect(screen.getByText("GITHUB_PAT")).toBeTruthy();
+    expect(screen.getByText("Not set")).toBeTruthy();
+    expect(screen.getByText("Saved")).toBeTruthy();
+    expect(screen.getByText("From environment")).toBeTruthy();
+    const field = screen.getByLabelText("Value for GITHUB_PAT on gh") as HTMLInputElement;
+    expect(field.type).toBe("password");
+    expect(field.value).toBe("");
+  });
+
+  it("saves a typed value, empties the field, and only a saved value offers Clear", () => {
+    const send = vi.fn();
+    const state = makeState();
+    state.mcp.servers[1]!.secrets = [{ name: "GITHUB_PAT", source: null }, { name: "OTHER", source: "saved" }];
+    render(<McpSection state={state} busy={false} send={send} />);
+    const save = screen.getByRole("button", { name: "Save GITHUB_PAT" });
+    expect(save).toBeDisabled();
+    const field = screen.getByLabelText("Value for GITHUB_PAT on gh") as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "ghp_token" } });
+    fireEvent.click(save);
+    expect(send).toHaveBeenCalledWith({ type: "settings/mcpSecrets", values: { GITHUB_PAT: "ghp_token" } });
+    expect(field.value).toBe("");
+    expect(screen.queryByRole("button", { name: "Clear GITHUB_PAT" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Clear OTHER" }));
+    expect(send).toHaveBeenCalledWith({ type: "settings/mcpSecrets", values: { OTHER: null } });
+  });
+
+  it("a server from an older host without secret info shows no secret rows", () => {
+    render(<McpSection state={makeState()} busy={false} send={vi.fn()} />);
+    expect(screen.queryByText("Not set")).toBeNull();
+  });
+});

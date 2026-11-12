@@ -93,6 +93,55 @@ function ToolList({ server, busy, send }: { server: McpServerRow } & Pick<Sectio
   );
 }
 
+const SOURCE_LABEL = { saved: "Saved", environment: "From environment" } as const;
+
+/** One row per ${VAR} the server's config uses: where its value comes from, a password field
+ *  that never shows a stored value, Save, and Clear for a saved one. Values live in the
+ *  editor's secret storage (the desktop keychain), never in mcp.json. */
+function SecretList({ server, busy, send }: { server: McpServerRow } & Pick<SectionProps, "busy" | "send">) {
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const secrets = server.secrets ?? [];
+  if (secrets.length === 0) return null;
+  return (
+    <ul className="flex flex-col gap-1.5 px-3 pb-2" aria-label={`Secrets for ${server.name}`}>
+      {secrets.map(({ name, source }) => {
+        const draft = drafts[name] ?? "";
+        const save = () => {
+          if (!draft.trim()) return;
+          send({ type: "settings/mcpSecrets", values: { [name]: draft } });
+          setDrafts((current) => ({ ...current, [name]: "" }));
+        };
+        return (
+          <li key={name} className="flex min-w-0 flex-wrap items-center gap-2 text-[11px]">
+            <span className="font-mono text-text-2">{name}</span>
+            <span style={{ color: source ? "var(--color-text-3)" : "var(--color-amber)" }}>
+              {source ? SOURCE_LABEL[source] : "Not set"}
+            </span>
+            <input
+              type="password"
+              autoComplete="off"
+              spellCheck={false}
+              aria-label={`Value for ${name} on ${server.name}`}
+              className={`${FIELD} min-w-[10rem] flex-1`}
+              placeholder={source === "saved" ? "Replace saved value" : "Enter value"}
+              value={draft}
+              onChange={(e) => setDrafts((current) => ({ ...current, [name]: e.target.value }))}
+              onKeyDown={(e) => { if (e.key === "Enter") save(); }}
+            />
+            <BtnPrimary disabled={busy || !draft.trim()} aria-label={`Save ${name}`} onClick={save}>Save</BtnPrimary>
+            {source === "saved" && (
+              <BtnGhost disabled={busy} aria-label={`Clear ${name}`}
+                onClick={() => send({ type: "settings/mcpSecrets", values: { [name]: null } })}>
+                Clear
+              </BtnGhost>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 /** McpSection — server list (status dot, tool count, switch, reconnect/remove) + add form. */
 export function McpSection({ state, busy, send }: SectionProps) {
   const [filter, setFilter] = useState("");
@@ -157,6 +206,7 @@ export function McpSection({ state, busy, send }: SectionProps) {
               }
             >
               {s.detail && <p className="px-3 pb-2 text-[11px] text-text-3">{s.detail}</p>}
+              <SecretList server={s} busy={busy} send={send} />
               <ToolList server={s} busy={busy} send={send} />
             </CardShell>
           </div>
@@ -187,7 +237,7 @@ export function McpSection({ state, busy, send }: SectionProps) {
             />
             <input
               className={FIELD}
-              placeholder="env var names, comma-separated (e.g. GITHUB_PAT)"
+              placeholder="secret names, comma-separated (e.g. GITHUB_PAT); set their values after adding"
               value={envVars}
               onChange={(e) => setEnvVars(e.target.value)}
             />

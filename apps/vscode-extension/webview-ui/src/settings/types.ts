@@ -66,6 +66,8 @@ export interface McpServerRow {
   tools: { name: string; description: string; enabled: boolean }[];
   enabledTools: string[] | null;
   disabledTools: string[];
+  // The ${VAR} names this server uses and where each value comes from (absent = older host).
+  secrets?: { name: string; source: "saved" | "environment" | null }[];
 }
 
 export interface SettingsState {
@@ -106,6 +108,7 @@ export type SettingsInMsg =
   | { type: "settings/mcpToggle"; name: string; enabled: boolean }
   | { type: "settings/mcpReconnect"; name: string }
   | { type: "settings/mcpTools"; name: string; enabledTools: string[] | null; disabledTools: string[] }
+  | { type: "settings/mcpSecrets"; values: Record<string, string | null> }
   | { type: "settings/skillToggle"; name: string; enabled: boolean }
   | { type: "settings/setEnvFlag"; key: string; value: string }
   | { type: "settings/loadInstructions" }
