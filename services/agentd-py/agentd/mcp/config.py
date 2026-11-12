@@ -76,7 +76,9 @@ def interpolate_env(mapping: dict[str, str], secrets: McpSecrets | None = None) 
         saved = secrets.get(var) if secrets is not None else None
         val = saved if saved is not None else os.environ.get(var)
         if val is None:
-            raise McpMissingEnvVar(var)
+            raise McpMissingEnvVar(
+                f"No value for {var}. Set it in Settings › MCP Servers, or in the environment."
+            )
         return val
 
     return {k: _VAR_RE.sub(_sub, v) for k, v in mapping.items()}

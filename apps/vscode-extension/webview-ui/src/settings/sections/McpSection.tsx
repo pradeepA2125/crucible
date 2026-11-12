@@ -237,7 +237,7 @@ export function McpSection({ state, busy, send }: SectionProps) {
             />
             <input
               className={FIELD}
-              placeholder="secret names, comma-separated (e.g. GITHUB_PAT); set their values after adding"
+              placeholder="secret names, comma-separated (e.g. GITHUB_PAT)"
               value={envVars}
               onChange={(e) => setEnvVars(e.target.value)}
             />

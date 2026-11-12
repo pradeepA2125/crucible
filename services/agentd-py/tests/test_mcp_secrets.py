@@ -28,7 +28,8 @@ def test_a_saved_secret_wins_over_the_environment_which_still_works(monkeypatch)
         "X": "from-env",
     }
     monkeypatch.delenv("MISSING", raising=False)
-    with pytest.raises(McpMissingEnvVar, match="MISSING"):
+    actionable = r"No value for MISSING\. Set it in Settings › MCP Servers"
+    with pytest.raises(McpMissingEnvVar, match=actionable):
         interpolate_env({"K": "${MISSING}"}, secrets)
 
 
