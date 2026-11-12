@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { assertProjectAvailable, assertInstalledLocalModels } from "../src/runtime.js";
+import { assertProjectAvailable, assertInstalledLocalModels, runtimeUpdateNeeded } from "../src/runtime.js";
 import { JsonState } from "../src/store.js";
 import { RuntimeCore } from "../../vscode-extension/src/runtime/runtime-core.js";
 import { buildBackendEnv } from "../../vscode-extension/src/runtime/backend-process.js";
@@ -65,3 +65,16 @@ describe("desktop local-model policy", () => {
     expect(() => assertInstalledLocalModels(runtime, true)).not.toThrow();
   });
 });
+
+describe("runtime that is older than the app", () => {
+  it("reports the installed and required releases when a packaged app ships a different pinned runtime", () => {
+    expect(runtimeUpdateNeeded({ releaseTag: "v0.9.1" }, { releaseTag: "v0.9.4" })).toEqual({ installed: "v0.9.1", bundled: "v0.9.4" });
+  });
+  it("is quiet when they match, when nothing is installed yet, or for an unpinned development manifest", () => {
+    expect(runtimeUpdateNeeded({ releaseTag: "v0.9.4" }, { releaseTag: "v0.9.4" })).toBeNull();
+    expect(runtimeUpdateNeeded(null, { releaseTag: "v0.9.4" })).toBeNull();
+    expect(runtimeUpdateNeeded({ releaseTag: "v0.9.1" }, null)).toBeNull();
+    expect(runtimeUpdateNeeded({ releaseTag: "v0.9.1" }, { releaseTag: "dev-unpinned" })).toBeNull();
+  });
+});
+

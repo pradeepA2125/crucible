@@ -15,7 +15,9 @@ export type SetupInMsg =
   | SettingsInMsg;
 
 export type SetupOutMsg =
-  | { type: "setup/preferences"; localModels: boolean; runtimePath?: string }
+  | { type: "setup/preferences"; localModels: boolean; runtimePath?: string;
+      // Desktop: the app was updated and its runtime is older than the one it ships.
+      runtimeUpdate?: { installed: string; bundled: string } }
   | { type: "setup/claudeReady" }
   | { type: "setup/progress"; component: string; status: string; detail?: string }
   | { type: "setup/installDone"; ok: boolean }

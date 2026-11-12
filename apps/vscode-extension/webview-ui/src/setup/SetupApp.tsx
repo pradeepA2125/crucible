@@ -99,6 +99,7 @@ export default function SetupApp() {
   }, []);
 
   const [runtimePath, setRuntimePath] = useState("~/.crucible/runtime");
+  const [runtimeUpdate, setRuntimeUpdate] = useState<{ installed: string; bundled: string } | null>(null);
   const localModelsChosen = useRef(false);
   const [progress, setProgress] = useState<Record<string, ProgressRow>>({});
   const [installOk, setInstallOk] = useState<boolean | null>(null);
@@ -166,6 +167,7 @@ export default function SetupApp() {
           break;
         case "setup/preferences":
           if(msg.runtimePath)setRuntimePath(msg.runtimePath);
+          setRuntimeUpdate(msg.runtimeUpdate ?? null);
           if (!localModelsChosen.current) setLocalModels(msg.localModels);
           break;
         case "setup/ready":
@@ -260,6 +262,12 @@ export default function SetupApp() {
               <p className="text-xs text-text-3">Provision the local runtime, pick a model provider, start chatting.</p>
             </div>
           </div>
+          {runtimeUpdate && (
+            <p role="status" className="surface-card px-3 py-2 text-xs text-text-2">
+              Crucible was updated. Its runtime is still {runtimeUpdate.installed}; this version needs {runtimeUpdate.bundled}.
+              Install it to continue. Your projects, conversations and settings are kept.
+            </p>
+          )}
           <CardShell icon="chip" title="What gets installed">
             <ul className="flex flex-col px-3 pb-3 pt-1">
               {COMPONENT_ORDER.map((id, i) => (
@@ -329,7 +337,12 @@ export default function SetupApp() {
                 );
               })}
             </ul>
-            {installOk === false && (
+            {/* A refused or failed install (another project still working, a download error)
+                must say so here: the rows alone would sit at pending forever. */}
+            {error && !busy && (
+              <p role="alert" className="px-3 pb-2 text-[11px]" style={{ color: "var(--color-red)" }}>{error}</p>
+            )}
+            {(installOk === false || (error && !busy)) && (
               <div className="px-3 pb-3">
                 <BtnPrimary icon="retry" onClick={startInstall}>Retry</BtnPrimary>
               </div>

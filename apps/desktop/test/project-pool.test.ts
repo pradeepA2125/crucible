@@ -21,3 +21,29 @@ it("reserves the idle pause across awaits so a project cannot be selected while 
  let finish!:(v:boolean)=>void;b.pause.mockImplementationOnce(()=>new Promise(r=>finish=r));const pausing=pool.poll();for(let i=0;i<10;i++)await Promise.resolve();
  await expect(pool.select("b",async()=>{},async()=>{})).rejects.toThrow("in progress");finish(true);await pausing;expect(pool.selected).toBe("a");expect(pool.summaries().find(s=>s.id==="b")?.paused).toBe(true);
 });
+
+it("a runtime install pauses every idle loaded project, the selected one included",async()=>{
+ const a=host(),b=host(),pool=new ProjectPool();pool.add("a",a);pool.add("b",b);
+ await pool.select("a",async()=>{},vi.fn(async()=>{}));
+ await pool.pauseIdleForInstall(id=>id);
+ expect(a.pause).toHaveBeenCalledOnce();expect(b.pause).toHaveBeenCalledOnce();
+ expect(a.flush).toHaveBeenCalled();
+ // Setup restarts the selected project right after the install: only the background one stays paused.
+ expect(pool.summaries().map(p=>[p.id,p.paused])).toEqual([["a",false],["b",true]]);
+});
+
+it("a runtime install stops nothing while any project is working, and names it",async()=>{
+ const a=host(),b=host(),pool=new ProjectPool();pool.add("a",a);pool.add("b",b);
+ b.set({state:"busy",attention:[]});
+ await expect(pool.pauseIdleForInstall(id=>id==="b"?"pradeep-site":id)).rejects.toThrow(/pradeep-site is still working/);
+ expect(a.pause).not.toHaveBeenCalled();expect(b.pause).not.toHaveBeenCalled();
+ b.set({state:"unknown",attention:[]});
+ await expect(pool.pauseIdleForInstall(id=>id)).rejects.toThrow(/b/);
+ expect(a.pause).not.toHaveBeenCalled();
+});
+
+it("a project whose pause is refused at the last moment stops the install",async()=>{
+ const a=host(),pool=new ProjectPool();pool.add("a",a);
+ a.pause.mockResolvedValueOnce(false);
+ await expect(pool.pauseIdleForInstall(()=>"alpha")).rejects.toThrow(/alpha/);
+});

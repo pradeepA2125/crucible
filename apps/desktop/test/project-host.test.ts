@@ -54,3 +54,17 @@ it.each(["assert","registry","flush"])("an actual open held at %s is retired by 
  // Ordinary open is still allowed after the cancelled admission has retired.
  await run.openProject("/private/tmp/disposable");expect(start).toHaveBeenCalledOnce();await pool.dispose();
 });
+
+it("a packaged app whose installed runtime is older opens Setup instead of starting a backend, and Setup says why",async()=>{
+ const dir=mkdtempSync(join(tmpdir(),"cp-upgrade-"));dirs.push(dir);const runtimeDir=join(dir,"runtime"),resources=join(dir,"app");
+ mkdirSync(runtimeDir,{recursive:true});mkdirSync(join(resources,"resources"),{recursive:true});
+ writeFileSync(join(runtimeDir,"runtime.json"),JSON.stringify({releaseTag:"v0.9.1",components:{}}));
+ writeFileSync(join(resources,"resources","runtime-manifest.json"),JSON.stringify({manifestVersion:1,releaseTag:"v0.9.4",components:{}}));
+ const showSetup=vi.fn(),showChat=vi.fn(),post=vi.fn();
+ const host=fixture({runtimeDir,resources,provisionRuntime:vi.fn(),showSetup,showChat,post});
+ await host.start();
+ expect(showSetup).toHaveBeenCalledOnce();expect(showChat).not.toHaveBeenCalled();
+ await host.handle({type:"setup/preferences"} as never,true);
+ expect(post).toHaveBeenCalledWith(expect.objectContaining({type:"setup/preferences",runtimeUpdate:{installed:"v0.9.1",bundled:"v0.9.4"}}));
+ await host.dispose();
+});

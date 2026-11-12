@@ -185,3 +185,25 @@ it("starts Claude setup and waits for the connection to be put into use", () => 
   deliver({ type: "setup/ready", port: 8090 });
   expect(screen.getByText(/using your Claude subscription/)).toBeTruthy();
 });
+
+it("an install the host refuses shows its reason and a Retry instead of sitting on pending rows", () => {
+  render(<SetupApp />);
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  fireEvent.click(screen.getByRole("button", { name: /Install runtime/ }));
+  deliver({ type: "setup/error", message: "pradeep-site is still working. Let it finish or stop it, then retry the install." });
+  expect(screen.getByRole("alert").textContent).toMatch(/still working/);
+  vi.mocked(vscode.postMessage).mockClear();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(vscode.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "setup/install" }));
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("after an app update Setup says the runtime must be updated, and keeps projects and settings", () => {
+  render(<SetupApp />);
+  deliver({ type: "setup/preferences", localModels: true, runtimeUpdate: { installed: "v0.9.1", bundled: "v0.9.4" } });
+  const notice = screen.getByRole("status");
+  expect(notice.textContent).toMatch(/updated/);
+  expect(notice.textContent).toMatch(/v0\.9\.1/);
+  expect(notice.textContent).toMatch(/v0\.9\.4/);
+  expect(notice.textContent).toMatch(/projects.*settings.*kept/i);
+});

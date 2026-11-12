@@ -55,6 +55,31 @@ export class ProjectPool<T extends RetainedProject> {
       finally { s.reading = false; }
     }));
   }
+  /** Before a runtime install: every loaded project must be idle, and then every backend stops
+   *  (the selected project's too), so none runs on files the install replaces. Checks all first and
+   *  stops nothing if any project is working or its state is unknown. */
+  async pauseIdleForInstall(name: (id: string) => string): Promise<void> {
+    if (this.changing) throw new Error("Project navigation is in progress. Retry the install in a moment.");
+    this.changing = true;
+    try {
+      const live = [...this.slots].filter(([, s]) => !s.paused);
+      for (const [id, s] of live) {
+        const status = await s.host.activity().catch((): ProjectActivity => ({ state: "unknown", attention: [] }));
+        if (status.state !== "idle" || !s.host.canDetach()) {
+          throw new Error(`${name(id)} is still working. Let it finish or stop it, then retry the install.`);
+        }
+      }
+      for (const [id, s] of live) {
+        s.host.flush();
+        const paused = await s.host.pause();
+        if (!paused) throw new Error(`${name(id)} could not be paused for the install. Retry in a moment.`);
+        // Setup restarts the selected project's backend right after installing; only background
+        // projects stay paused until they are opened again.
+        s.paused = this.selected !== id;
+        delete s.idleAt;
+      }
+    } finally { this.changing = false; }
+  }
   async remove(id: string): Promise<void> {
     if (this.changing || this.selected === id) throw new Error("Switch to another project before removing this project.");
     const s = this.slots.get(id); if (!s) return;

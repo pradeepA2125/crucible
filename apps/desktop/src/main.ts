@@ -289,7 +289,7 @@ async function openProject(path?: string,threadId?:string): Promise<void> {
       try {selectedHost=createProjectHost({root,profile,draftPersistence:persistence,localTerminalBusy:()=>terminals.busy(id),
         takeThreadTarget:()=>{if(!selectedCurrent())return undefined;const target=slot.threadTarget;delete slot.threadTarget;return target;},
         ...(!app.isPackaged && process.env.CRUCIBLE_DEV_RUNTIME && isAbsolute(process.env.CRUCIBLE_DEV_RUNTIME)?{runtimeDir:process.env.CRUCIBLE_DEV_RUNTIME}:{}),
-        ...(app.isPackaged?{runtimeDir:join(app.getPath("userData"),"runtime"),provisionRuntime:(deps,progress)=>provisioner.install(deps,progress)}:{}),
+        ...(app.isPackaged?{runtimeDir:join(app.getPath("userData"),"runtime"),provisionRuntime:async(deps,progress)=>{await pool.pauseIdleForInstall(id=>registry.get(id).name);return provisioner.install(deps,progress);}}:{}),
         canStartRuntime:()=>{if(provisioner.busy || closing)throw new Error("Wait for runtime installation or shutdown to finish before starting a backend.");},
         resources:__dirname,encryption:safeStorage,
         post:message=>{if(projectReplyAllowed(pool.isSelected(id) && host===selectedHost,closing,message.type))post(message);},viewIdentity:()=>slot.viewId,

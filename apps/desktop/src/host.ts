@@ -28,7 +28,7 @@ import { DraftSession } from "../../vscode-extension/src/drafts/draft-session.js
 import { currentBaselineBackend } from "./baseline-host.js";
 import { ThreadListPoller } from "./thread-list.js";
 import { JsonState, EncryptedSecrets, type Encryption } from "./store.js";
-import { createDesktopRuntime, assertInstalledLocalModels, INSTALL_NOTICE } from "./runtime.js";
+import { createDesktopRuntime, assertInstalledLocalModels, INSTALL_NOTICE, runtimeUpdateNeeded } from "./runtime.js";
 import { projectFiles } from "./project-files.js";
 import type { Payload } from "./contract.js";
 import type { VoiceThread } from "./voice/host.js";
@@ -53,7 +53,7 @@ export function createProjectHost(ports: HostPorts) {
   let listPoller: ThreadListPoller | undefined;
   let selectedThread = "", lastTurnActive = false;
   const post = (message: Record<string, unknown>) => {
-    if(message.type === "setup/preferences")message={...message,runtimePath:ports.runtimeDir ?? join(homedir(), ".crucible", "runtime")};
+    if(message.type === "setup/preferences"){const update=runtimeUpdate();message={...message,runtimePath:ports.runtimeDir ?? join(homedir(), ".crucible", "runtime"),...(update?{runtimeUpdate:update}:{})};}
     if (message.type === "clearThread" && typeof message.threadId === "string") selectedThread = message.threadId;
     if (message.type === "renderThreadList" && typeof message.activeThreadId === "string") { selectedThread = message.activeThreadId; listPoller?.invalidate(); }
     if (message.type === "liveStatus") {
@@ -88,6 +88,8 @@ export function createProjectHost(ports: HostPorts) {
     authStatus: { text: "", show: () => notice("Backend authorization failed. Reopen the project after checking the runtime logs."), hide() {} },
     showError: async message => { notice(message); return undefined; },
   },ports.provisionRuntime,ports.canStartRuntime);
+  // Only a packaged app provisions its own runtime; a development build uses whatever is installed.
+  const runtimeUpdate = () => ports.provisionRuntime ? runtimeUpdateNeeded(runtime.installedRuntime(), runtime.bundledManifest()) : null;
   const gate = new BackendGate({ fetch: (input, init) => fetch(input, init), readToken: readBackendToken,
     probe: port => probeHealth(port, { readToken: readBackendToken, fetchRaw: async (url, init) => { const response = await fetch(url, { ...init, redirect: "manual" }); return { status: response.status, body: await response.text() }; } }),
     now: Date.now, report: (_base, ok, reason) => runtime.setAuthError(ok ? null : reason ?? "Unauthorized"),
@@ -340,7 +342,8 @@ export function createProjectHost(ports: HostPorts) {
       buildIndex: () => controller.buildDependencyIndex(() => requestProjectIndex(gate, backendURL, root)) }), baselineBackend: currentBaselineBackend(() => controller.configClient()), rejectDraft, hasDraftSubmission: () => drafts.hasSubmission,
     rejectBoundaryDraft: (id: string) => drafts.rejectPrepared(id),
     abandonPreparedDraft: () => drafts.resetView(),
-    start: async () => { if (!runtime.isInstalled() || !await runtime.getProviderSettings()) { ports.showSetup(); return; } if(!backendURL)await runtime.startForWorkspace(root); ports.showChat(); },
+    // An app update without its runtime would run the old backend: Setup installs the bundled one first.
+    start: async () => { if (!runtime.isInstalled() || runtimeUpdate() || !await runtime.getProviderSettings()) { ports.showSetup(); return; } if(!backendURL)await runtime.startForWorkspace(root); ports.showChat(); },
     handle: async (payload: Payload, setup: boolean) => {
       // Accepted stream bodies outlive the attached view. Their preparation,
       // pending/unknown receipt and work-start are fenced by drafts/controller.

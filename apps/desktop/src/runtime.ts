@@ -34,6 +34,14 @@ export async function assertProjectAvailable(workspace: string, deps: Pick<Proce
 export function assertInstalledLocalModels(runtime: Pick<RuntimeCore, "installedRuntime" | "localModels">, requested = runtime.localModels()): void {
   if ((runtime.installedRuntime()?.localModels ?? true) !== requested) throw new Error(INSTALL_NOTICE);
 }
+/** The installed runtime is older than the one this packaged app ships (an app update without its
+ *  runtime): the releases it would need. Null when they match, when nothing is installed yet (first
+ *  Setup handles that), or for an unpinned development manifest. */
+export function runtimeUpdateNeeded(installed: { releaseTag: string } | null, bundled: { releaseTag: string } | null):
+  { installed: string; bundled: string } | null {
+  if (!installed || !bundled || /dev|placeholder|unpinned/i.test(bundled.releaseTag)) return null;
+  return installed.releaseTag === bundled.releaseTag ? null : { installed: installed.releaseTag, bundled: bundled.releaseTag };
+}
 let starting = 0;
 export const desktopRuntimeStarting = () => starting > 0;
 export function createDesktopRuntime(ports: RuntimePorts, install?: (deps: import("../../vscode-extension/src/runtime/installer.js").InstallerDeps, progress: (p: import("../../vscode-extension/src/runtime/installer.js").ComponentProgress) => void) => Promise<import("../../vscode-extension/src/runtime/installer.js").InstallResult>, canStart:()=>void=()=>{}): RuntimeCore {
