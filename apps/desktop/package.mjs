@@ -7,6 +7,8 @@ import { createHash, createPublicKey } from "node:crypto";
 import { sealCommunityApp } from "./adhoc-sign.mjs";
 import { bundleLinks, fileManifest, packageArguments, validateReleaseManifest } from "./package-utils.mjs";
 import { thirdPartyNotices, voiceLicenses, voicePayload } from "./voice-payload.mjs";
+import { nodePtyPayload } from "./node-pty-payload.mjs";
+import { existsSync } from "node:fs";
 const exec=promisify(execFile),root=import.meta.dirname,opts=packageArguments(process.argv.slice(2));
 const platform=`${process.platform}-${process.arch}`;if(!["darwin-arm64","darwin-x64","linux-x64","win32-x64"].includes(platform))throw new Error(`Unsupported native package target: ${platform}`);
 if(!isAbsolute(opts.out))throw new Error("Output path must be absolute.");const output=resolve(opts.out);
@@ -17,7 +19,9 @@ if(opts.version)pkg.version=opts.version;
 if(!opts.preview&&!opts["update-key"])opts["update-key"]=join(root,"resources/update-public.pem");
 if(!opts.preview)await access(opts["update-key"]);
 for(const f of ["main.cjs","preload.cjs","terminal-worker.cjs","update-worker.cjs","renderer/desktop.html","renderer/desktop-app.html","renderer/setup.html","renderer/settings.html","renderer/graph.html","renderer/memory.html","renderer/lifecycle.html"])await access(join(dist,f));
-const native=join(dist,`node_modules/node-pty/prebuilds/${platform}`);await access(join(native,process.platform==="win32"?"conpty.node":"pty.node"));if(process.platform!=="win32")await access(join(native,"spawn-helper"));
+// The prebuild on macOS and Windows, the module npm compiled on Linux (node-pty-payload.mjs).
+const ptyRoot=join(dist,"node_modules/node-pty"),pty=nodePtyPayload(process.platform,process.arch,path=>existsSync(join(ptyRoot,path)));
+await access(join(ptyRoot,pty.native,process.platform==="win32"?"conpty.node":"pty.node"));if(process.platform==="darwin")await access(join(ptyRoot,pty.native,"spawn-helper"));
 const manifest=opts.manifest?validateReleaseManifest(JSON.parse(await readFile(opts.manifest,"utf8")),platform,{candidate:!opts.preview}):null;
 if(!manifest&&!opts.preview)throw new Error("Candidate packaging requires --manifest. Use --preview only for an explicitly non-release local build.");
 await fileManifest(dist); // source symlinks or unexpected specials cannot leak into a package
@@ -50,8 +54,8 @@ try{
   await writeFile(join(target,"voice-native/THIRD_PARTY_NOTICES"),thirdPartyNotices(pocketPack.attribution));
   for(const file of voiceLicenses(platform))await cp(join(root,"voice-native/licenses",file),join(target,"voice-native",file));
  }
- const pty=join(target,"node_modules/node-pty");await mkdir(pty,{recursive:true});for(const f of ["lib","package.json","LICENSE",`prebuilds/${platform}`])await cp(join(dist,"node_modules/node-pty",f),join(pty,f),{recursive:true});
- if(process.platform!=="win32")await chmod(join(pty,`prebuilds/${platform}/spawn-helper`),0o755);
+ const ptyTarget=join(target,"node_modules/node-pty");await mkdir(ptyTarget,{recursive:true});for(const f of ["lib","package.json","LICENSE",pty.native])await cp(join(ptyRoot,f),join(ptyTarget,f),{recursive:true});
+ if(pty.helper)await chmod(join(ptyTarget,pty.helper),0o755);
  if(opts["update-key"]){const keyText=await readFile(resolve(opts["update-key"]),"utf8");if(!keyText.includes("BEGIN PUBLIC KEY")||keyText.includes("PRIVATE KEY"))throw new Error("Provide only the public update verification key.");const key=createPublicKey(keyText);if(key.asymmetricKeyType!=="ed25519")throw new Error("Update verification requires an Ed25519 public key.");await writeFile(join(target,"resources/desktop-update-key.pem"),key.export({type:"spki",format:"pem"}));}
  if(manifest)await writeFile(join(target,"resources/runtime-manifest.json"),JSON.stringify(manifest,null,2));
  if(opts.artifacts){if(!manifest)throw new Error("Embedded artifacts require a pinned manifest.");const mappings={};const assets=join(target,"resources/runtime-assets");await mkdir(assets);for(const [id,s] of Object.entries(manifest.components)){if(id==="lsps")continue;const k=id==="agentd"||id==="jdtls"?"any":platform,url=s.urls[k],file=basename(new URL(url).pathname);if(!/^[a-zA-Z0-9_.+-]+$/.test(file))throw new Error("Invalid embedded artifact filename");const source=join(resolve(opts.artifacts),file);if(!(await lstat(source)).isFile()||(await lstat(source)).isSymbolicLink())throw new Error("Embedded artifact must be a regular file");const bytes=await readFile(source),sha=createHash("sha256").update(bytes).digest("hex");if(sha!==s.sha256[k].toLowerCase())throw new Error(`Embedded ${id} checksum mismatch`);await cp(source,join(assets,file));mappings[url]={file,sha256:sha};}await writeFile(join(target,"resources/runtime-assets.json"),JSON.stringify(mappings,null,2));}

@@ -7,19 +7,19 @@ const has = (...paths: string[]) => (path: string) => paths.includes(path);
 describe("node-pty files in the desktop build", () => {
   it("macOS uses the published prebuild and makes its spawn helper executable", () => {
     expect(nodePtyPayload("darwin", "arm64", has("prebuilds/darwin-arm64", "prebuilds/darwin-arm64/spawn-helper"))).toEqual({
-      entries: ["lib", "package.json", "LICENSE", "prebuilds"], helper: "prebuilds/darwin-arm64/spawn-helper",
+      entries: ["lib", "package.json", "LICENSE", "prebuilds"], native: "prebuilds/darwin-arm64", helper: "prebuilds/darwin-arm64/spawn-helper",
     });
   });
 
   it("Windows uses the published prebuild and has no spawn helper", () => {
     expect(nodePtyPayload("win32", "x64", has("prebuilds/win32-x64"))).toEqual({
-      entries: ["lib", "package.json", "LICENSE", "prebuilds"], helper: null,
+      entries: ["lib", "package.json", "LICENSE", "prebuilds"], native: "prebuilds/win32-x64", helper: null,
     });
   });
 
   it("Linux has no prebuild: it ships the module npm compiled into build/Release", () => {
     expect(nodePtyPayload("linux", "x64", has("build/Release", "build/Release/pty.node"))).toEqual({
-      entries: ["lib", "package.json", "LICENSE", "build/Release"], helper: null,
+      entries: ["lib", "package.json", "LICENSE", "build/Release"], native: "build/Release", helper: null,
     });
   });
 
