@@ -1,18 +1,22 @@
 import { build } from "esbuild";
 import { cp, mkdir, readFile, writeFile, chmod } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 import { dirname } from "node:path";
+import { nodePtyPayload } from "./node-pty-payload.mjs";
 import { resolve } from "node:path";
 const base = import.meta.dirname;
 const dist = resolve(base, "dist");
 await mkdir(dist, { recursive: true });
-// node-pty uses stable Node-API binaries. Keep native files outside bundles and
-// restore the npm archive's missing executable bit on the packaged Unix helper.
+// node-pty uses stable Node-API binaries. Keep native files outside bundles (the published
+// prebuild, or the module npm compiled on Linux) and restore the npm archive's missing
+// executable bit on the Unix spawn helper.
 const nativeRoot=dirname(createRequire(import.meta.url).resolve("node-pty/package.json"));
 const nativeTarget=resolve(dist,"node_modules/node-pty");
 await mkdir(nativeTarget,{recursive:true});
-for(const entry of ["lib","prebuilds","package.json","LICENSE"])await cp(resolve(nativeRoot,entry),resolve(nativeTarget,entry),{recursive:true});
-if(process.platform!=="win32")await chmod(resolve(nativeTarget,`prebuilds/${process.platform}-${process.arch}/spawn-helper`),0o755);
+const pty=nodePtyPayload(process.platform,process.arch,path=>existsSync(resolve(nativeRoot,path)));
+for(const entry of pty.entries)await cp(resolve(nativeRoot,entry),resolve(nativeTarget,entry),{recursive:true});
+if(pty.helper)await chmod(resolve(nativeTarget,pty.helper),0o755);
 
 await Promise.all([build({ entryPoints: [resolve(base, "src/main.ts")], bundle: true, platform: "node", target: "node22", format: "cjs", external: ["electron", "node-pty"], outfile: resolve(dist, "main.cjs") }),
   build({ entryPoints: [resolve(base, "src/preload.ts")], bundle: true, platform: "browser", target: "chrome130", format: "cjs", external: ["electron"], outfile: resolve(dist, "preload.cjs") })]);
