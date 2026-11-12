@@ -126,13 +126,19 @@ export class VoiceHost {
   private async checkCpu(): Promise<"ok" | "unsupported" | "failed"> {
     if (this.options.architecture === "arm64") return "ok";
     this.cpuCheck ??= new Promise<"ok" | "unsupported" | "failed">(resolve => {
-      execFile(this.helper("crucible-whisper"), ["--check-cpu"], {
-        env: helperEnvironment(this.options.platform, process.env, this.options.helpers), timeout: 5_000, shell: false,
-      }, (_error, stdout) => {
-        // Exit 3 with "cpu unsupported" is the answer, not a failure; anything else could not run.
-        const answer = String(stdout).trim();
-        resolve(answer === "cpu ok" ? "ok" : answer === "cpu unsupported" ? "unsupported" : "failed");
-      });
+      try {
+        execFile(this.helper("crucible-whisper"), ["--check-cpu"], {
+          env: helperEnvironment(this.options.platform, process.env, this.options.helpers), timeout: 5_000, shell: false,
+        }, (_error, stdout) => {
+          // Exit 3 with "cpu unsupported" is the answer, not a failure; anything else could not run.
+          const answer = String(stdout).trim();
+          resolve(answer === "cpu ok" ? "ok" : answer === "cpu unsupported" ? "unsupported" : "failed");
+        });
+      } catch {
+        // Windows throws from spawn itself (EFTYPE) for a file that is not a program, such as a
+        // truncated or quarantined helper: that is a helper that could not run, not a crash.
+        resolve("failed");
+      }
     });
     const result = await this.cpuCheck;
     if (result === "failed") this.cpuCheck = undefined;

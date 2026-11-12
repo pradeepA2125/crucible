@@ -11,7 +11,21 @@ const mocks = vi.hoisted(() => ({
   recognizer: vi.fn<(path: string, model: string, failure: (error: Error) => void, prompt?: string) => void>(),
   synthesizer: vi.fn(),
   pocketInstalled: vi.fn(async (): Promise<boolean> => false),
+  // Windows refuses a file that is not a program (truncated, quarantined) by throwing from
+  // spawn itself, before any callback: EFTYPE.
+  spawnThrows: false,
 }));
+
+vi.mock("node:child_process", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFile: ((...args: Parameters<typeof actual.execFile>) => {
+      if (mocks.spawnThrows) throw Object.assign(new Error("spawn EFTYPE"), { code: "EFTYPE", errno: -4028, syscall: "spawn" });
+      return actual.execFile(...args);
+    }) as typeof actual.execFile,
+  };
+});
 
 vi.mock("../src/voice/assets.js", async importOriginal => ({
   ...(await importOriginal<typeof import("../src/voice/assets.js")>()),
@@ -160,6 +174,15 @@ describe("voice capabilities on every platform", () => {
       available: true, installed: ["whisper-small"], tts: ["pocket"], pocketAvailable: true,
       pocketDownloadBytes: 199_269_026, pocketEngine: "onnx",
     });
+  });
+
+  it("a helper the system refuses to start is reported as could not start, never thrown", async () => {
+    const path = await helpers(["crucible-whisper"]);
+    mocks.spawnThrows = true;
+    try {
+      expect(await statusHost(path, "linux", "x64").status())
+        .toMatchObject({ available: false, reason: "Local voice could not start its speech helper." });
+    } finally { mocks.spawnThrows = false; }
   });
 
   it("status on win32 finds .exe helpers without an execute bit", async () => {
