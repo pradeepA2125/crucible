@@ -155,7 +155,9 @@ jobs:
           cd apps/vscode-extension && npx vsce package --no-dependencies --out ../../dist-artifacts/
       - name: attach to release
         uses: softprops/action-gh-release@v2
-        with: { files: dist-artifacts/* }
+        # Never "latest": desktop releases share this feed, and the desktop updater reads the
+        # latest release. install.sh finds the newest .vsix on its own.
+        with: { files: dist-artifacts/*, make_latest: "false" }
 
   publish:
     # Marketplace publish is opt-in: skipped entirely (not failed) when VSCE_PAT
