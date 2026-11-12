@@ -4,14 +4,16 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/pradeepA2125/crucible/main/install.sh | bash
 #
-# Downloads the .vsix attached to the latest GitHub Release and installs it
+# Downloads the .vsix from the newest GitHub Release that has one and installs it
 # via `code --install-extension`. Override CRUCIBLE_INSTALL_REPO or
 # CRUCIBLE_INSTALL_CODE_BIN for a fork or a non-default editor binary
 # (code-insiders, cursor, ...).
 set -euo pipefail
 
 REPO="${CRUCIBLE_INSTALL_REPO:-pradeepA2125/crucible}"
-API_URL="https://api.github.com/repos/${REPO}/releases/latest"
+# Desktop-app releases share this feed and carry no .vsix, so "latest" may not be an
+# extension release: list releases (newest first) and take the first .vsix found.
+API_URL="https://api.github.com/repos/${REPO}/releases?per_page=30"
 
 log() { printf '==> %s\n' "$1"; }
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
@@ -35,13 +37,13 @@ log "using editor CLI: $CODE_BIN"
 
 command -v curl >/dev/null 2>&1 || die "curl is required"
 
-log "looking up latest release of $REPO"
+log "looking up the newest extension release of $REPO"
 RELEASE_JSON="$(curl -fsSL "$API_URL")" || die "failed to query $API_URL (repo may have no releases yet)"
 
 VSIX_URL="$(printf '%s' "$RELEASE_JSON" | grep -o '"browser_download_url": *"[^"]*\.vsix"' | head -n1 | sed -E 's/.*"(https[^"]+)"/\1/')"
-[ -n "$VSIX_URL" ] || die "latest release has no .vsix asset attached"
+[ -n "$VSIX_URL" ] || die "no recent release of $REPO has a .vsix asset attached"
 
-TAG="$(printf '%s' "$RELEASE_JSON" | grep -o '"tag_name": *"[^"]*"' | head -n1 | sed -E 's/.*"([^"]+)"$/\1/')"
+TAG="$(printf '%s' "$VSIX_URL" | sed -E 's#.*/releases/download/([^/]+)/.*#\1#')"
 log "found $TAG: $(basename "$VSIX_URL")"
 
 WORKDIR="$(mktemp -d)"
