@@ -142,6 +142,29 @@ describe("shared runtime orchestration", () => {
     expect(h.state.values.get("crucible.chatgpt.welcomed")).toEqual(["account"]);
   });
 
+  it("stores MCP secrets per workspace and hands them to that workspace's backend at start", async () => {
+    const h = setup();
+    const store = new Map<string, string>();
+    h.ports.secrets.get.mockImplementation(async (key: string) => store.get(key));
+    h.ports.secrets.store.mockImplementation(async (key: string, value: string) => { store.set(key, value); });
+    h.ports.secrets.delete.mockImplementation(async (key: string) => { store.delete(key); });
+    await h.core.storeMcpSecrets("/ws/a", { GITHUB_PAT: "tok", OLD: "x" });
+    await h.core.storeMcpSecrets("/ws/a", { OLD: null });
+    expect(await h.core.readMcpSecrets("/ws/a")).toEqual({ GITHUB_PAT: "tok" });
+    expect(await h.core.readMcpSecrets("/ws/b")).toEqual({});
+    await h.core.startForWorkspace("/ws/a");
+    expect(h.proc.start.mock.calls[0]![1]).toMatchObject({ mcpSecrets: { GITHUB_PAT: "tok" } });
+    // Clearing the last one removes the stored entry entirely.
+    await h.core.storeMcpSecrets("/ws/a", { GITHUB_PAT: null });
+    expect([...store.keys()].filter(key => key.startsWith("crucible.mcpSecrets."))).toEqual([]);
+  });
+
+  it("an unreadable stored MCP secrets entry reads as none", async () => {
+    const h = setup();
+    h.ports.secrets.get.mockImplementation(async () => "not json");
+    expect(await h.core.readMcpSecrets("/ws")).toEqual({});
+  });
+
   it("clears and reports auth status through its own presentation port", () => {
     const h = setup(); h.core.setAuthError("sign in again");
     expect(h.ports.authStatus.tooltip).toBe("sign in again"); expect(h.ports.authStatus.show).toHaveBeenCalledOnce();

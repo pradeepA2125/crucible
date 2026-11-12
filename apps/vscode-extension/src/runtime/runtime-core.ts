@@ -1,6 +1,7 @@
 import { ownerFor,parseProjectSession } from "./project-owner.js";
 // Shared runtime orchestration. State, secrets, configuration and presentation
 // are host ports; installer/process behavior is the same in both applications.
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { extractArchive } from "./archive.js";
@@ -317,6 +318,32 @@ export class RuntimeCore {
     }
   }
 
+  /** Values for this workspace's mcp.json ${VAR} references, saved in Settings. Per project:
+   * the key carries a hash of the workspace path (the desktop store is per project already). */
+  async readMcpSecrets(workspace: string): Promise<Record<string, string>> {
+    const raw = await this.host.secrets.get(mcpSecretsKey(workspace));
+    if (!raw) return {};
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+      return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+    } catch {
+      return {};
+    }
+  }
+
+  /** Merges values into this workspace's saved MCP secrets; null removes one. */
+  async storeMcpSecrets(workspace: string, values: Record<string, string | null>): Promise<void> {
+    const next = await this.readMcpSecrets(workspace);
+    for (const [name, value] of Object.entries(values)) {
+      if (value === null) delete next[name];
+      else next[name] = value;
+    }
+    const key = mcpSecretsKey(workspace);
+    if (Object.keys(next).length) await this.host.secrets.store(key, JSON.stringify(next));
+    else await this.host.secrets.delete(key);
+  }
+
   /** Stored API key for a backend, if the user ever validated one (composer model menu). */
   async getProviderKey(backend: string): Promise<string | undefined> {
     return (await this.host.secrets.get(`crucible.providerKey.${backend}`)) ?? undefined;
@@ -355,6 +382,8 @@ export class RuntimeCore {
     }
     if(this.disposed)throw new Error("Runtime has been disposed.");
     settings.clientName=this.host.clientName ?? "VS Code";
+    const mcpSecrets = await this.readMcpSecrets(workspace);
+    if (Object.keys(mcpSecrets).length) settings.mcpSecrets = mcpSecrets;
     this.statusBar.text = "$(rocket) Crucible: starting…";
     this.statusBar.show();
     const proc = this.processes.get(workspace) ?? (this.host.createProcess ?? (deps => new BackendProcess(deps)))(createNodeProcessDeps(this.runtimeDir, this.output));
@@ -558,4 +587,9 @@ export class RuntimeCore {
     this.ports.clear();
   }
 
+}
+
+/** Secret-store key for one workspace's MCP secrets. */
+function mcpSecretsKey(workspace: string): string {
+  return `crucible.mcpSecrets.${createHash("sha256").update(workspace).digest("hex").slice(0, 16)}`;
 }

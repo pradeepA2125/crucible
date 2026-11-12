@@ -65,6 +65,8 @@ export type SettingsInMsg =
   | { type: "settings/mcpToggle"; name: string; enabled: boolean }
   | { type: "settings/mcpReconnect"; name: string }
   | { type: "settings/mcpTools"; name: string; enabledTools: string[] | null; disabledTools: string[] }
+  // Values for mcp.json ${VAR} references; null clears one. Stored by the host, never in mcp.json.
+  | { type: "settings/mcpSecrets"; values: Record<string, string | null> }
   | { type: "settings/skillToggle"; name: string; enabled: boolean }
   | { type: "settings/setEnvFlag"; key: string; value: string }
   | { type: "settings/loadInstructions" }
@@ -138,6 +140,7 @@ export interface SettingsDeps {
     setMcpServerTools(
       name: string, enabledTools: string[] | null, disabledTools: string[], disabled: string[],
     ): Promise<McpServerList>;
+    setMcpSecrets(values: Record<string, string | null>, disabled: string[]): Promise<McpServerList>;
     testContextWindow(req: {
       backend: string;
       model?: string;
@@ -177,6 +180,8 @@ export interface SettingsDeps {
    */
   deleteSecret(backend: string): Promise<void>;
   storeExtraCredentials(backend: string, extraCredentials: Record<string, string>): Promise<void>;
+  /** This workspace's MCP secrets (VS Code SecretStorage / the desktop keychain); null clears one. */
+  storeMcpSecrets(values: Record<string, string | null>): Promise<void>;
   keyEnvVar(backend: string): string | undefined;
   readEnvFlags(): Record<string, string>;
   updateSetting(key: string, value: string | boolean): Promise<void>;
@@ -432,6 +437,26 @@ export function createSettingsHandler(
           await postState();
           return;
         }
+        case "settings/mcpSecrets": {
+          const problem = mcpSecretsProblem(msg.values);
+          if (problem) {
+            post({ type: "settings/error", message: problem });
+            return;
+          }
+          // Saved first: a value survives a backend that is down and applies at its next start.
+          await deps.storeMcpSecrets(msg.values);
+          try {
+            await deps.client.setMcpSecrets(msg.values, deps.mcpDisabled());
+          } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            post({ type: "settings/error",
+              message: `Saved. The backend could not be updated (${reason}); it applies the next time the backend starts.` });
+            await postState().catch(() => {});
+            return;
+          }
+          await postState();
+          return;
+        }
         case "settings/mcpTools": {
           await deps.client.setMcpServerTools(
             msg.name, msg.enabledTools, msg.disabledTools, deps.mcpDisabled());
@@ -545,4 +570,18 @@ export function createSettingsHandler(
       });
     }
   };
+}
+
+const MCP_SECRET_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Why these MCP secret values cannot be saved, or null. An empty value is refused: Clear sends null. */
+export function mcpSecretsProblem(values: Record<string, string | null>): string | null {
+  const entries = Object.entries(values);
+  if (!entries.length) return "Nothing to save.";
+  for (const [name, value] of entries) {
+    if (!MCP_SECRET_NAME.test(name)) return `"${name}" is not a valid variable name (letters, digits and underscores).`;
+    if (value !== null && !value.trim()) return `Enter a value for ${name}, or use Clear to remove it.`;
+    if (value !== null && value.length > 65536) return `The value for ${name} is too long.`;
+  }
+  return null;
 }

@@ -59,6 +59,7 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
       deleteMcpServer: async () => ({ enabled: true, servers: [] }),
       reconnectMcpServer: vi.fn(async () => ({ enabled: true, servers: [] })),
       setMcpServerTools: vi.fn(async () => ({ enabled: true, servers: [] })),
+      setMcpSecrets: vi.fn(async () => ({ enabled: true, servers: [] })),
       testContextWindow: async () => ({ ok: true, recalled: true }),
       listAgentDefinitions: vi.fn(async () => CATALOG),
       saveAgentDefinition: vi.fn(async () => CATALOG.agents[0]!),
@@ -82,6 +83,7 @@ function deps(overrides: Partial<SettingsDeps> = {}): SettingsDeps & {
     storeSecret: async () => {},
     deleteSecret: async () => {},
     storeExtraCredentials: async () => {},
+    storeMcpSecrets: vi.fn(async () => {}),
     keyEnvVar: () => "X_KEY",
     readEnvFlags: () => ({ "crucible.policy.shell": "ask" }),
     updateSetting: async () => {},
@@ -266,6 +268,45 @@ describe("createSettingsHandler", () => {
     });
     expect(d.client.setMcpServerTools).toHaveBeenCalledWith("web", null, ["b"], []);
     expect(posted.some((m) => m.type === "settings/state")).toBe(true);
+  });
+
+  it("mcpSecrets saves the values first, then sends them to the backend with the disabled servers", async () => {
+    const order: string[] = [];
+    const d = deps({ storeMcpSecrets: vi.fn(async () => { order.push("store"); }) });
+    (d.client.setMcpSecrets as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      order.push("backend"); return { enabled: true, servers: [] };
+    });
+    d.disabled.push("off");
+    const posted: SettingsOutMsg[] = [];
+    await createSettingsHandler(d, (m) => posted.push(m))({
+      type: "settings/mcpSecrets", values: { GITHUB_PAT: "tok", OLD: null },
+    });
+    expect(order).toEqual(["store", "backend"]);
+    expect(d.storeMcpSecrets).toHaveBeenCalledWith({ GITHUB_PAT: "tok", OLD: null });
+    expect(d.client.setMcpSecrets).toHaveBeenCalledWith({ GITHUB_PAT: "tok", OLD: null }, ["off"]);
+    expect(posted.some((m) => m.type === "settings/state")).toBe(true);
+    expect(posted.some((m) => m.type === "settings/error")).toBe(false);
+  });
+
+  it("mcpSecrets refuses an invalid name or an empty value before storing anything", async () => {
+    for (const values of [{ "bad name": "x" }, { GOOD: "" }] as Record<string, string | null>[]) {
+      const d = deps();
+      const posted: SettingsOutMsg[] = [];
+      await createSettingsHandler(d, (m) => posted.push(m))({ type: "settings/mcpSecrets", values });
+      expect(d.storeMcpSecrets).not.toHaveBeenCalled();
+      expect(d.client.setMcpSecrets).not.toHaveBeenCalled();
+      expect(posted.some((m) => m.type === "settings/error")).toBe(true);
+    }
+  });
+
+  it("mcpSecrets keeps the saved value when the backend is unreachable and says when it applies", async () => {
+    const d = deps();
+    (d.client.setMcpSecrets as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("connect ECONNREFUSED"));
+    const posted: SettingsOutMsg[] = [];
+    await createSettingsHandler(d, (m) => posted.push(m))({ type: "settings/mcpSecrets", values: { GITHUB_PAT: "tok" } });
+    expect(d.storeMcpSecrets).toHaveBeenCalled();
+    const error = posted.find((m) => m.type === "settings/error") as { message: string } | undefined;
+    expect(error?.message).toMatch(/saved.*next time the backend starts/i);
   });
 
   it("skillToggle flags restartRequired", async () => {

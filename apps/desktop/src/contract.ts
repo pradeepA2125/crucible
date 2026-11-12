@@ -85,6 +85,8 @@ add(["settings/mcpUpsert"], { name: id, entry: z.record(z.unknown()) });
 add(["settings/mcpDelete", "settings/mcpReconnect", "settings/deleteAgent"], { name: id });
 add(["settings/mcpToggle", "settings/skillToggle"], { name: id, enabled: flag });
 add(["settings/mcpTools"], { name: id, enabledTools: strings.nullable(), disabledTools: strings });
+// mcp.json ${VAR} values; null clears one. Names as the backend accepts them.
+add(["settings/mcpSecrets"], { values: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/), z.string().max(65536).nullable()) });
 add(["settings/setEnvFlag"], { key: z.enum(["crucible.policy.shell", "crucible.policy.scope", "crucible.webSearch.enabled", "crucible.webFetch.enabled", "crucible.memory.enabled", "crucible.localModels"]), value: id });
 add(["settings/saveInstructions"], { content: text });
 add(["settings/saveAgent"], { name: id, input: agent });

@@ -48,6 +48,15 @@ it("admits every chat message the shared router handles", () => {
 
 // The contract matches on runtime strings, so a message added to the shared Settings
 // handler type-checks and passes its own tests while the desktop app refuses it.
+it("admits MCP secret values by variable name and refuses anything else", () => {
+  expect(parsePayload({ type: "settings/mcpSecrets", values: { GITHUB_PAT: "tok", OLD: null } }))
+    .toMatchObject({ values: { GITHUB_PAT: "tok", OLD: null } });
+  expect(() => parsePayload({ type: "settings/mcpSecrets", values: { "bad name": "x" } })).toThrow();
+  expect(() => parsePayload({ type: "settings/mcpSecrets", values: { A: 3 } })).toThrow();
+  expect(() => parsePayload({ type: "settings/mcpSecrets", values: { A: "x".repeat(65537) } })).toThrow();
+  expect(() => parsePayload({ type: "settings/mcpSecrets", values: {}, extra: true })).toThrow();
+});
+
 it("admits every message the shared Settings handler accepts", () => {
   const source = readFileSync(new URL("../../vscode-extension/src/settings-data.ts", import.meta.url), "utf8");
   const inbound = source.slice(source.indexOf("export type SettingsInMsg"), source.indexOf("export type SettingsOutMsg"));

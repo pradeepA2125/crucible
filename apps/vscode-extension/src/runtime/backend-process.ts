@@ -26,6 +26,9 @@ export interface BackendSettings {
   reasoningEffort?: string; // → CRUCIBLE_REASONING_EFFORT
   localModels?: boolean;
   clientName?: string;
+  // Values for mcp.json ${VAR} references, from the host's secret store → CRUCIBLE_MCP_SECRETS
+  // (one JSON map the backend removes from its environment at startup).
+  mcpSecrets?: Record<string, string>;
 }
 export interface ChildHandle {
   pid: number;
@@ -171,6 +174,9 @@ export function buildBackendEnv(
   const modelVar = MODEL_ENV_VAR[settings.backend];
   if (modelVar && settings.model) built[modelVar] = settings.model;
   if (settings.apiKey) built[settings.apiKey.envVar] = settings.apiKey.value;
+  if (settings.mcpSecrets && Object.keys(settings.mcpSecrets).length) {
+    built.CRUCIBLE_MCP_SECRETS = JSON.stringify(settings.mcpSecrets);
+  }
   if (settings.skillsDisabled?.length) {
     built.CRUCIBLE_SKILLS_DISABLED = settings.skillsDisabled.join(",");
   }

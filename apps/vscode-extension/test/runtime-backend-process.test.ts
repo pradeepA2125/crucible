@@ -69,6 +69,15 @@ const SETTINGS = {
 };
 
 describe("buildBackendEnv", () => {
+  it("hands MCP secrets to the backend as one JSON variable, only when there are some", () => {
+    expect(buildBackendEnv("/ws", SETTINGS, "/rt", "darwin-arm64").CRUCIBLE_MCP_SECRETS).toBeUndefined();
+    expect(buildBackendEnv("/ws", { ...SETTINGS, mcpSecrets: {} }, "/rt", "darwin-arm64").CRUCIBLE_MCP_SECRETS).toBeUndefined();
+    const env = buildBackendEnv("/ws", { ...SETTINGS, mcpSecrets: { GITHUB_PAT: "tok" } }, "/rt", "darwin-arm64");
+    expect(JSON.parse(env.CRUCIBLE_MCP_SECRETS!)).toEqual({ GITHUB_PAT: "tok" });
+    // Never as its own variable: the backend reads the map, not its environment.
+    expect(env.GITHUB_PAT).toBeUndefined();
+  });
+
   it("assembles the full spawn env", () => {
     const env = buildBackendEnv("/ws", SETTINGS, "/rt", "darwin-arm64");
     expect(env.CRUCIBLE_REASONING_BACKEND).toBe("gemini");

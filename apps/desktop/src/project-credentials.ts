@@ -5,12 +5,13 @@ import { PROVIDERS } from "../../vscode-extension/src/setup-data.js";
 import { PROVIDER_KEY_ENV } from "../../vscode-extension/src/provider-credentials.js";
 import type { BackendSettings } from "../../vscode-extension/src/runtime/backend-process.js";
 const extra = new Set(PROVIDERS.flatMap(p=>p.extraFields?.map(f=>f.envVar)??[]));
-const credentials = new Set([...Object.values(PROVIDER_KEY_ENV),...extra,"CRUCIBLE_CHATGPT_REGISTRATION","CRUCIBLE_CLAUDE_REGISTRATION"]);
+const credentials = new Set([...Object.values(PROVIDER_KEY_ENV),...extra,"CRUCIBLE_CHATGPT_REGISTRATION","CRUCIBLE_CLAUDE_REGISTRATION","CRUCIBLE_MCP_SECRETS"]);
 export function projectSpawnEnv(env: Record<string,string>, settings?: BackendSettings): Record<string,string> {
   const next={...env}; for(const key of credentials)delete next[key];
   // Watchers receive no project credentials. Backend receives only this project's captured configuration.
   if(settings){if(settings.apiKey)next[settings.apiKey.envVar]=settings.apiKey.value;
-    for(const [key,value] of Object.entries(settings.extraEnv??{}))if(credentials.has(key))next[key]=value;}
+    for(const [key,value] of Object.entries(settings.extraEnv??{}))if(credentials.has(key))next[key]=value;
+    if(settings.mcpSecrets && Object.keys(settings.mcpSecrets).length)next.CRUCIBLE_MCP_SECRETS=JSON.stringify(settings.mcpSecrets);}
   return next;
 }
 /** Explicit candidate-only import copies ciphertext without exposing plaintext or deleting the legacy source. */

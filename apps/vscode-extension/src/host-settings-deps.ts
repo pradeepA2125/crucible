@@ -53,6 +53,7 @@ export function createHostSettingsDeps(opts: HostSettingsOptions): SettingsDeps 
       reconnectMcpServer: (name, disabled) => client().reconnectMcpServer(name, disabled),
       setMcpServerTools: (name, enabledTools, disabledTools, disabled) =>
         client().setMcpServerTools(name, enabledTools, disabledTools, disabled),
+      setMcpSecrets: (values, disabled) => client().setMcpSecrets(values, disabled),
       testContextWindow: (req) => client().testContextWindow(req),
       listAgentDefinitions: () => client().listAgentDefinitions(),
       saveAgentDefinition: (name, input) => client().saveAgentDefinition(name, input),
@@ -73,6 +74,7 @@ export function createHostSettingsDeps(opts: HostSettingsOptions): SettingsDeps 
     deleteSecret: (backend) => runtimeManager.deleteProviderKey(backend),
     storeExtraCredentials: (backend, extraCredentials) =>
       runtimeManager.storeProviderExtraCredentials(backend, extraCredentials),
+    storeMcpSecrets: (values) => runtimeManager.storeMcpSecrets(workspacePath, values),
     keyEnvVar: (backend) => PROVIDER_KEY_ENV[backend],
     ...opts.native,
     restartBackend: () => runtimeManager.restart(workspacePath),

@@ -7,3 +7,10 @@ it("desktop backend sees only selected project credentials; watchers inherit non
 it("explicit import preserves old ciphertext and refuses overwriting any project's existing keys",()=>{
  const dir=mkdtempSync(join(tmpdir(),"cp9-credentials-"));dirs.push(dir);const source=join(dir,"old.json"),target=join(dir,"project","secrets.json");writeFileSync(source,JSON.stringify({"crucible.providerKey.openai":"YWJj","unrecognized":"omit"}));const original=readFileSync(source);expect(importLegacyCredentials(source,target)).toMatch(/^[a-f0-9]{64}$/);expect(JSON.parse(readFileSync(target,"utf8"))).toEqual({"crucible.providerKey.openai":"YWJj"});expect(readFileSync(source)).toEqual(original);expect(()=>importLegacyCredentials(source,target)).toThrow("already");
 });
+it("MCP secrets reach only the backend, never a watcher or the ambient environment's copy",()=>{
+ const ambient={PATH:"/bin",CRUCIBLE_MCP_SECRETS:JSON.stringify({FOREIGN:"x"})};
+ expect(projectSpawnEnv(ambient)).toEqual({PATH:"/bin"});
+ expect(projectSpawnEnv(ambient,{backend:"openai",model:"m"})).toEqual({PATH:"/bin"});
+ const backend=projectSpawnEnv(ambient,{backend:"openai",model:"m",mcpSecrets:{GITHUB_PAT:"tok"}});
+ expect(JSON.parse(backend.CRUCIBLE_MCP_SECRETS!)).toEqual({GITHUB_PAT:"tok"});
+});
