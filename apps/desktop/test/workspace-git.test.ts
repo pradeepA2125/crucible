@@ -178,6 +178,25 @@ describe("Uncommitted vs HEAD without Git worktree commands", { timeout: 30000 }
     expect(packs(present)).toBe(presentPacks);
   });
 
+  it("Git 2.44+ lists a missing blob's size as BAD instead of failing: still unavailable, nothing fetched", async () => {
+    const origin = temp("origin"), h = home(), parent = temp("clones");
+    git(origin, h, "init", "-q"); writeFileSync(join(origin, "a.txt"), "remote only\n"); commitAll(origin, h);
+    git(origin, h, "config", "uploadpack.allowfilter", "true");
+    git(parent, h, "clone", "-q", "--filter=blob:none", "--no-checkout", `file://${origin}`, "missing");
+    const missing = join(parent, "missing"), id = git(missing, h, "rev-parse", "HEAD:a.txt").toString().trim();
+    const { files, run } = await runner(missing, h);
+    // Git 2.54 (measured) prints the size of a blob it does not have as BAD and exits 0.
+    const newerGit: typeof run = (args, ...rest) => args[0] === "ls-tree"
+      ? Promise.resolve(Buffer.from(`100644 blob ${id}     BAD\ta.txt\0`)) : run(args, ...rest);
+    expect(await createWorkspaceGit(files, newerGit).scope()).toEqual({ state: "unavailable", reason: "This partial clone is missing objects; comparing would need a download, which Crucible never starts." });
+    // The same answer from a repository that is not a partial clone means damaged objects.
+    const plain = temp("plain"); git(plain, h, "init", "-q"); writeFileSync(join(plain, "a.txt"), "x\n"); commitAll(plain, h);
+    const local = await runner(plain, h);
+    const damaged: typeof run = (args, ...rest) => args[0] === "ls-tree"
+      ? Promise.resolve(Buffer.from(`100644 blob ${id}     BAD\ta.txt\0`)) : local.run(args, ...rest);
+    expect(await createWorkspaceGit(local.files, damaged).scope()).toEqual({ state: "unavailable", reason: "Git could not read some objects in this repository." });
+  });
+
   it("keeps fetching closed when the repository allows a protocol itself", async () => {
     const origin = temp("origin"), h = home(), parent = temp("clones"), sentinels = temp("sentinels"), helpers = temp("helpers");
     git(origin, h, "init", "-q"); writeFileSync(join(origin, "a.txt"), "remote only\n"); commitAll(origin, h);

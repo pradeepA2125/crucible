@@ -116,14 +116,17 @@ export function createWorkspaceGit(sourceFiles: Files, rawRun: Runner = gitRunne
       let head: string | undefined;
       try { head = (await run(["rev-parse", "--verify", "--quiet", "HEAD"], 65536)).toString("utf8").trim(); } catch { head = undefined; }
       const tracked = new Map<string, Tracked>(), attributeFiles = new Set<string>();
+      const partialClone = () => run(["config", "--get-regexp", "^(remote\\..*\\.promisor|extensions\\.partialclone)$"], 65536)
+        .then(value => value.toString("utf8").split("\n").some(line => /\s(?!false\b)\S/.test(line)), () => false);
+      const missingObjects = "This partial clone is missing objects; comparing would need a download, which Crucible never starts.";
       // -l needs every blob's size; in a partial clone missing blobs fail closed (no fetch) and are reported, not downloaded.
       const listing = head ? await run(["ls-tree", "-r", "-z", "-l", "--full-tree", head], 64 * 1024 * 1024).catch(async (error: unknown) => {
         const refused = /promisor/i.test(String((error as { stderr?: string })?.stderr ?? ""));
-        const promisor = refused || await run(["config", "--get-regexp", "^(remote\\..*\\.promisor|extensions\\.partialclone)$"], 65536)
-          .then(value => value.toString("utf8").split("\n").some(line => /\s(?!false\b)\S/.test(line)), () => false);
-        if (promisor) throw new GitUnavailable("This partial clone is missing objects; comparing would need a download, which Crucible never starts.");
+        if (refused || await partialClone()) throw new GitUnavailable(missingObjects);
         throw error;
       }) : undefined;
+      // Git 2.44+ does not fail on a blob it does not have: it lists the size as BAD and exits 0.
+      let unreadable = false;
       if (listing) for (const record of nulSplit(listing)) {
         const tab = record.indexOf("\t"), [mode, type, id, size] = record.slice(0, tab).split(/\s+/), full = record.slice(tab + 1);
         if (!full.startsWith(prefix) || type !== "blob") { if (type === "commit") warnings.add("Submodules are listed by Git but not compared."); continue; }
@@ -132,10 +135,12 @@ export function createWorkspaceGit(sourceFiles: Files, rawRun: Runner = gitRunne
           if (uncompared.length >= GIT_LIMITS.tracked) return { state: "unavailable", reason: "Too many unsupported Git paths to compare." };
           uncompared.push({ path, reason: "unsupported" }); continue;
         }
+        if (!/^\d+$/.test(size ?? "")) { unreadable = true; continue; }
         tracked.set(path, { mode: mode!, id: id!, size: Number(size) });
         if (posix.basename(path) === ".gitattributes") attributeFiles.add(path);
         if (tracked.size > GIT_LIMITS.tracked) return { state: "unavailable", reason: `More than ${GIT_LIMITS.tracked.toLocaleString()} tracked files; Uncommitted vs HEAD is unavailable for this project.` };
       }
+      if (unreadable) throw new GitUnavailable(await partialClone() ? missingObjects : "Git could not read some objects in this repository.");
       for (const path of cache.keys()) if (!tracked.has(path)) cache.delete(path);
       const indexed = new Set(nulSplit(await run(["ls-files", "-z", "--cached", "--full-name"], 64 * 1024 * 1024)).filter(path => path.startsWith(prefix)).map(path => path.slice(prefix.length)));
       const changes: GitChange[] = [], deleted = new Map<string, string>();
