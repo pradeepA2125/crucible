@@ -22,8 +22,9 @@ export function VoiceControl({ voice }: { voice: VoiceComposerModel }) {
     <button type="button" onClick={voice.cancelDownload} className={`${CHIP} text-text-2`}>Cancel</button>
   </div>;
 
-  // A download started by the first Voice press takes the control's place until the session starts.
-  if (!active && downloading) return downloading;
+  // A speech-recognition download started by the first Voice press takes the control's place
+  // until the session can start; a Pocket download only sits beside it.
+  if (!active && downloading && download.model !== "pocket") return downloading;
 
   if (!active) {
     const reason = status && !status.available ? status.reason ?? "Local voice is unavailable on this desktop." : undefined;
@@ -35,6 +36,7 @@ export function VoiceControl({ voice }: { voice: VoiceComposerModel }) {
         <Icon name="waveform" size={13} />{starting ? "Starting voice…" : "Voice"}
       </button>
       {reason && <span id={reasonId} className="sr-only">{reason}</span>}
+      {downloading}
     </>;
   }
 

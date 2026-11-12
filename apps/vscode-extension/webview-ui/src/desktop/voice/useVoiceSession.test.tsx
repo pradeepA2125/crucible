@@ -105,6 +105,42 @@ describe("useVoiceSession", () => {
     expect(screen.getByRole("button", { name: "End voice session" })).toBeInTheDocument();
   });
 
+  it("a Pocket download running behind an ended session never stops Voice from starting again", async () => {
+    const installs: string[] = [];
+    const bridge = bridgeOf(command => {
+      if (command.type === "install") { installs.push(command.model); return new Promise(() => {}); }
+      return command.type === "start" ? { sessionId: "session" } : READY;
+    });
+    render(<Host bridge={bridge} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Voice" }));
+    expect(await screen.findByText("Downloading Pocket TTS…")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "End voice session" }));
+    expect(screen.getByText("Downloading Pocket TTS…")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Voice" }));
+    await waitFor(() => expect(sent(bridge, "start")).toHaveLength(2));
+    expect(installs).toEqual(["pocket"]);
+  });
+
+  it("a typed message with the same words never hides a spoken turn still in flight", async () => {
+    const bridge = bridgeOf(command => {
+      switch (command.type) {
+        case "status": return READY;
+        case "start": return { sessionId: "session" };
+        case "decode": return { text: "Use SQLite for the tests" };
+        case "decide": return { decisionId: "d9", turn: "complete", action: "reply", say: "Sure.", request: "" };
+        case "commit": return { action: "reply" };
+        default: return {};
+      }
+    });
+    render(<Host bridge={bridge} messages={[msg("t1", "user", "Use SQLite for the tests", {})]} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Voice" }));
+    await waitFor(() => expect(microphone.onFrame).toBeDefined());
+    speak(12, 0.03); speak(40, 0);
+    await waitFor(() => expect(sent(bridge, "commit")).toHaveLength(1));
+    await waitFor(() => expect(screen.getByTestId("voice-session")).toHaveTextContent(/Listening|Speaking/));
+    expect(screen.getByTestId("lines")).toHaveTextContent("Use SQLite for the tests");
+  });
+
   it("an explicit Text only choice starts text-only and downloads nothing", async () => {
     writeSynthesizer("none");
     const bridge = bridgeOf(command => command.type === "start" ? { sessionId: "session" } : READY);

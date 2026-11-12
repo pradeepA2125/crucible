@@ -19,12 +19,12 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : "The voice request failed. Try again.";
 }
 
-/** Everything the chat already shows: voice turns, plus typed messages (a typed message sent
- *  during a session is saved as an ordinary message, so it settles by its words). */
-function settledTurns(messages: ChatMsg[]): VoiceTurn[] {
-  const typed = messages.filter(message => message.role === "user" && message.metadata?.voice !== "exchange" && message.metadata?.voice !== true)
+/** Typed messages the chat already shows: a message typed during a session is saved as an
+ *  ordinary message, so it settles by its words. Only typed turns are settled by these: the
+ *  same words said aloud stay on screen until their own spoken exchange is saved. */
+function typedTurns(messages: ChatMsg[]): VoiceTurn[] {
+  return messages.filter(message => message.role === "user" && message.metadata?.voice !== "exchange" && message.metadata?.voice !== true)
     .map((message, index): VoiceTurn => ({ id: message.id ?? `typed-${index}`, text: message.content, final: true }));
-  return [...voiceTurns(messages), ...typed];
 }
 
 interface Options {
@@ -46,7 +46,8 @@ interface Options {
 export function useVoiceSession({ bridge, threadId, identity, ready, messages }: Options): VoiceComposerModel | undefined {
   const alive = useRef(false);
   const session = useRef<VoiceSession>();
-  const installing = useRef(false);
+  // The model being downloaded. A Pocket download runs behind sessions and never blocks one.
+  const installing = useRef<VoiceModelAsset>();
   const latest = useRef({ threadId, ready });
   latest.current = { threadId, ready };
   const [status, setStatus] = useState<VoiceStatus>();
@@ -124,12 +125,12 @@ export function useVoiceSession({ bridge, threadId, identity, ready, messages }:
 
   const install = useCallback(async (model: VoiceModelAsset) => {
     if (!bridge) return;
-    installing.current = true;
+    installing.current = model;
     setDownload({ model, label: DOWNLOAD_LABELS[model] });
     try {
       await voiceRequest(bridge, { type: "install", model });
     } finally {
-      installing.current = false;
+      installing.current = undefined;
       await refreshStatus();
       if (alive.current) setDownload(undefined);
     }
@@ -137,7 +138,7 @@ export function useVoiceSession({ bridge, threadId, identity, ready, messages }:
 
   const start = useCallback(async () => {
     const { threadId: thread, ready: live } = latest.current;
-    if (!bridge || !thread || !live || session.current || starting || installing.current || !status?.available) return;
+    if (!bridge || !thread || !live || session.current || starting || (installing.current && installing.current !== "pocket") || !status?.available) return;
     setStarting(true);
     setError("");
     setLiveTurns([]);
@@ -176,7 +177,7 @@ export function useVoiceSession({ bridge, threadId, identity, ready, messages }:
       next.setPushToTalk(readMicrophoneMode() === "push-to-talk");
       await next.start(thread, stt, resolveSynthesizer(synthesizer, current), backend ? readVoiceModel(backend) : null);
       // Spoken replies download behind the session; the next session speaks with Pocket.
-      if (wantsPocket(synthesizer, current)) {
+      if (wantsPocket(synthesizer, current) && !installing.current) {
         void install("pocket").catch(failure => { if (alive.current) setError(errorText(failure)); });
       }
     } catch (failure) {
@@ -191,8 +192,10 @@ export function useVoiceSession({ bridge, threadId, identity, ready, messages }:
     }
   }, [bridge, status, starting, install, refreshStatus, backend]);
 
-  const settled = useMemo(() => settledTurns(messages), [messages]);
-  const turns = useMemo(() => unsettledVoiceTurns(settled, liveTurns), [settled, liveTurns]);
+  const spoken = useMemo(() => voiceTurns(messages), [messages]);
+  const typed = useMemo(() => typedTurns(messages), [messages]);
+  const turns = useMemo(() => liveTurns.filter(turn => unsettledVoiceTurns(turn.typed ? typed : spoken, [turn]).length > 0),
+    [spoken, typed, liveTurns]);
   const reviews = useMemo(() => state.reviews.map(review => ({ id: review.id, transcript: review.transcript })), [state.reviews]);
 
   return useMemo<VoiceComposerModel | undefined>(() => {
