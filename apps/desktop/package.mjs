@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { createHash, createPublicKey } from "node:crypto";
 import { sealCommunityApp } from "./adhoc-sign.mjs";
 import { bundleLinks, fileManifest, packageArguments, validateReleaseManifest } from "./package-utils.mjs";
-import { thirdPartyNotices, voiceLicenses, voicePayload } from "./voice-payload.mjs";
+import { missingReleaseVoice, thirdPartyNotices, voiceLicenses, voicePayload } from "./voice-payload.mjs";
 import { nodePtyPayload } from "./node-pty-payload.mjs";
 import { existsSync } from "node:fs";
 const exec=promisify(execFile),root=import.meta.dirname,opts=packageArguments(process.argv.slice(2));
@@ -27,6 +27,10 @@ if(!manifest&&!opts.preview)throw new Error("Candidate packaging requires --mani
 await fileManifest(dist); // source symlinks or unexpected specials cannot leak into a package
 const voiceRoot=join(dist,"voice-native");
 const voiceHelper=async name=>lstat(join(voiceRoot,name)).then(stat=>stat.isFile(),error=>{if(error.code==="ENOENT")return false;throw error;});
+// A release candidate must carry voice; a local preview may leave it out.
+const presentVoice=new Set();for(const name of missingReleaseVoice(platform,()=>false))if(await voiceHelper(name))presentVoice.add(name);
+const missingVoice=missingReleaseVoice(platform,name=>presentVoice.has(name));
+if(!opts.preview&&missingVoice.length)throw new Error(`An Apple Silicon release must include local voice; missing ${missingVoice.join(", ")}. Run npm run -w @crucible/desktop build:voice and bash apps/desktop/voice-native/build-pocket.sh apps/desktop/dist/voice-native first.`);
 const voiceBundled=platform==="darwin-arm64" && await voiceHelper("crucible-whisper") &&
  (await voiceHelper("crucible-tts") || await voiceHelper("crucible-pocket-tts"));
 // Windows and Linux: voice ships when build-portable.mjs produced the whisper helper.

@@ -43,3 +43,11 @@ export function thirdPartyNotices(pocketAttribution) {
     "",
   ].join("\n");
 }
+
+/** The Apple Silicon voice helpers a release candidate must carry (voice-native/build.sh builds
+ *  whisper and the system voice, build-pocket.sh builds Pocket TTS). `has` answers whether a
+ *  helper file exists. Without them packaging used to leave voice out silently. */
+export function missingReleaseVoice(platform, has) {
+  if (platform !== "darwin-arm64") return [];
+  return ["crucible-whisper", "crucible-tts", "crucible-pocket-tts"].filter(name => !has(name));
+}

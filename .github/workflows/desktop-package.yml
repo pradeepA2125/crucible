@@ -33,6 +33,10 @@ jobs:
       - run: npm --prefix apps/vscode-extension/webview-ui ci
       # Build first: the extension's typecheck reads editor-client's built types (dist/index.d.ts).
       - run: npm run build
+      # Local voice: whisper + the macOS system voice, then Pocket TTS. Release packaging refuses
+      # an Apple Silicon candidate without all three helpers.
+      - run: npm run -w @crucible/desktop build:voice
+      - run: bash apps/desktop/voice-native/build-pocket.sh apps/desktop/dist/voice-native
       - run: npm run typecheck
       - run: npm run -w @crucible/desktop test
       - run: node --test scripts/release/desktop-release.test.mjs scripts/release/desktop-gates.test.mjs
