@@ -62,6 +62,10 @@ export function createHostSettingsDeps(opts: HostSettingsOptions): SettingsDeps 
       getSandbox: () => client().getSandbox(),
       setSandboxHosts: (hosts) => client().setSandboxHosts(hosts),
       setSandboxFolders: (folders) => client().setSandboxFolders(folders),
+      // Settings › MCP Servers' Review dialog: without these it showed nothing to trust and
+      // could never trust mcp.json (only the chat view's dialog could).
+      getProjectTrust: () => client().getProjectTrust(),
+      trustProjectFile: (kind, sha256) => client().trustProjectFile(kind, sha256),
     },
     setSandboxEnabled: opts.setSandboxEnabled,
     workspace: workspacePath,
