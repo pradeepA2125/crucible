@@ -1,4 +1,4 @@
-import { readdir, lstat, readFile, readlink, realpath } from "node:fs/promises";
+import { chmod, readdir, lstat, readFile, readlink, realpath } from "node:fs/promises";
 import { join, relative, isAbsolute } from "node:path";
 import { createHash } from "node:crypto";
 export function validateReleaseManifest(m,platform,{candidate=false}={}){
@@ -15,3 +15,9 @@ export function packageArguments(args){const options={preview:false};for(let i=0
 
 /** Electron's trusted framework links must remain portable and inside this bundle. */
 export async function bundleLinks(root){const canonical=await realpath(root),links={};async function walk(dir){for(const name of await readdir(dir)){const file=join(dir,name),info=await lstat(file);if(info.isSymbolicLink()){const target=await readlink(file),actual=await realpath(file),rel=relative(canonical,actual);if(isAbsolute(target)||isAbsolute(rel)||rel===".."||rel.startsWith("../")||rel.startsWith("..\\"))throw new Error("Electron bundle link escapes the packaged app: "+relative(root,file));links[relative(root,file).split("\\").join("/")]=target;}else if(info.isDirectory())await walk(file);}}await walk(root);return links;}
+
+/** Adds owner write (and, for directories, owner search) to every file and directory under root,
+ *  keeping all other permission bits. Build tools such as SwiftPM hand resource bundles over
+ *  read-only, and codesign stores a non-binary file's seal in its extended attributes, which
+ *  needs write access. Symlinks are left alone. */
+export async function makeOwnerWritable(root){async function walk(path){const s=await lstat(path);if(s.isSymbolicLink())return;if(s.isDirectory()){await chmod(path,(s.mode&0o7777)|0o700);for(const name of await readdir(path))await walk(join(path,name));}else if(s.isFile())await chmod(path,(s.mode&0o7777)|0o200);}await walk(root);}

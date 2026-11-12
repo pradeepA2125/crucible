@@ -5,7 +5,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createHash, createPublicKey } from "node:crypto";
 import { sealCommunityApp } from "./adhoc-sign.mjs";
-import { bundleLinks, fileManifest, packageArguments, validateReleaseManifest } from "./package-utils.mjs";
+import { bundleLinks, fileManifest, makeOwnerWritable, packageArguments, validateReleaseManifest } from "./package-utils.mjs";
 import { missingReleaseVoice, thirdPartyNotices, voiceLicenses, voicePayload } from "./voice-payload.mjs";
 import { nodePtyPayload } from "./node-pty-payload.mjs";
 import { existsSync } from "node:fs";
@@ -52,6 +52,7 @@ try{
  const target=join(payload,"dist");await mkdir(target);for(const f of ["main.cjs","preload.cjs","terminal-worker.cjs","update-worker.cjs","renderer","resources"])await cp(join(dist,f),join(target,f),{recursive:true});
  if(voiceBundled)await cp(voiceRoot,join(target,"voice-native"),{recursive:true,
   filter:file=>!(/^(?:crucible-turn-detector|smart-turn-.*\.onnx|libonnxruntime\..*\.dylib|LICENSE\.(?:SmartTurn|ONNXRuntime)|ThirdPartyNotices\.ONNXRuntime\.txt)$/.test(basename(file)))});
+ if(voiceBundled)await makeOwnerWritable(join(target,"voice-native")); // codesign needs to write each file's seal
  if(portableVoice){
   for(const path of voicePayload(platform))await cp(join(dist,path),join(target,path),{recursive:true,dereference:true});
   const pocketPack=JSON.parse(await readFile(join(root,"voice-native/pocket-onnx-assets.json"),"utf8"));

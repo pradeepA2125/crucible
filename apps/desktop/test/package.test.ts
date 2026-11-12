@@ -1,6 +1,6 @@
 import{it,expect}from"vitest";import{mkdtempSync,writeFileSync,mkdirSync,symlinkSync,rmSync,cpSync,readFileSync}from"node:fs";import{join}from"node:path";import{tmpdir}from"node:os";
 // @ts-expect-error Node packaging module intentionally has no renderer dependency.
-import{bundleLinks,fileManifest,packageArguments,validateReleaseManifest}from"../package-utils.mjs";
+import{bundleLinks,fileManifest,makeOwnerWritable,packageArguments,validateReleaseManifest}from"../package-utils.mjs";
 it("refuses incomplete options and unpinned candidate manifests",()=>{expect(()=>packageArguments(["--out"])).toThrow();expect(()=>packageArguments(["--out","/tmp/a","--sign"])).toThrow();expect(packageArguments(["--preview","--out","/tmp/a"])).toEqual({out:"/tmp/a",preview:true});expect(packageArguments(["--preview","--out","/tmp/a","--update-key","/tmp/public.pem"])["update-key"]).toBe("/tmp/public.pem");expect(()=>validateReleaseManifest({manifestVersion:1,releaseTag:"dev-unpinned"},"darwin-arm64")).toThrow();});
 it("records exact package bytes and refuses source symlinks",async()=>{const p=mkdtempSync(join(tmpdir(),"pkg-"));try{mkdirSync(join(p,"assets"));writeFileSync(join(p,"assets/a"),"abc");const m=await fileManifest(p);expect(m["assets/a"]).toEqual({bytes:3,sha256:"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"});if(process.platform!=="win32"){symlinkSync("a",join(p,"assets/link"));await expect(fileManifest(p)).rejects.toThrow("link");}}finally{rmSync(p,{recursive:true,force:true});}});
 
@@ -13,3 +13,21 @@ it("community sealing never acquires an Apple identity or signs opaque checksum-
 it("release candidates accept an exact app version override and refuse prerelease/ambiguous versions",()=>{expect(packageArguments(["--out","/tmp/new","--version","0.9.0"]).version).toBe("0.9.0");for(const version of ["0.9.0-beta","01.9.0","../0.9.0","v0.9.0"])expect(()=>packageArguments(["--out","/tmp/new","--version",version])).toThrow();});
 
 it("candidate manifests reject uppercase placeholder hosts while previews keep isolated fixtures",()=>{const components=Object.fromEntries(["uv","agentd","indexer","ripgrep","rust-analyzer","gopls","jre","jdtls"].map(id=>[id,{version:"1.0.0",urls:{[id==="agentd"||id==="jdtls"?"any":"darwin-arm64"]:`https://github.com/pradeepA2125/crucible/releases/download/v0.9.0/${id==="agentd"?"backend.whl":id}`,},sha256:{[id==="agentd"||id==="jdtls"?"any":"darwin-arm64"]:"a".repeat(64)}}]));const m={manifestVersion:1,releaseTag:"v0.9.0",components:{...components,lsps:{version:"1",npmPackages:["pyright@1.1.400"]}}};expect(validateReleaseManifest(m,"darwin-arm64",{candidate:true})).toBe(m);const invalid=structuredClone(m) as typeof m & {components:Record<string,{urls:Record<string,string>}>};invalid.components.agentd!.urls.any="https://ARTIFACTS.INVALID/backend.whl";expect(()=>validateReleaseManifest(invalid,"darwin-arm64",{candidate:true})).toThrow("local test");expect(validateReleaseManifest(invalid,"darwin-arm64")).toBe(invalid);invalid.components.agentd!.urls.any="https://LOCAL-TEST.example/backend.whl";expect(()=>validateReleaseManifest(invalid,"darwin-arm64",{candidate:true})).toThrow("local test");});
+
+it("copied voice files are made owner-writable for codesign, keeping their other permission bits", async () => {
+  if (process.platform === "win32") return;
+  const { chmodSync, statSync } = await import("node:fs");
+  const p = mkdtempSync(join(tmpdir(), "writable-"));
+  try {
+    // SwiftPM hands Pocket's resource bundle over read-only; codesign stores a non-binary file's
+    // seal in its extended attributes, which needs write access ("Permission denied" on CI).
+    mkdirSync(join(p, "Resources.bundle"));
+    writeFileSync(join(p, "Resources.bundle/lexicon.tsv.zz"), "data"); chmodSync(join(p, "Resources.bundle/lexicon.tsv.zz"), 0o444);
+    writeFileSync(join(p, "crucible-pocket-tts"), "bin"); chmodSync(join(p, "crucible-pocket-tts"), 0o555);
+    chmodSync(join(p, "Resources.bundle"), 0o555);
+    await makeOwnerWritable(p);
+    expect(statSync(join(p, "Resources.bundle/lexicon.tsv.zz")).mode & 0o777).toBe(0o644);
+    expect(statSync(join(p, "crucible-pocket-tts")).mode & 0o777).toBe(0o755);
+    expect(statSync(join(p, "Resources.bundle")).mode & 0o777).toBe(0o755);
+  } finally { rmSync(p, { recursive: true, force: true }); }
+});
