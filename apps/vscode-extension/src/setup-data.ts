@@ -12,6 +12,8 @@ import {
 
 export interface SetupDeps {
   localModels?(): boolean;
+  /** Start the backend with the saved provider (after an app update reinstalled the runtime). */
+  resume?(): Promise<{ port: number; backend: string; model: string }>;
   install(
     onProgress: (p: { id: string; status: string; detail?: string }) => void,
     localModels?: boolean,
@@ -53,6 +55,8 @@ export type SetupInMsg =
   | { type: "setup/save"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "setup/openChat" }
   | { type: "setup/startForChatGPT" }
+  // After an update install: start the backend with the provider already saved.
+  | { type: "setup/resume" }
   | ClaudeInMsg
   | { type: "setup/startForClaude" }
   | ChatGPTInMsg;
@@ -63,7 +67,9 @@ export type SetupOutMsg =
   | { type: "setup/progress"; component: string; status: string; detail?: string | undefined }
   | { type: "setup/installDone"; ok: boolean }
   | { type: "setup/validateResult"; ok: boolean; model?: string; error?: string; jsonMode?: string; warning?: string }
-  | { type: "setup/ready"; port: number; jsonMode?: string; warning?: string }
+  | { type: "setup/ready"; port: number; jsonMode?: string; warning?: string;
+      // The provider a resume started (the form was never filled in).
+      provider?: { backend: string; model: string } }
   | { type: "setup/error"; message: string }
   // The backend is up for ChatGPT sign-in; with no saved account the wizard signs in
   // straight away, otherwise it lists them (reusing a registration, not making a new one).
@@ -208,6 +214,12 @@ export function createSetupHandler(
           chatgptPort = port;
           const accounts = await deps.chatgpt.client.listChatGPTAccounts();
           post({ type: "setup/chatgptReady", hasAccounts: accounts.length > 0 });
+          return;
+        }
+        case "setup/resume": {
+          if (!deps.resume) throw new Error("This host cannot resume Setup. Choose a provider to continue.");
+          const { port, backend, model } = await deps.resume();
+          post({ type: "setup/ready", port, provider: { backend, model } });
           return;
         }
         case "setup/install": {

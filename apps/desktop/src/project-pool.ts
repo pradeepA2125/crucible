@@ -1,6 +1,8 @@
 import type { LifecycleEvidence } from "./lifecycle-protocol.js";
 export interface ProjectActivity { state: "idle" | "busy" | "unknown"; attention: Array<{ threadId: string; title: string; gates: number }>; evidence?: LifecycleEvidence; }
 export interface RetainedProject {
+  /** This project's backend is running (a project waiting on Setup has none). */
+  backendRunning(): boolean;
   canDetach(): boolean; detach(): void; flush(): void; activity(): Promise<ProjectActivity>;
   pause(): Promise<boolean>; dispose(discardDrafts?:boolean): Promise<void>;
 }
@@ -62,7 +64,8 @@ export class ProjectPool<T extends RetainedProject> {
     if (this.changing) throw new Error("Project navigation is in progress. Retry the install in a moment.");
     this.changing = true;
     try {
-      const live = [...this.slots].filter(([, s]) => !s.paused);
+      // A project without a running backend (first Setup, already paused) has nothing to stop.
+      const live = [...this.slots].filter(([, s]) => !s.paused && s.host.backendRunning());
       for (const [id, s] of live) {
         const status = await s.host.activity().catch((): ProjectActivity => ({ state: "unknown", attention: [] }));
         if (status.state !== "idle" || !s.host.canDetach()) {

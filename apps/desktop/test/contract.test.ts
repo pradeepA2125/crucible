@@ -84,3 +84,9 @@ it("allows only bounded local thread preferences through the desktop envelope", 
 it("validates exact background-attention destinations and explicit confirmation boundaries",()=>{
  const projectId="a".repeat(64);expect(parsePayload({type:"desktop/selectProject",projectId,threadId:"B2"})).toMatchObject({threadId:"B2"});expect(()=>parsePayload({type:"desktop/selectProject",projectId,threadId:""})).toThrow();expect(()=>parsePayload({type:"desktop/removeProject",projectId})).toThrow();expect(()=>parsePayload({type:"desktop/recoverDraft",confirmed:false})).toThrow();
 });
+
+it("admits Setup's resume after an update install", () => {
+  expect(parsePayload({ type: "setup/resume" })).toEqual({ type: "setup/resume" });
+  expect(() => parsePayload({ type: "setup/resume", extra: 1 })).toThrow();
+});
+

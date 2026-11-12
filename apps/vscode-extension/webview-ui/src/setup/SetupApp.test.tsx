@@ -207,3 +207,19 @@ it("after an app update Setup says the runtime must be updated, and keeps projec
   expect(notice.textContent).toMatch(/v0\.9\.4/);
   expect(notice.textContent).toMatch(/projects.*settings.*kept/i);
 });
+
+it("after an update install it resumes with the saved provider instead of asking for one again", () => {
+  render(<SetupApp />);
+  deliver({ type: "setup/preferences", localModels: true, runtimeUpdate: { installed: "v0.9.1", bundled: "v0.9.4" } });
+  fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+  fireEvent.click(screen.getByRole("button", { name: /Install runtime/ }));
+  vi.mocked(vscode.postMessage).mockClear();
+  deliver({ type: "setup/installDone", ok: true });
+  expect(vscode.postMessage).toHaveBeenCalledWith({ type: "setup/resume" });
+  deliver({ type: "setup/ready", port: 8123, provider: { backend: "ollama", model: "glm-4.7-flash:latest" } });
+  expect(screen.getByRole("button", { name: "Open chat" })).toBeTruthy();
+  // The provider that actually started, not the form's untouched default.
+  expect(screen.getByText("ollama")).toBeTruthy();
+  expect(screen.getByText("glm-4.7-flash:latest")).toBeTruthy();
+});
+

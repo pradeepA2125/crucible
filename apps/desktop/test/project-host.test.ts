@@ -68,3 +68,16 @@ it("a packaged app whose installed runtime is older opens Setup instead of start
  expect(post).toHaveBeenCalledWith(expect.objectContaining({type:"setup/preferences",runtimeUpdate:{installed:"v0.9.1",bundled:"v0.9.4"}}));
  await host.dispose();
 });
+
+it("Setup's own install request does not make its project look busy, so the install can pause it",async()=>{
+ const dir=mkdtempSync(join(tmpdir(),"cp-install-self-"));dirs.push(dir);const runtimeDir=join(dir,"runtime"),resources=join(dir,"app");
+ mkdirSync(join(resources,"resources"),{recursive:true});
+ writeFileSync(join(resources,"resources","runtime-manifest.json"),JSON.stringify({manifestVersion:1,releaseTag:"v0.9.4",components:{}}));
+ let seen:{detachable:boolean;state:string}|undefined;let host!:ReturnType<typeof fixture>;
+ const provisionRuntime=vi.fn(async()=>{seen={detachable:host.canDetach(),state:(await host.activity()).state};return{ok:true,results:[]};});
+ host=fixture({runtimeDir,resources,provisionRuntime,post:vi.fn()});
+ await host.handle({type:"setup/install",localModels:false} as never,true);
+ expect(provisionRuntime).toHaveBeenCalledOnce();
+ expect(seen).toEqual({detachable:true,state:"idle"});
+ await host.dispose();
+});

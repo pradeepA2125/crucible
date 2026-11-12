@@ -98,7 +98,7 @@ add(["settings/claudeModels"], { registrationId: id, refresh: optionalFlag });
 add(["settings/useChatGPT"], { registrationId: id, model: id, contextWindow: z.number().int().positive().optional() });
 add(["settings/useClaude"], { registrationId: id, model: id });
 add(["settings/openExternal"], { url: z.string().url().max(16384) });
-add(["setup/preferences", "setup/openChat", "setup/startForChatGPT", "setup/startForClaude"]);
+add(["setup/preferences", "setup/openChat", "setup/startForChatGPT", "setup/startForClaude", "setup/resume"]);
 add(["setup/install"], { localModels: optionalFlag });
 add(["setup/validate", "setup/save"], providerFields);
 add(["desktop/openProject", "desktop/openSetup", "desktop/projectsRead", "desktop/persistenceRead"]);

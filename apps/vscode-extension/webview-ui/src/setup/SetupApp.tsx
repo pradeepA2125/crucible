@@ -100,6 +100,9 @@ export default function SetupApp() {
 
   const [runtimePath, setRuntimePath] = useState("~/.crucible/runtime");
   const [runtimeUpdate, setRuntimeUpdate] = useState<{ installed: string; bundled: string } | null>(null);
+  // Read inside the message listener, which is registered once.
+  const updating = useRef(false);
+  updating.current = runtimeUpdate !== null;
   const localModelsChosen = useRef(false);
   const [progress, setProgress] = useState<Record<string, ProgressRow>>({});
   const [installOk, setInstallOk] = useState<boolean | null>(null);
@@ -153,6 +156,12 @@ export default function SetupApp() {
           setInstallOk(msg.ok);
           setBusy(false);
           if (msg.ok) setStep("provider");
+          // An app update already has a provider: start it instead of asking for one again.
+          // A failure (none saved) lands on the provider step with its error.
+          if (msg.ok && updating.current) {
+            setBusy(true);
+            vscode.postMessage({ type: "setup/resume" });
+          }
           break;
         case "setup/validateResult":
           setBusy(false);
@@ -175,6 +184,7 @@ export default function SetupApp() {
           setError(null);
           setPort(msg.port);
           setValidateWarning(msg.warning ?? null);
+          if (msg.provider) { setBackend(msg.provider.backend); setModel(msg.provider.model); }
           setStep("done");
           break;
         case "setup/error":

@@ -52,6 +52,13 @@ export function createHostSetupDeps(opts: HostSetupOptions): SetupDeps {
           ...(result.warning !== undefined ? { warning: result.warning } : {}),
         };
       },
+      resume: async () => {
+        const saved = await runtime.getProviderSettings();
+        if (!saved) throw new Error("No saved provider. Choose one to continue.");
+        const { port } = await (opts.start ?? (() => runtime.startForWorkspace(workspace)))();
+        opts.onBackendUrl(runtime.backendUrl(workspace) ?? `http://127.0.0.1:${port}`);
+        return { port, backend: saved.backend, model: saved.model };
+      },
       startForChatGPT: async () => {
         // No model yet: the account's catalog is only reachable once signed in.
         await runtime.saveProvider("chatgpt", "");

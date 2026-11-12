@@ -1,5 +1,5 @@
 import{expect,it,vi}from"vitest";import{ProjectPool,type ProjectActivity}from"../src/project-pool.js";
-function host(){let allowed=true,status:ProjectActivity={state:"idle",attention:[]};return{canDetach:()=>allowed,detach:vi.fn(),flush:vi.fn(),activity:vi.fn(async()=>status),pause:vi.fn(async()=>true),dispose:vi.fn(async()=>{}),block:()=>allowed=false,set:(v:ProjectActivity)=>status=v};}
+function host(){let allowed=true,running=true,status:ProjectActivity={state:"idle",attention:[]};return{backendRunning:()=>running,stopBackend:()=>{running=false;},canDetach:()=>allowed,detach:vi.fn(),flush:vi.fn(),activity:vi.fn(async()=>status),pause:vi.fn(async()=>true),dispose:vi.fn(async()=>{}),block:()=>allowed=false,set:(v:ProjectActivity)=>status=v};}
 it("retains A→B→A host state and flushes before detach; admissions starting during flush refuse navigation",async()=>{
  const a=host(),b=host(),pool=new ProjectPool();pool.add("a",a);pool.add("b",b);const attach=vi.fn(async()=>{});
  await pool.select("a",async()=>{},attach);await pool.select("b",async()=>{},attach);await pool.select("a",async()=>{},attach);expect(pool.get("a")).toBe(a);expect(a.detach).toHaveBeenCalledOnce();
@@ -47,3 +47,10 @@ it("a project whose pause is refused at the last moment stops the install",async
  a.pause.mockResolvedValueOnce(false);
  await expect(pool.pauseIdleForInstall(()=>"alpha")).rejects.toThrow(/alpha/);
 });
+
+it("a project with no backend running has nothing to pause and never blocks the install (first Setup)",async()=>{
+ const a=host(),pool=new ProjectPool();pool.add("a",a);a.stopBackend();a.set({state:"unknown",attention:[]});
+ await pool.pauseIdleForInstall(id=>id);
+ expect(a.activity).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();
+});
+

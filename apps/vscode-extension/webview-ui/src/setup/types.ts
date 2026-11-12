@@ -8,6 +8,7 @@ export type SetupInMsg =
   | { type: "setup/validate"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "setup/save"; backend: string; model: string; apiKey?: string; extraCredentials?: Record<string, string> }
   | { type: "setup/openChat" }
+  | { type: "setup/resume" }
   | { type: "setup/startForChatGPT" }
   | { type: "setup/startForClaude" }
   // The embedded ChatGPT plan panel posts the settings/chatgpt* messages; the setup host
@@ -22,7 +23,9 @@ export type SetupOutMsg =
   | { type: "setup/progress"; component: string; status: string; detail?: string }
   | { type: "setup/installDone"; ok: boolean }
   | { type: "setup/validateResult"; ok: boolean; model?: string; error?: string; jsonMode?: string; warning?: string }
-  | { type: "setup/ready"; port: number; jsonMode?: string; warning?: string }
+  | { type: "setup/ready"; port: number; jsonMode?: string; warning?: string;
+      // The provider a resume started (the form was never filled in).
+      provider?: { backend: string; model: string } }
   | { type: "setup/error"; message: string }
   | { type: "setup/chatgptReady"; hasAccounts: boolean };
 

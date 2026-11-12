@@ -335,6 +335,7 @@ export function createProjectHost(ports: HostPorts) {
     detach: () => { if (!canDetach()) throw new Error("Finish the current project action before switching."); if(backendURL)controller.detachProjectView(); drafts.resetView(); },
     flush: () => vault.flush(),
     persistenceChanged: () => { vault.reset(); if(ports.draftPersistence())vault.changed(()=>drafts.exportState(),true); },
+    backendRunning: () => !!backendURL,
     pause: async () => {
       if (!canDetach() || (await activity()).state!=="idle" || !ownerFor(backendURL)) return false;
       const paused=await runtime.pause(root); if(paused){backendURL="";projectTrusted=false;}return paused;
@@ -349,7 +350,9 @@ export function createProjectHost(ports: HostPorts) {
       // pending/unknown receipt and work-start are fenced by drafts/controller.
       if(disposed)throw new Error("This project is closing.");
       if(restoring)throw new Error("Wait for file recovery to finish before another project action.");
-      const blocking=!["sendMessage","modeDecision","clarifyDecision"].includes(payload.type);
+      // Setup's install is not project work: it has its own guard (provisioner busy) and must not
+      // make this project look busy to the pause that the install itself requires.
+      const blocking=!["sendMessage","modeDecision","clarifyDecision"].includes(payload.type) && !(setup && payload.type==="setup/install");
       if(blocking)++handling;
       try {
       if(payload.type==="desktop/accessRead"){await readAccess();return;}

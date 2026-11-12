@@ -42,6 +42,22 @@ function deps(overrides: Partial<SetupDeps> = {}): SetupDeps {
   };
 }
 
+describe("setup after an app update", () => {
+  it("resumes with the saved provider and reports the backend ready", async () => {
+    const resume = vi.fn(async () => ({ port: 8123, backend: "ollama", model: "glm-4.7-flash:latest" }));
+    const posted: unknown[] = [];
+    await createSetupHandler(deps({ resume }), m => posted.push(m))({ type: "setup/resume" });
+    expect(resume).toHaveBeenCalledOnce();
+    expect(posted).toEqual([{ type: "setup/ready", port: 8123, provider: { backend: "ollama", model: "glm-4.7-flash:latest" } }]);
+  });
+  it("reports a resume failure as a Setup error", async () => {
+    const posted: { type: string; message?: string }[] = [];
+    await createSetupHandler(deps({ resume: async () => { throw new Error("No saved provider. Choose one to continue."); } }),
+      m => posted.push(m as { type: string }))({ type: "setup/resume" });
+    expect(posted).toEqual([{ type: "setup/error", message: "No saved provider. Choose one to continue." }]);
+  });
+});
+
 describe("setup with the ChatGPT plan", () => {
   it("returns the saved local-model preference without installing", async () => {
     const install = vi.fn(async () => ({ ok: true }));
