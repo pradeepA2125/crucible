@@ -31,8 +31,9 @@ jobs:
           test -f apps/desktop/resources/update-public.pem
       - run: npm ci
       - run: npm --prefix apps/vscode-extension/webview-ui ci
-      - run: npm run typecheck
+      # Build first: the extension's typecheck reads editor-client's built types (dist/index.d.ts).
       - run: npm run build
+      - run: npm run typecheck
       - run: npm run -w @crucible/desktop test
       - run: node --test scripts/release/desktop-release.test.mjs scripts/release/desktop-gates.test.mjs
       - name: Build current-source runtime
