@@ -61,7 +61,7 @@ describe("settings client methods", () => {
     expect(res.servers[0]).toEqual({
       name: "web", transport: "stdio", enabledInFile: true,
       state: "connected", detail: null, toolCount: 2,
-      tools: [], enabledTools: null, disabledTools: [] });
+      tools: [], enabledTools: null, disabledTools: [], secrets: [] });
   });
 
   test("listMcpServers maps tool filters and the tool inventory", async () => {
@@ -85,6 +85,24 @@ describe("settings client methods", () => {
     expect(sent[0].url).toContain("/v1/mcp/servers/web/tools");
     expect(sent[0].method).toBe("PUT");
     expect(sent[0].body).toEqual({ enabled_tools: null, disabled_tools: ["b"], disabled: ["gh"] });
+  });
+
+  test("setMcpSecrets PUTs the values (null clears one) and the disabled servers", async () => {
+    const sent: Sent[] = [];
+    await clientWith({ enabled: true, servers: [] }, sent)
+      .setMcpSecrets({ GITHUB_PAT: "tok", OLD: null }, ["gh"]);
+    expect(sent[0].url).toContain("/v1/mcp/secrets");
+    expect(sent[0].method).toBe("PUT");
+    expect(sent[0].body).toEqual({ values: { GITHUB_PAT: "tok", OLD: null }, disabled: ["gh"] });
+  });
+
+  test("listMcpServers maps each server's secret names and sources, and older backends send none", async () => {
+    const res = await clientWith({ enabled: true, servers: [
+      { name: "gh", transport: "http", state: "failed", secrets: [{ name: "GITHUB_PAT", source: null }, { name: "K", source: "saved" }] },
+      { name: "old", transport: "stdio", state: "connected" },
+    ] }).listMcpServers();
+    expect(res.servers[0].secrets).toEqual([{ name: "GITHUB_PAT", source: null }, { name: "K", source: "saved" }]);
+    expect(res.servers[1].secrets).toEqual([]);
   });
 
   test("upsertMcpServer PUTs entry + disabled", async () => {

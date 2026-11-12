@@ -1053,6 +1053,10 @@ export const McpToolViewSchema = z.object({
   description: z.string(),
   enabled: z.boolean(),
 });
+export const McpSecretViewSchema = z.object({
+  name: z.string(),
+  source: z.enum(["saved", "environment"]).nullable(),
+});
 export const McpServerViewSchema = z.object({
   name: z.string(),
   transport: z.string(),
@@ -1064,6 +1068,9 @@ export const McpServerViewSchema = z.object({
   tools: z.array(McpToolViewSchema),
   enabledTools: z.array(z.string()).nullable(),
   disabledTools: z.array(z.string()),
+  // The ${VAR} names this server's env/headers use, and where each value comes from:
+  // saved in Settings, the backend's environment, or nowhere. Never a value.
+  secrets: z.array(McpSecretViewSchema).default([]),
 });
 export const McpServerListSchema = z.object({
   enabled: z.boolean(),
@@ -1074,6 +1081,7 @@ export const McpServerListSchema = z.object({
 });
 export type McpToolView = z.infer<typeof McpToolViewSchema>;
 export type McpServerView = z.infer<typeof McpServerViewSchema>;
+export type McpSecretView = z.infer<typeof McpSecretViewSchema>;
 export type McpServerList = z.infer<typeof McpServerListSchema>;
 
 // ── Memory inspector (Phase 3-B). Read-only views of the recall trace + memory store.
@@ -1259,6 +1267,8 @@ export interface BackendTaskClient {
   upsertMcpServer(name: string, entry: Record<string, unknown>, disabled: string[]): Promise<McpServerList>;
   deleteMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
   reconnectMcpServer(name: string, disabled: string[]): Promise<McpServerList>;
+  /** Saves values for ${VAR} references (null clears one); servers using them reconnect. */
+  setMcpSecrets(values: Record<string, string | null>, disabled: string[]): Promise<McpServerList>;
   setMcpServerTools(
     name: string, enabledTools: string[] | null, disabledTools: string[], disabled: string[],
   ): Promise<McpServerList>;

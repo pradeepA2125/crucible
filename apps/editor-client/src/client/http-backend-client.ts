@@ -1658,6 +1658,14 @@ export class HttpBackendClient implements BackendTaskClient {
     return HttpBackendClient.mapMcpList(raw);
   }
 
+  async setMcpSecrets(values: Record<string, string | null>, disabled: string[]): Promise<McpServerList> {
+    const raw = await this.fetchJson("/v1/mcp/secrets", {
+      method: "PUT",
+      body: JSON.stringify({ values, disabled }),
+    });
+    return HttpBackendClient.mapMcpList(raw);
+  }
+
   async setMcpServerTools(
     name: string, enabledTools: string[] | null, disabledTools: string[], disabled: string[],
   ): Promise<McpServerList> {
@@ -1687,6 +1695,7 @@ export class HttpBackendClient implements BackendTaskClient {
         tools: s["tools"] ?? [],
         enabledTools: s["enabled_tools"] ?? null,
         disabledTools: s["disabled_tools"] ?? [],
+        secrets: s["secrets"] ?? [],
       })),
     });
   }
