@@ -29,6 +29,9 @@ const voiceBundled=platform==="darwin-arm64" && await voiceHelper("crucible-whis
 const portableVoice=voicePayload(platform).length>0&&platform!=="darwin-arm64"&&
  await voiceHelper(process.platform==="win32"?"crucible-whisper.exe":"crucible-whisper");
 const require=createRequire(import.meta.url),electron=dirname(require.resolve("electron/package.json")),distribution=join(electron,"dist");
+// Electron 45 downloads its binary on first use, not at npm install: loading it fetches and
+// checksum-verifies dist/ on a fresh checkout (CI) before it is copied.
+require("electron");
 const name=opts.preview?"Crucible Preview":"Crucible",identity=opts.preview?"io.crucible.desktop.preview":"io.crucible.desktop";
 await mkdir(output,{recursive:false});let complete=false;
 try{
