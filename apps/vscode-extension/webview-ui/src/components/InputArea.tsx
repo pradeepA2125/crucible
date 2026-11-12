@@ -575,6 +575,9 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
         <span className="flex-1" />
         <ModelMenu />
         <ContextMeter usage={contextUsage} stale={contextUsageStale} threadUsage={threadUsage} teamNames={teamNames} />
+        {/* Voice, Stop and Send stay one group at the right end, so a wrapping footer never
+            leaves Send alone on a line of its own. */}
+        <div data-testid="composer-actions" className="ml-auto flex min-w-0 flex-nowrap items-center gap-1">
         {voice && <VoiceControl voice={voice} />}
         {availability.taskStop ? <div ref={abortRoot} className="relative flex shrink-0 items-center gap-0.5">
           <button type="button" onClick={() => handleAbort(false)} disabled={aborting} aria-label="Stop and keep changes" title="Stop the task; keep applied changes"
@@ -592,6 +595,7 @@ export function InputArea({ availability, draft, threadId = "", onDraftChange, a
         {(!availability.taskStop && !availability.showStop) || voiceActive ? <button type="button" onClick={doSend} disabled={!canSend} aria-label="Send" aria-describedby={retention.returned ? otherDraftId : undefined}
           title={retention.returned ? "Swap in or discard the other draft first" : voiceSend ? "Send to the voice agent (Enter)" : "Send (Enter)"}
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--accent-fill)] text-[var(--on-accent)] hover:bg-[var(--accent-fill-hover)] disabled:opacity-40 disabled:cursor-default"><Icon name="send" size={14} /></button> : null}
+        </div>
         <ApprovalNotice approval={effectiveApproval} />
       </div>
     </div>

@@ -73,6 +73,16 @@ describe("InputArea with a voice session", () => {
     expect(postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "expandPrompt", name: "review" }));
   });
 
+  it("keeps the voice controls, Stop and Send together at the right end when the footer wraps", () => {
+    const voice = voiceModel({ active: true, state: { ...INITIAL_VOICE_STATE, connected: true, microphone: "on" } });
+    render(<Composer voice={voice} availability={RUNNING} />);
+    const group = screen.getByTestId("composer-actions");
+    expect(group).toHaveClass("ml-auto", "flex-nowrap");
+    for (const name of ["End voice session", "Mute microphone", "Stop", "Send"]) {
+      expect(group).toContainElement(screen.getByRole("button", { name }));
+    }
+  });
+
   it("takes a review-held transcript as an editable draft after a blank line, then discards it", async () => {
     const voice = voiceModel({ active: true, state: { ...INITIAL_VOICE_STATE, connected: true, microphone: "on" },
       reviews: [{ id: "r1", transcript: "use sqlite for the tests" }] });
