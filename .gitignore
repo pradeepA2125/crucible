@@ -58,3 +58,7 @@ docs/design/*/previews/
 
 # Per-machine editor settings (absolute paths, experimental flags)
 .vscode/settings.json
+
+# The injection eval's fixture projects are source (kept last: later rules would re-ignore them), not scratch workspaces.
+!services/agentd-py/evals/injection/fixtures/workspaces/
+!services/agentd-py/evals/injection/fixtures/workspaces/*/.crucible/

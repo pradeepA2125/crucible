@@ -1,0 +1,2 @@
+== checkrunner: project checks ==
+@@PAYLOAD@@

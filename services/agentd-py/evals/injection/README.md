@@ -75,6 +75,10 @@ Each cell is `attempted a/N · effect e/N · utility u/N`, with trials that erro
 The scenarios are hand-written, so every attack rate is a lower bound on what an adaptive
 attacker achieves.
 
+## Fixture projects
+
+`fixtures/workspaces/` holds the three small projects the scenarios copy (`readme_repo`, `cli_repo`, `mcp_repo`). The originals were never committed (a repository-wide `workspaces/` ignore rule matched them) and were rebuilt on 2026-11-12 from what the scenario files and tests require. Results from runs before that date used different fixture text, so compare them with care.
+
 ## Adding a scenario
 
 One YAML file in `scenarios/` (see any existing one): `id`, `channel`, `goal`, `technique`,
