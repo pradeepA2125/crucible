@@ -27,6 +27,7 @@ from agentd.mcp.config import (
 )
 from agentd.mcp.filters import unknown_filter_names, visible_tool_names
 from agentd.mcp.models import McpServerConfig, McpServerStatus, McpToolInfo
+from agentd.mcp.secrets import McpSecrets, secret_references
 from agentd.tools.registry import ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,9 @@ def _keep_instructions(session: Any, result: Any) -> None:
 
 
 @asynccontextmanager
-async def _open_session(cfg: McpServerConfig) -> AsyncIterator[Any]:
+async def _open_session(
+    cfg: McpServerConfig, secrets: McpSecrets | None = None
+) -> AsyncIterator[Any]:
     """Default session factory: real SDK transport + initialized ClientSession.
     ${VAR} in env/headers resolves here (connect time) — a missing variable makes
     the connect fail with a message naming it, never a blank credential."""
@@ -59,7 +62,7 @@ async def _open_session(cfg: McpServerConfig) -> AsyncIterator[Any]:
 
         params = StdioServerParameters(
             command=cfg.command or "", args=list(cfg.args),
-            env=interpolate_env(cfg.env) or None)
+            env=interpolate_env(cfg.env, secrets) or None)
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
                 _keep_instructions(session, await session.initialize())
@@ -68,7 +71,7 @@ async def _open_session(cfg: McpServerConfig) -> AsyncIterator[Any]:
         from mcp.client.streamable_http import streamablehttp_client
 
         async with streamablehttp_client(
-                cfg.url or "", headers=interpolate_env(cfg.headers) or None) as (
+                cfg.url or "", headers=interpolate_env(cfg.headers, secrets) or None) as (
                 read, write, _get_session_id):
             async with ClientSession(read, write) as session:
                 _keep_instructions(session, await session.initialize())
@@ -76,8 +79,8 @@ async def _open_session(cfg: McpServerConfig) -> AsyncIterator[Any]:
     else:  # sse
         from mcp.client.sse import sse_client
 
-        async with sse_client(
-                cfg.url or "", headers=interpolate_env(cfg.headers) or None) as (read, write):
+        headers = interpolate_env(cfg.headers, secrets) or None
+        async with sse_client(cfg.url or "", headers=headers) as (read, write):
             async with ClientSession(read, write) as session:
                 _keep_instructions(session, await session.initialize())
                 yield session
@@ -103,9 +106,15 @@ class McpConnectionManager:
         session_factory: Callable[
             [McpServerConfig], AbstractAsyncContextManager[Any]
         ] = _open_session,
+        secrets: McpSecrets | None = None,
     ) -> None:
         self._loader = loader
-        self._session_factory = session_factory
+        # Values for ${VAR} references saved in Settings (agentd.mcp.secrets).
+        self.secrets = secrets if secrets is not None else McpSecrets()
+        self._session_factory = (
+            (lambda cfg: _open_session(cfg, self.secrets))
+            if session_factory is _open_session else session_factory
+        )
         self._handles: dict[str, _ServerHandle] = {}
         # The user-local disabled list arrives with each settings call; a reconnect the
         # backend starts itself (trusting mcp.json) reuses the last one it was given.
@@ -199,6 +208,19 @@ class McpConnectionManager:
                 await handle.task
             except Exception:
                 logger.debug("[mcp] serve task for %s errored on stop", name, exc_info=True)
+
+    async def reconnect_using(
+        self, names: frozenset[str], disabled: frozenset[str] = frozenset()
+    ) -> list[str]:
+        """Restarts every server whose env or headers reference one of these variables,
+        including one that failed earlier for a missing value. Returns their names."""
+        configs = self._loader.load()
+        affected = [c.name for c in configs
+                    if names & set(secret_references({"env": c.env, "headers": c.headers}))]
+        for name in affected:
+            await self._stop_handle(name)
+        await self.reconcile(configs, disabled=disabled)
+        return [name for name in affected if name not in disabled]
 
     async def reconnect(self, name: str, disabled: frozenset[str] = frozenset()) -> None:
         """Manual retry from the settings UI: drop the handle, re-reconcile."""

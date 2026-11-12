@@ -107,6 +107,12 @@ class McpDisabledRequest(BaseModel):
     disabled: list[str] = []
 
 
+class McpSecretsRequest(BaseModel):
+    # name -> value; null clears the saved value (the environment applies again).
+    values: dict[str, str | None]
+    disabled: list[str] = []
+
+
 class McpToolFiltersRequest(BaseModel):
     enabled_tools: list[str] | None = None
     disabled_tools: list[str] = []
@@ -470,9 +476,11 @@ def build_router(
     def _mcp_server_listing() -> dict[str, object]:
         from agentd.mcp.admin import read_raw_servers
         from agentd.mcp.config import TOOL_FILTERS_MALFORMED, parse_tool_filters
+        from agentd.mcp.secrets import secret_references
 
         if mcp_manager is None:
             return {"enabled": False, "servers": []}
+        secrets = mcp_manager.secrets  # type: ignore[attr-defined]
         statuses = {s.name: s for s in mcp_manager.statuses()}  # type: ignore[attr-defined]
         inventory = mcp_manager.tool_inventory()  # type: ignore[attr-defined]
         # An untrusted mcp.json connects nothing; its servers are listed for review.
@@ -501,6 +509,12 @@ def build_router(
                     "tools": [t.model_dump() for t in inventory.get(name, [])],
                     "enabled_tools": (filters or {}).get("enabled_tools"),
                     "disabled_tools": (filters or {}).get("disabled_tools", []),
+                    # Names and where each value comes from; never a value.
+                    "secrets": [
+                        {"name": var, "source": "saved" if secrets.get(var) is not None
+                         else "environment" if var in os.environ else None}
+                        for var in secret_references(entry)
+                    ],
                 }
             )
         return {"enabled": True, "trusted": trusted, "servers": servers}
@@ -555,6 +569,21 @@ def build_router(
         await mcp_manager.reconcile(  # type: ignore[attr-defined]
             mcp_manager.loader.load(),  # type: ignore[attr-defined]
             disabled=frozenset(body.disabled),
+        )
+        return _mcp_server_listing()
+
+    @router.put("/mcp/secrets")
+    async def put_mcp_secrets(body: McpSecretsRequest) -> dict[str, object]:
+        """Saves values for ${VAR} references, then reconnects only the servers using them.
+        The host persists them (keychain / SecretStorage); the backend keeps them in memory."""
+        if mcp_manager is None:
+            raise HTTPException(status_code=409, detail="MCP is disabled")
+        try:
+            mcp_manager.secrets.update(body.values)  # type: ignore[attr-defined]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        await mcp_manager.reconnect_using(  # type: ignore[attr-defined]
+            frozenset(body.values), disabled=frozenset(body.disabled)
         )
         return _mcp_server_listing()
 

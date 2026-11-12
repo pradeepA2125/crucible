@@ -6,7 +6,10 @@ from collections.abc import Mapping
 
 # Set by agentd.serve for this process only. A child that inherited them could start a
 # nested app that believes it owns the parent's port and token.
-_SERVE_ONLY = ("CRUCIBLE_LISTEN_PORT", "CRUCIBLE_SERVE_PID")
+_SERVE_ONLY = ("CRUCIBLE_LISTEN_PORT", "CRUCIBLE_SERVE_PID",
+               # MCP secret values for ${VAR} references (agentd.mcp.secrets). Removed from the
+               # environment at startup; stripped here too, so a child can never read them.
+               "CRUCIBLE_MCP_SECRETS")
 
 
 def child_env(base: Mapping[str, str] | None = None) -> dict[str, str]:

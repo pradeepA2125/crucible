@@ -15,6 +15,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from agentd.mcp.models import McpServerConfig
+from agentd.mcp.secrets import McpSecrets
 from agentd.trust.config import is_injection_defense_enabled
 from agentd.trust.project_trust import project_trust_for
 
@@ -66,13 +67,14 @@ class McpMissingEnvVar(ValueError):
     """A ${VAR} reference in env/headers names an unset environment variable."""
 
 
-def interpolate_env(mapping: dict[str, str]) -> dict[str, str]:
-    """Resolve ${VAR} references against the real process environment. Raises
-    McpMissingEnvVar naming the variable — the server then fails to connect with
-    a clear message rather than connecting with a blank credential."""
+def interpolate_env(mapping: dict[str, str], secrets: McpSecrets | None = None) -> dict[str, str]:
+    """Resolve ${VAR} references: a secret saved in Settings first, then the real process
+    environment. Raises McpMissingEnvVar naming the variable — the server then fails to
+    connect with a clear message rather than connecting with a blank credential."""
     def _sub(match: re.Match[str]) -> str:
         var = match.group(1)
-        val = os.environ.get(var)
+        saved = secrets.get(var) if secrets is not None else None
+        val = saved if saved is not None else os.environ.get(var)
         if val is None:
             raise McpMissingEnvVar(var)
         return val

@@ -180,8 +180,11 @@ def select_chat_handler(
         if is_mcp_enabled():
             from agentd.mcp.client import McpConnectionManager
             from agentd.mcp.config import McpConfigLoader
+            from agentd.mcp.secrets import McpSecrets
 
-            mcp_manager = McpConnectionManager(McpConfigLoader(workspace_path))
+            mcp_manager = McpConnectionManager(
+                McpConfigLoader(workspace_path), secrets=McpSecrets.from_environment()
+            )
         # PTY exec sessions (default off): one process-scoped SessionManager over
         # the frozen workspace_path; main.py registers startup reap + shutdown
         # kill-all (the MCP-manager pattern).
